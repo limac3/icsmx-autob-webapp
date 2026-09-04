@@ -401,3 +401,86 @@ Ninguna — no es un defecto. Se deja documentado para que una verificacion manu
 Para verificar cabeceras de cache de una pagina (no de un Route Handler), probar contra
 `next build && next start`, nunca contra `next dev`: el modo desarrollo altera `Cache-Control`
 en toda pagina por una razon ajena a la aplicacion.
+
+---
+
+## 10) `ampx sandbox` exige Docker si `esbuild` no esta en la raiz
+
+### Problema
+`defineFunction` empaqueta el handler de la funcion de barrido con esbuild. CDK sabe hacerlo
+localmente, sin contenedores, y esa es la ruta rapida.
+
+### Sintoma
+Al sintetizar el backend:
+
+```
+NodeJSFunctionConstructInitializationError: Failed to instantiate nodejs function construct
+Caused by: Error: spawnSync docker ENOENT
+```
+
+El mensaje habla de Docker, que no es lo que falta ni lo que se pidio.
+
+### Causa raiz
+`aws-lambda-nodejs` intenta primero el empaquetado local y **solo cae a Docker si no puede
+resolver `esbuild` desde la raiz del proyecto**. `esbuild` si estaba instalado, pero anidado
+en `node_modules/tsx/node_modules/esbuild`: npm no lo elevo porque ninguna dependencia
+directa lo pedia. La deteccion de CDK no mira ahi, concluye que no hay esbuild y recurre al
+contenedor. En una maquina corporativa sin Docker Desktop, eso es un muro.
+
+### Solucion aplicada
+`esbuild` como dependencia de desarrollo directa:
+
+```bash
+npm install --save-dev esbuild@^0.25.12
+```
+
+CDK acepta cualquier `0.x` (`ESBUILD_MAJOR_VERSION = "0"`), asi que basta con que exista en la
+raiz. El empaquetado pasa a ser local y `backend.test.ts` sintetiza en ~7 s.
+
+### Regla para futuro
+Un error de `spawnSync docker ENOENT` en cualquier constructo de CDK casi nunca significa que
+haga falta Docker: significa que falta la herramienta local que CDK prefiere. Antes de
+instalar Docker, comprobar que la herramienta este **en la raiz** con
+`node -e "console.log(require('esbuild/package.json').version)"`; que aparezca en
+`node_modules` de alguien mas no cuenta.
+
+---
+
+## 11) Amplify Hosting no forma parte de `defineBackend`
+
+### Problema
+La regla 5 exige un `Deny` de IAM sobre los items `AUDIT#` en el rol de la aplicacion. Lo
+natural seria que `defineBackend` creara ese rol y lo adjuntara al SSR.
+
+### Sintoma
+No existe forma de referenciar el rol de computo de Amplify Hosting desde `amplify/backend.ts`:
+Hosting es un recurso de la consola, no de la pila que `defineBackend` despliega.
+
+### Causa raiz
+Amplify Gen2 separa dos cosas que parecen una: `defineBackend` declara **recursos de backend**
+(tabla, bucket, funciones), mientras que **Hosting** —el computo que ejecuta el SSR de
+Next.js— se configura en la consola y se conecta al repositorio. El "SSR Compute role" es una
+funcionalidad de Hosting; la pila del backend no lo conoce.
+
+### Solucion aplicada
+El rol se **crea** en la pila (`RolComputoSsr`, en `amplify/permisos.ts`) con la relacion de
+confianza que Amplify exige, y su ARN se publica en las salidas del backend:
+
+```ts
+assumedBy: new ServicePrincipal("amplify.amazonaws.com")
+```
+
+Adjuntarlo sigue siendo un paso manual: **App settings > IAM roles > Compute role**. Lo que se
+gana es que el `Deny` de la bitacora vive en el repositorio y no en un procedimiento de
+consola que alguien puede omitir; lo unico manual es la asociacion, que ademas se puede
+cambiar sin redesplegar.
+
+En un sandbox personal el rol confia tambien en la cuenta (`AccountRootPrincipal`), para que la
+prueba de integracion pueda asumirlo y ejercer **la politica real** en vez de una copia. Fuera
+de sandbox esa confianza no existe, y hay una prueba que falla si aparece.
+
+### Regla para futuro
+Todo permiso que la aplicacion necesite en runtime se declara en `aplicarPermisosAutob`, no en
+la consola. Esa funcion la comparten el rol de SSR y el de la funcion de barrido a proposito:
+dos listas separadas se desincronizan, y la que se olvide seria justo la que deja escribir la
+bitacora.

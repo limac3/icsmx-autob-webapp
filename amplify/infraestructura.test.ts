@@ -1,0 +1,304 @@
+// @vitest-environment node
+import { generateKeyPairSync } from "node:crypto";
+import { App, Stack } from "aws-cdk-lib";
+import { Match, Template } from "aws-cdk-lib/assertions";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { AlmacenamientoAutob } from "./almacenamiento";
+import { CorreoAutob } from "./correo";
+import { RolComputoSsr } from "./permisos";
+import { TablaAutob } from "./tabla";
+
+/**
+ * Sintetiza la pila y verifica el CloudFormation resultante.
+ *
+ * No sustituye a la prueba de integracion contra AWS —esa comprueba que IAM **rechaza** de
+ * verdad—, pero cubre lo que aquella no puede: que la politica exista, con las acciones
+ * exactas, antes de desplegar nada. Un `Deny` mal escrito se detecta aqui, en segundos, y no
+ * despues de un despliegue.
+ */
+
+// Sintetizar una pila de CDK cuesta segundos, no milisegundos. El limite de 5 s por omision
+// es para pruebas puras; aqui se levanta el arbol completo de constructos.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
+// Llave publica real, generada al vuelo: no se versiona ningun material criptografico y el
+// constructo recibe algo con la forma que CloudFront espera.
+let llavePublicaPem: string;
+
+beforeAll(() => {
+  llavePublicaPem = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  }).publicKey;
+});
+
+// La pila no cambia entre pruebas: se sintetiza una vez por variante y se reutiliza.
+const plantillas = new Map<boolean, Template>();
+
+const sintetizar = (esSandbox = false): Template => {
+  const yaSintetizada = plantillas.get(esSandbox);
+  if (yaSintetizada) return yaSintetizada;
+
+  const pila = new Stack(new App(), "Prueba", {
+    env: { account: "111111111111", region: "us-east-1" },
+  });
+  const tabla = new TablaAutob(pila, "Tabla", { esSandbox });
+  const almacenamiento = new AlmacenamientoAutob(pila, "Almacenamiento", {
+    esSandbox,
+    llavePublicaPem,
+  });
+  const correo = new CorreoAutob(pila, "Correo", {
+    identidad: "no-reply@ejemplo.org",
+  });
+  new RolComputoSsr(pila, "RolSsr", {
+    tabla: tabla.tabla,
+    bucket: almacenamiento.bucket,
+    identidadCorreo: correo.identidad,
+  });
+
+  const plantilla = Template.fromStack(pila);
+  plantillas.set(esSandbox, plantilla);
+  return plantilla;
+};
+
+describe("tabla unica", () => {
+  it("usa PK/SK genericos, bajo demanda y PITR", () => {
+    sintetizar().hasResourceProperties(
+      "AWS::DynamoDB::GlobalTable",
+      Match.objectLike({
+        AttributeDefinitions: Match.arrayWith([
+          { AttributeName: "PK", AttributeType: "S" },
+          { AttributeName: "SK", AttributeType: "S" },
+        ]),
+        KeySchema: [
+          { AttributeName: "PK", KeyType: "HASH" },
+          { AttributeName: "SK", KeyType: "RANGE" },
+        ],
+        BillingMode: "PAY_PER_REQUEST",
+        Replicas: Match.arrayWith([
+          Match.objectLike({
+            PointInTimeRecoverySpecification: {
+              PointInTimeRecoveryEnabled: true,
+            },
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it("declara los cuatro GSIs con la proyeccion de `modelo-datos-dynamodb.md`", () => {
+    const tablas = sintetizar().findResources("AWS::DynamoDB::GlobalTable");
+    const indices = Object.values(tablas)[0].Properties
+      .GlobalSecondaryIndexes as Array<{
+      IndexName: string;
+      KeySchema: Array<{ AttributeName: string; KeyType: string }>;
+      Projection: { ProjectionType: string };
+    }>;
+
+    expect(indices.map((indice) => indice.IndexName)).toEqual([
+      "GSI1",
+      "GSI2",
+      "GSI3",
+      "GSI4",
+    ]);
+
+    for (const indice of indices) {
+      expect(indice.KeySchema).toEqual([
+        { AttributeName: `${indice.IndexName}PK`, KeyType: "HASH" },
+        { AttributeName: `${indice.IndexName}SK`, KeyType: "RANGE" },
+      ]);
+    }
+
+    // GSI1 solo resuelve `oktaSub` -> `participanteId`; el perfil se lee de la tabla base.
+    expect(indices[0].Projection.ProjectionType).toBe("KEYS_ONLY");
+    for (const indice of indices.slice(1)) {
+      expect(indice.Projection.ProjectionType).toBe("ALL");
+    }
+  });
+
+  it("un entorno compartido retiene la tabla; un sandbox se la lleva", () => {
+    const politica = (esSandbox: boolean) =>
+      Object.values(
+        sintetizar(esSandbox).findResources("AWS::DynamoDB::GlobalTable"),
+      )[0].DeletionPolicy;
+    expect(politica(false)).toBe("Retain");
+    expect(politica(true)).toBe("Delete");
+  });
+});
+
+/** Regla 5 de `CLAUDE.md`: la bitacora es append-only y lo garantiza IAM, no el codigo. */
+describe("inmutabilidad de la bitacora", () => {
+  const declaraciones = (): Array<Record<string, unknown>> =>
+    Object.values(sintetizar().findResources("AWS::IAM::Policy")).flatMap(
+      (politica) =>
+        politica.Properties.PolicyDocument.Statement as Array<
+          Record<string, unknown>
+        >,
+    );
+
+  it("niega UpdateItem, DeleteItem y BatchWriteItem sobre items AUDIT#", () => {
+    const negacion = declaraciones().find(
+      (d) => d.Sid === "NegarMutacionDeBitacora",
+    );
+
+    expect(negacion).toBeDefined();
+    expect(negacion?.Effect).toBe("Deny");
+    expect(negacion?.Action).toEqual([
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:BatchWriteItem",
+    ]);
+    expect(negacion?.Condition).toEqual({
+      "ForAnyValue:StringLike": { "dynamodb:LeadingKeys": ["AUDIT#*"] },
+    });
+  });
+
+  it("no niega PutItem: la regla 4 exige escribir el evento en la misma transaccion", () => {
+    const negados = declaraciones()
+      .filter((d) => d.Effect === "Deny")
+      .flatMap((d) => (Array.isArray(d.Action) ? d.Action : [d.Action]));
+
+    expect(negados).not.toContain("dynamodb:PutItem");
+    expect(negados).not.toContain("dynamodb:ConditionCheckItem");
+  });
+
+  it("niega tambien las acciones PartiQL que mutan", () => {
+    const negacion = declaraciones().find(
+      (d) => d.Sid === "NegarPartiQLMutante",
+    );
+    expect(negacion?.Action).toEqual([
+      "dynamodb:PartiQLUpdate",
+      "dynamodb:PartiQLDelete",
+    ]);
+  });
+
+  it("un comprobante de pago no se puede borrar", () => {
+    const negacion = declaraciones().find(
+      (d) => d.Sid === "NegarBorradoDeComprobantes",
+    );
+    expect(negacion?.Effect).toBe("Deny");
+    expect(negacion?.Action).toEqual([
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+    ]);
+  });
+});
+
+describe("almacenamiento", () => {
+  it("el bucket bloquea todo acceso publico, cifra y versiona", () => {
+    sintetizar().hasResourceProperties(
+      "AWS::S3::Bucket",
+      Match.objectLike({
+        PublicAccessBlockConfiguration: {
+          BlockPublicAcls: true,
+          BlockPublicPolicy: true,
+          IgnorePublicAcls: true,
+          RestrictPublicBuckets: true,
+        },
+        VersioningConfiguration: { Status: "Enabled" },
+        BucketEncryption: Match.anyValue(),
+      }),
+    );
+  });
+
+  it("CloudFront exige URL firmada y solo alcanza el prefijo de fotografias", () => {
+    const plantilla = sintetizar();
+    const distribucion = Object.values(
+      plantilla.findResources("AWS::CloudFront::Distribution"),
+    )[0].Properties.DistributionConfig;
+
+    expect(distribucion.DefaultCacheBehavior.TrustedKeyGroups).toHaveLength(1);
+    expect(distribucion.Origins[0].OriginPath).toBe("/vehiculos");
+    expect(distribucion.DefaultCacheBehavior.ViewerProtocolPolicy).toBe(
+      "redirect-to-https",
+    );
+
+    // Origin Access Control: el bucket sigue privado y solo CloudFront lo alcanza.
+    expect(distribucion.Origins[0].OriginAccessControlId).toBeDefined();
+    plantilla.resourceCountIs("AWS::CloudFront::KeyGroup", 1);
+  });
+});
+
+describe("correo", () => {
+  it("registra la identidad y la plantilla de adjudicacion", () => {
+    const plantilla = sintetizar();
+    plantilla.hasResourceProperties("AWS::SES::EmailIdentity", {
+      EmailIdentity: "no-reply@ejemplo.org",
+    });
+    plantilla.hasResourceProperties(
+      "AWS::SES::Template",
+      Match.objectLike({
+        Template: Match.objectLike({ TemplateName: "autob-adjudicacion" }),
+      }),
+    );
+  });
+
+  it("un valor sin arroba se trata como dominio, para habilitar DKIM", () => {
+    const pila = new Stack(new App(), "Dominio");
+    new CorreoAutob(pila, "Correo", { identidad: "ejemplo.org" });
+    Template.fromStack(pila).hasResourceProperties("AWS::SES::EmailIdentity", {
+      EmailIdentity: "ejemplo.org",
+    });
+  });
+});
+
+describe("rol de computo SSR", () => {
+  it("solo Amplify Hosting puede asumirlo", () => {
+    sintetizar().hasResourceProperties(
+      "AWS::IAM::Role",
+      Match.objectLike({
+        AssumeRolePolicyDocument: Match.objectLike({
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Effect: "Allow",
+              Action: "sts:AssumeRole",
+              Principal: { Service: "amplify.amazonaws.com" },
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("fuera de un sandbox, la cuenta no puede asumirlo", () => {
+    const principales = Object.values(
+      sintetizar().findResources("AWS::IAM::Role"),
+    )
+      .map((rol) => JSON.stringify(rol.Properties.AssumeRolePolicyDocument))
+      .join("");
+
+    // `AccountRootPrincipal` sintetiza como un `AWS: arn:...:root`. Que no aparezca es lo
+    // que impide que las credenciales de una persona hereden los permisos de la aplicacion.
+    expect(principales).not.toContain(":root");
+  });
+
+  it("en un sandbox la cuenta si lo asume, para poder probar la politica real", () => {
+    const pila = new Stack(new App(), "Sandbox", {
+      env: { account: "111111111111", region: "us-east-1" },
+    });
+    const tabla = new TablaAutob(pila, "Tabla", { esSandbox: true });
+    const almacenamiento = new AlmacenamientoAutob(pila, "Almacenamiento", {
+      esSandbox: true,
+      llavePublicaPem,
+    });
+    const correo = new CorreoAutob(pila, "Correo", {
+      identidad: "no-reply@ejemplo.org",
+    });
+    new RolComputoSsr(pila, "RolSsr", {
+      tabla: tabla.tabla,
+      bucket: almacenamiento.bucket,
+      identidadCorreo: correo.identidad,
+      esSandbox: true,
+    });
+
+    const confianza = JSON.stringify(
+      Object.values(
+        Template.fromStack(pila).findResources("AWS::IAM::Role"),
+      ).map((rol) => rol.Properties.AssumeRolePolicyDocument),
+    );
+
+    expect(confianza).toContain("amplify.amazonaws.com");
+    expect(confianza).toContain(":root");
+  });
+});

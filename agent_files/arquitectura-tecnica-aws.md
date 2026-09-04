@@ -69,7 +69,14 @@ Distribucion con **Origin Access Control** hacia S3 — el bucket sigue privado.
 `vehiculos/`.
 
 URLs firmadas con vigencia corta, generadas en SSR en cada peticion. La llave privada vive en
-secretos.
+secretos; la **publica se versiona** en `amplify/claves/cloudfront-publica.pem`, porque no es
+un secreto y porque rotarla invalidaria de golpe todas las URLs firmadas vigentes. Si falta,
+el backend falla al sintetizar en vez de crear una distribucion sin grupo de llaves de
+confianza, que serviria las fotografias a cualquiera que conociera la URL.
+
+El acotamiento al prefijo `vehiculos/` es `originPath`, no una regla de comportamiento: una
+peticion a `/x.jpg` resuelve `s3://<bucket>/vehiculos/x.jpg`, de modo que `comprobantes/` es
+inalcanzable por esta distribucion aunque alguien lo intente.
 
 ### 2.5 SES
 
@@ -247,8 +254,26 @@ Es la unica garantia de inmutabilidad que **no depende de que el codigo este bie
 `BatchWriteItem` se incluye porque tambien puede borrar, y omitirlo dejaria abierta justo la
 puerta que se intenta cerrar.
 
-Debe existir prueba de integracion que confirme que el `Put` funciona y que el `Update` y el
-`Delete` son rechazados (Etapa 3).
+Cubre tambien las transacciones sin nombrarlas: `TransactWriteItems` **no es una accion de
+IAM**, se autoriza con las acciones de item subyacentes, asi que un `Update` sobre un `AUDIT#`
+dentro de una transaccion cae en este mismo `Deny`. `PutItem` queda fuera a proposito — es
+justo lo que la regla 4 exige escribir en la misma transaccion que la mutacion.
+
+**Implementada** en `amplify/permisos.ts` (Etapa 3), con dos `Deny` mas por la misma logica:
+`dynamodb:PartiQLUpdate`/`PartiQLDelete`, que son acciones distintas y tambien mutan; y
+`s3:DeleteObject` sobre `comprobantes/*`, porque un comprobante de pago es evidencia y que no
+haya permiso de borrado lo vuelve una garantia en vez de un descuido.
+
+La misma funcion aplica los permisos al rol de computo SSR y al de la funcion de barrido. Que
+los compartan es deliberado: dos listas separadas se desincronizan, y la que se olvide seria
+justo la que deja escribir la bitacora.
+
+Se verifica en dos niveles. `amplify/infraestructura.test.ts` sintetiza la pila y comprueba que
+la politica existe con las acciones y la condicion exactas —corre sin AWS, en segundos—; y
+`amplify/auditoriaInmutable.integracion.test.ts` asume el rol real contra un sandbox y confirma
+que IAM **rechaza de verdad** el `Update` y el `Delete`, que acepta el `Put`, y que el mismo rol
+si modifica items que no son de la bitacora (sin esa ultima comprobacion, un `Deny` demasiado
+amplio pasaria inadvertido).
 
 ---
 

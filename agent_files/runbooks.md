@@ -204,6 +204,44 @@ Ver seccion 1 de `desafios-implementacion.md`.
 
 ---
 
+## R-11 — Preparar un entorno nuevo (o un sandbox personal)
+
+Tres pasos que el backend no puede hacer solo. Los dos primeros se hacen **antes** del primer
+`npx ampx sandbox`; el tercero, despues.
+
+1. **Llave de CloudFront.** Sin ella el backend falla al sintetizar, a proposito: una
+   distribucion sin grupo de llaves de confianza serviria las fotografias a cualquiera que
+   conociera la URL.
+
+   ```bash
+   openssl genrsa -out cloudfront-privada.pem 2048
+   openssl rsa -pubout -in cloudfront-privada.pem -out amplify/claves/cloudfront-publica.pem
+   ```
+
+   La publica se versiona; la privada va a `CLOUDFRONT_PRIVATE_KEY` (secreto). **Rotarla
+   invalida todas las URLs firmadas vigentes**, asi que no se regenera por costumbre.
+
+2. **`SES_IDENTIDAD`** en `.env.local` (o en las variables de la consola de Amplify). Con
+   arroba es un correo suelto, que se verifica solo y basta para un sandbox; sin arroba es un
+   dominio, que habilita DKIM y es lo que corresponde en entornos compartidos. Recuerda que en
+   modo prueba SES **solo entrega a direcciones verificadas** (ver R-2).
+
+3. **Adjuntar el rol de computo SSR.** Amplify Hosting no forma parte de `defineBackend`, asi
+   que el rol se crea en la pila pero la asociacion es un paso de consola: **App settings >
+   IAM roles > Compute role**, eligiendo el ARN que aparece en `amplify_outputs.json` bajo
+   `custom.autob.rolComputoSsr`. Sin este paso la aplicacion no puede leer la tabla; con el,
+   hereda tambien el `Deny` que hace inmutable la bitacora. Se puede cambiar sin redesplegar.
+
+Para comprobar que quedo bien, con el sandbox arriba:
+
+```bash
+npx vitest run amplify/auditoriaInmutable.integracion.test.ts
+```
+
+Si se omite en vez de correr, es que no encontro `amplify_outputs.json`.
+
+---
+
 ## Consultas de diagnostico frecuentes
 
 | Necesidad | Consulta |

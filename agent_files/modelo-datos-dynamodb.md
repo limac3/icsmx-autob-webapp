@@ -88,9 +88,22 @@ Cuatro GSIs genericos. Cada uno resuelve una familia de accesos, no una consulta
 | Indice | `GSI#PK` | `GSI#SK` | Proyeccion |
 | --- | --- | --- | --- |
 | **GSI1** — identidad alterna | `OKTA#<oktaSub>` | `PERFIL` | `KEYS_ONLY` |
-| **GSI2** — listados por estatus | `<TIPO>_ESTATUS#<estatus>` | `<fecha>#<id>` | `INCLUDE` |
-| **GSI3** — por participante | `PART#<participanteId>` | `SOL#<solicitadoEn>#<loteId>` | `INCLUDE` |
-| **GSI4** — trabajo pendiente (disperso) | `VENCE#<yyyy-mm-dd>` / `OUTBOX_PENDIENTE` | `<venceEn>` / `<creadoEn>` | `INCLUDE` |
+| **GSI2** — listados por estatus | `<TIPO>_ESTATUS#<estatus>` | `<fecha>#<id>` | `ALL` |
+| **GSI3** — por participante | `PART#<participanteId>` | `SOL#<solicitadoEn>#<loteId>` | `ALL` |
+| **GSI4** — trabajo pendiente (disperso) | `VENCE#<yyyy-mm-dd>` / `OUTBOX_PENDIENTE` | `<venceEn>` / `<creadoEn>` | `ALL` |
+
+**Por que `ALL` y no `INCLUDE`** (decidido al implementar la Etapa 3). GSI2 sirve a cinco
+accesos sobre entidades distintas —vehiculos, convocatorias, solicitudes y bitacora—, asi que
+su lista de atributos incluidos seria la union de lo que necesitan cinco pantallas que aun no
+existen. Y **la proyeccion de un GSI no se puede modificar despues de creado**: ampliarla exige
+borrar el indice y recrearlo, con una ventana en la que PA-05 y PA-11 dejan de responder. Los
+items del modelo son pequenos —las fotografias y los comprobantes son claves de S3, no datos—,
+asi que el sobrecosto de `ALL` es acotado y compra no tener que migrar indices cada vez que una
+pantalla pide un campo mas. Estrechar a `INCLUDE` es una optimizacion legitima para la Etapa 12,
+cuando el conjunto de atributos ya no se mueva.
+
+GSI1 se queda en `KEYS_ONLY` porque su unico trabajo es traducir `oktaSub` a `participanteId`;
+el perfil se lee luego de la tabla base.
 
 **GSI4 es disperso a proposito.** Sus claves solo se escriben mientras el item requiere
 atencion: una solicitud las tiene mientras esta `ADJUDICADA`, y se **eliminan** al subir el

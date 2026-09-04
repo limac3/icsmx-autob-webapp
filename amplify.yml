@@ -1,0 +1,40 @@
+# Especificacion de build de Amplify Hosting.
+#
+# `backend` despliega la pila de `amplify/` con `ampx pipeline-deploy`; `frontend` compila
+# Next.js. Amplify detecta el App Router y publica el resultado como aplicacion SSR.
+#
+# Requiere dos variables en la consola de Amplify (App settings > Environment variables):
+#
+#   NODE_AUTH_TOKEN   token de Artifactory. Sin el, `npm ci` falla con 401 al resolver los
+#                     paquetes @churchofjesuschrist/* (riesgo R10).
+#   SES_IDENTIDAD     dominio o correo verificado. Lo lee `amplify/backend.ts` al sintetizar.
+#
+# Los secretos de la aplicacion (AUTH0_CLIENT_SECRET, AUTH_SECRET, EAS_API_KEY,
+# CLOUDFRONT_PRIVATE_KEY) van en el gestor de secretos, nunca aqui.
+version: 1
+backend:
+  phases:
+    build:
+      commands:
+        - npm ci --cache .npm --prefer-offline
+        - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci --cache .npm --prefer-offline
+    build:
+      commands:
+        # La compuerta de calidad corre tambien en el despliegue: una rama que no
+        # typechequea o cuyas pruebas fallan no llega a produccion.
+        - npm run typecheck
+        - npm run test
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - "**/*"
+  cache:
+    paths:
+      - .next/cache/**/*
+      - .npm/**/*

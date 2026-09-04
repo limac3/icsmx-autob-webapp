@@ -169,30 +169,45 @@ Luego:
 
 **Primera tarea, antes de escribir infraestructura** (ver riesgo R1):
 
-- [ ] Confirmar que la cuenta AWS permite crear apps de Amplify Gen2 y que existe un camino de
-      despliegue aprobado. Si no lo hay, **detener** y decidir entre gestionarlo o migrar el
-      IaC a Terraform/ECS, que es el precedente de la organizacion. Registrar la decision en
-      `desafios-implementacion.md`
+- [ ] **PENDIENTE — requiere accion del usuario.** Confirmar que la cuenta AWS permite crear
+      apps de Amplify Gen2 y que existe un camino de despliegue aprobado. La sesion de SSO de
+      `aws-church-dev` esta vencida y `aws sso login` necesita un navegador, asi que no se
+      pudo verificar. Lo que **si** quedo comprobado: los paquetes de Amplify Gen2 estan
+      disponibles en el Artifactory corporativo (`@aws-amplify/backend` 1.24.0,
+      `aws-cdk-lib` 2.268.0), asi que R10 no bloquea esta etapa. Si al validar no hubiera
+      camino de despliegue, **detener** y decidir entre gestionarlo o migrar el IaC a
+      Terraform/ECS, que es el precedente de la organizacion
 
 Luego:
 
-- [ ] `amplify/backend.ts` con `defineBackend`
-- [ ] Tabla DynamoDB single-table como constructo CDK: `PK`/`SK`, GSIs de
+- [x] `amplify/backend.ts` con `defineBackend`
+- [x] Tabla DynamoDB single-table como constructo CDK: `PK`/`SK`, GSIs de
       `modelo-datos-dynamodb.md`, PITR activado
-- [ ] Bucket S3 para fotografias, sin acceso publico
-- [ ] Distribucion CloudFront con acceso restringido al bucket y llave para URLs firmadas
-- [ ] Identidad de SES verificada y plantilla de correo de adjudicacion
-- [ ] Politica IAM del rol de la aplicacion con **`Deny` explicito de `UpdateItem` y
-      `DeleteItem` sobre items `AUDIT#`** (regla 5)
-- [ ] Funcion programada para el barrido de vencimientos (sin logica todavia, solo el andamio)
-- [ ] `npx ampx sandbox` levanta el backend personal sin errores
+- [x] Bucket S3 para fotografias, sin acceso publico
+- [x] Distribucion CloudFront con acceso restringido al bucket y llave para URLs firmadas
+- [x] Identidad de SES verificada y plantilla de correo de adjudicacion
+- [x] Politica IAM del rol de la aplicacion con **`Deny` explicito de `UpdateItem` y
+      `DeleteItem` sobre items `AUDIT#`** (regla 5). Incluye tambien `BatchWriteItem`,
+      las acciones PartiQL que mutan, y el borrado de comprobantes
+- [x] Funcion programada para el barrido de vencimientos (sin logica todavia, solo el andamio)
+- [ ] **PENDIENTE — bloqueado por la primera tarea.** `npx ampx sandbox` levanta el backend
+      personal sin errores. Lo verificable sin AWS ya se verifico: `amplify/backend.test.ts`
+      sintetiza `backend.ts` completo —incluido el empaquetado del Lambda del barrido— y
+      comprueba la pila, los permisos heredados y las variables de entorno. Falta solo el
+      despliegue real
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Prueba de integracion que confirma que **escribir** un item `AUDIT#` funciona y que
-      **modificarlo o borrarlo es rechazado por IAM**
-- [ ] La tabla responde a un `PutItem` y un `Query` de humo desde la aplicacion
+- [x] Compuerta de calidad completa en verde
+- [ ] **ESCRITA, PENDIENTE DE EJECUTAR.** Prueba de integracion que confirma que **escribir**
+      un item `AUDIT#` funciona y que **modificarlo o borrarlo es rechazado por IAM**
+      (`amplify/auditoriaInmutable.integracion.test.ts`). Asume el rol real de computo SSR, no
+      credenciales de desarrollador. Se omite sola mientras no haya sandbox desplegado, para
+      que la compuerta corra en una maquina sin AWS. La cobertura que **si** corre hoy esta en
+      `amplify/infraestructura.test.ts`: la politica existe con las acciones y la condicion
+      exactas
+- [ ] **ESCRITA, PENDIENTE DE EJECUTAR.** La tabla responde a un `PutItem` y un `Query` de
+      humo desde la aplicacion (en el mismo archivo de integracion)
 
 **Salida esperada:** sandbox funcional y auditoria demostrablemente inmutable.
 
@@ -690,3 +705,7 @@ festack-scripts no vaya a soportar por estar congelado.
 | 2026-09-04 | `typescript` fijado a `6.0.3` exacto | Ultima version publicada (`7.0.2`): rompe `typescript-eslint@8.69` (`peerDependency typescript: >=4.8.4 <6.1.0`), confirmado ademas por el propio changelog de festack-scripts 27.0.7 |
 | 2026-09-04 | `participanteId` = `oktaSub` hasta la Etapa 4 | Construir el *upsert* en DynamoDB ahora, adelantando parte de la Etapa 4 dentro de la Etapa 2 (rompe la separacion de capas de `CLAUDE.md`) |
 | 2026-09-04 | CSP con nonce por peticion en `script-src`; `style-src` con `unsafe-inline` | `style-src` con nonce tambien: mas estricto, pero arriesga romper visualmente componentes Eden cuyo uso de estilos en linea no se pudo verificar (sin acceso al MCP de Eden en este entorno) |
+| 2026-09-04 | GSIs 2, 3 y 4 con proyeccion `ALL` | `INCLUDE` con lista de atributos: mas barato, pero la proyeccion de un GSI **no se puede modificar** despues de creado y las pantallas que la consumen aun no existen. Estrechar es una optimizacion para la Etapa 12 |
+| 2026-09-04 | Rol de computo SSR creado en la pila, adjuntado a mano en la consola | Crearlo tambien a mano: dejaria el `Deny` de la bitacora fuera del repositorio, en un procedimiento que se puede omitir |
+| 2026-09-04 | `esbuild` como dependencia directa de desarrollo | Depender de Docker Desktop para empaquetar el Lambda del barrido, que en una maquina corporativa puede no existir |
+| 2026-09-04 | Llave **publica** de CloudFront versionada en el repositorio | Inyectarla por variable de entorno: los PEM multilinea en variables son fragiles, y rotar la llave invalidaria todas las URLs firmadas vigentes |

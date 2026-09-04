@@ -1,0 +1,6 @@
+# Solo la llave PUBLICA se versiona. La privada firma las URLs de CloudFront y es un
+# secreto: vive en el gestor de secretos de Amplify y en el `.env.local` de cada quien.
+*
+!.gitignore
+!README.md
+!cloudfront-publica.pem
