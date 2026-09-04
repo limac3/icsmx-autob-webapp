@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "eden-mcp": {
+      "type": "http",
+      "url": "https://abit4gpmkftkfrdipkai5o7xdy0pfxqm.lambda-url.us-east-1.on.aws/"
+    }
+  }
+}
