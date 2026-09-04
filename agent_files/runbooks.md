@@ -5,6 +5,21 @@ Procedimientos para operar la aplicacion y responder a incidentes.
 **Todo runbook debe haberse ejecutado al menos una vez antes de salir a produccion**
 (Etapa 12). Un procedimiento no probado es una suposicion.
 
+## Quien ejecuta cada paso
+
+Estos procedimientos los ejecutan dos partes distintas, y **cada paso dice cual**:
+
+| Marca | Quien | Por que |
+| --- | --- | --- |
+| **[OPERADOR]** | La persona con credenciales de AWS, consola y secretos | Requiere una sesion humana: consola de AWS, SSO, verificacion de correo, custodia de llaves privadas |
+| **[AGENTE]** | Claude Code, con la terminal del proyecto | Es codigo, comandos o pruebas dentro del repositorio |
+
+Un paso sin marca es **[OPERADOR]**: ante la duda, lo hace la persona.
+
+> **El agente no gestiona accesos.** Si un procedimiento requiere una credencial que no
+> tiene, **la solicita y se detiene**; no intenta obtenerla por su cuenta ni lanza flujos que
+> abran un navegador. `aws sso login` es del operador, siempre.
+
 ---
 
 ## 0. Antes de tocar nada
@@ -206,39 +221,78 @@ Ver seccion 1 de `desafios-implementacion.md`.
 
 ## R-11 — Preparar un entorno nuevo (o un sandbox personal)
 
-Tres pasos que el backend no puede hacer solo. Los dos primeros se hacen **antes** del primer
-`npx ampx sandbox`; el tercero, despues.
+Es un procedimiento **a cuatro manos**: alterna entre el operador y el agente, y ninguno lo
+completa solo. El orden importa — cada paso depende del anterior.
 
-1. **Llave de CloudFront.** Sin ella el backend falla al sintetizar, a proposito: una
-   distribucion sin grupo de llaves de confianza serviria las fotografias a cualquiera que
-   conociera la URL.
+### Paso 0 — Habilitar el acceso a AWS · **[OPERADOR]**
 
-   ```bash
-   openssl genrsa -out cloudfront-privada.pem 2048
-   openssl rsa -pubout -in cloudfront-privada.pem -out amplify/claves/cloudfront-publica.pem
-   ```
+```bash
+aws sso login --profile aws-church-dev
+```
 
-   La publica se versiona; la privada va a `CLOUDFRONT_PRIVATE_KEY` (secreto). **Rotarla
-   invalida todas las URLs firmadas vigentes**, asi que no se regenera por costumbre.
+Solo el operador puede hacerlo: abre un navegador y exige una sesion humana. **El agente no
+lo lanza**; si detecta el token vencido, lo reporta y espera.
 
-2. **`SES_IDENTIDAD`** en `.env.local` (o en las variables de la consola de Amplify). Con
-   arroba es un correo suelto, que se verifica solo y basta para un sandbox; sin arroba es un
-   dominio, que habilita DKIM y es lo que corresponde en entornos compartidos. Recuerda que en
-   modo prueba SES **solo entrega a direcciones verificadas** (ver R-2).
+En la primera preparacion, aprovecha para resolver el riesgo **R1**: confirmar que la cuenta
+permite crear apps de Amplify Gen2 y que existe un camino de despliegue aprobado. Si no lo
+hay, **detener** y decidir entre gestionarlo o migrar el IaC a Terraform/ECS.
 
-3. **Adjuntar el rol de computo SSR.** Amplify Hosting no forma parte de `defineBackend`, asi
-   que el rol se crea en la pila pero la asociacion es un paso de consola: **App settings >
-   IAM roles > Compute role**, eligiendo el ARN que aparece en `amplify_outputs.json` bajo
-   `custom.autob.rolComputoSsr`. Sin este paso la aplicacion no puede leer la tabla; con el,
-   hereda tambien el `Deny` que hace inmutable la bitacora. Se puede cambiar sin redesplegar.
+### Paso 1 — Llave de CloudFront · **[OPERADOR]** en entornos compartidos · **[AGENTE]** en un sandbox personal
 
-Para comprobar que quedo bien, con el sandbox arriba:
+Sin ella el backend falla al sintetizar, a proposito: una distribucion sin grupo de llaves de
+confianza serviria las fotografias a cualquiera que conociera la URL.
+
+```bash
+openssl genrsa -out cloudfront-privada.pem 2048
+openssl rsa -pubout -in cloudfront-privada.pem -out amplify/claves/cloudfront-publica.pem
+```
+
+La publica se versiona; la privada va a `CLOUDFRONT_PRIVATE_KEY` (secreto) y el `.gitignore`
+de `amplify/claves/` impide versionarla. **Rotarla invalida todas las URLs firmadas
+vigentes**, asi que no se regenera por costumbre.
+
+En desarrollo o produccion la genera el operador y la privada nunca sale de su custodia. En un
+sandbox personal —cuyos datos son desechables— el agente puede generarla si el operador lo
+autoriza.
+
+### Paso 2 — Elegir `SES_IDENTIDAD` · **[OPERADOR]**
+
+Va en `.env.local` (o en las variables de la consola de Amplify). Con arroba es un correo
+suelto, que se verifica solo y basta para un sandbox; sin arroba es un dominio, que habilita
+DKIM y es lo que corresponde en entornos compartidos.
+
+Es del operador porque hay que **elegir una direccion o dominio que se controle** y **abrir el
+correo de verificacion que manda AWS**. Recuerda que en modo prueba SES solo entrega a
+direcciones verificadas (ver R-2): es la causa mas frecuente de correos no recibidos.
+
+### Paso 3 — Desplegar el backend · **[AGENTE]**
+
+```bash
+npx ampx sandbox
+```
+
+Produce `amplify_outputs.json`, de donde salen el nombre de la tabla y el ARN del rol.
+
+### Paso 4 — Verificar que la bitacora es inmutable · **[AGENTE]**
 
 ```bash
 npx vitest run amplify/auditoriaInmutable.integracion.test.ts
 ```
 
-Si se omite en vez de correr, es que no encontro `amplify_outputs.json`.
+Si se **omite** en vez de correr, es que no encontro `amplify_outputs.json`: el paso 3 no
+termino. No requiere el paso 5 — la prueba asume el rol directamente con STS.
+
+### Paso 5 — Adjuntar el rol de computo SSR · **[OPERADOR]**
+
+Amplify Hosting no forma parte de `defineBackend`, asi que el rol se crea en la pila pero la
+asociacion es un paso de consola: **App settings > IAM roles > Compute role**, eligiendo el
+ARN que aparece en `amplify_outputs.json` bajo `custom.autob.rolComputoSsr`.
+
+Sin este paso la aplicacion desplegada no puede leer la tabla; con el, hereda tambien el
+`Deny` que hace inmutable la bitacora. Se puede cambiar sin redesplegar.
+
+Solo aplica a una app de Amplify Hosting ya creada — **un sandbox local no lo necesita**,
+porque ahi la aplicacion corre con las credenciales del operador.
 
 ---
 
