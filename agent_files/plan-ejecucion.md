@@ -3,7 +3,7 @@
 Fuente de verdad del avance del proyecto. Cada etapa se marca `[x]` solo cuando **todos** sus
 entregables estan hechos y su compuerta de calidad pasa en verde.
 
-> Ultima actualizacion: 2026-09-04 — **Etapa 0 completada.** Siguiente: Etapa 1 (scaffold y toolchain).
+> Ultima actualizacion: 2026-09-04 — **Etapa 1 completada.** Siguiente: Etapa 2 (identidad y autorizacion).
 
 ---
 
@@ -75,7 +75,7 @@ implementar sin adivinar. Sin codigo todavia.
 
 ---
 
-## Etapa 1 — Scaffold y toolchain
+## Etapa 1 — Scaffold y toolchain ✅
 
 **Objetivo:** proyecto Next.js que compila, pasa lint y ejecuta un test, con TypeScript strict.
 
@@ -83,35 +83,35 @@ implementar sin adivinar. Sin codigo todavia.
 
 **Primero que nada** — antes de escribir una linea de codigo, verificar acceso a paquetes:
 
-- [ ] `.npmrc` presente y `NODE_AUTH_TOKEN` exportado
-- [ ] `npm view @churchofjesuschrist/festack-scripts version` responde (valida Artifactory)
-- [ ] `echo $env:NODE_EXTRA_CA_CERTS` no vacio (ver riesgo R11)
+- [x] `.npmrc` presente y `NODE_AUTH_TOKEN` exportado
+- [x] `npm view @churchofjesuschrist/festack-scripts version` responde (valida Artifactory)
+- [x] `echo $env:NODE_EXTRA_CA_CERTS` no vacio (ver riesgo R11)
 
 Luego:
 
-- [ ] `package.json` con Node 24 en `engines`
-- [ ] `next` y `react`/`react-dom` en **version exacta**, sin `^` (ver riesgo R15)
-- [ ] `@churchofjesuschrist/festack-scripts` como devDependency
-- [ ] `vitest` fijado por `overrides` al igual que en el proyecto hermano
-- [ ] Scripts: `dev`, `build`, `start`, `test`, `lint`, `verify`, `format`, **`typecheck`**
+- [x] `package.json` con Node 24 en `engines`
+- [x] `next` y `react`/`react-dom` en **version exacta**, sin `^` (ver riesgo R15)
+- [x] `@churchofjesuschrist/festack-scripts` como devDependency
+- [x] `vitest` fijado por `overrides` al igual que en el proyecto hermano
+- [x] Scripts: `dev`, `build`, `start`, `test`, `lint`, `verify`, `format`, **`typecheck`**
       (`tsc --noEmit` — el proyecto hermano no lo tiene, aqui es obligatorio)
-- [ ] `tsconfig.json` con `strict: true` y `paths` → `@/* : ./src/*`
-- [ ] `eslint.config.mjs`, `prettier.config.mjs`, `stylelint.config.mjs` delegando en festack
-- [ ] `vitest.config.mts` con `mergeConfig(festackVitestConfig, ...)` y alias `@` duplicado
-- [ ] `next.config.ts` con `turbopack.root: __dirname` (ver riesgo R13), `poweredByHeader: false`
+- [x] `tsconfig.json` con `strict: true` y `paths` → `@/* : ./src/*`
+- [x] `eslint.config.mjs`, `prettier.config.mjs`, `stylelint.config.mjs` delegando en festack
+- [x] `vitest.config.mts` con `mergeConfig(festackVitestConfig, ...)` y alias `@` duplicado
+- [x] `next.config.ts` con `turbopack.root: __dirname` (ver riesgo R13), `poweredByHeader: false`
       y cabeceras de seguridad
-- [ ] Estructura base: `src/app/`, `src/components/`, `src/lib/`, `src/dictionaries/`, `src/types/`
-- [ ] `src/app/layout.tsx` con `Normalize` y `Fonts` de Eden
-- [ ] `src/app/page.tsx` minima
-- [ ] Un componente de prueba con su `.test.tsx` usando el patron `getTestContext` + axe
-- [ ] `src/app/api/health/route.ts`
+- [x] Estructura base: `src/app/`, `src/components/`, `src/lib/`, `src/dictionaries/`, `src/types/`
+- [x] `src/app/layout.tsx` con `Normalize` y `Fonts` de Eden
+- [x] `src/app/page.tsx` minima
+- [x] Un componente de prueba con su `.test.tsx` usando el patron `getTestContext` + axe
+- [x] `src/app/api/health/route.ts`
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] `npm run typecheck` sin errores sobre archivos `.ts`/`.tsx` reales
-- [ ] `npm run lint` reconoce TypeScript (ver riesgo R9)
-- [ ] `npm run dev` levanta y la pagina raiz responde 200
+- [x] Compuerta de calidad completa en verde
+- [x] `npm run typecheck` sin errores sobre archivos `.ts`/`.tsx` reales
+- [x] `npm run lint` reconoce TypeScript (ver riesgo R9)
+- [x] `npm run dev` levanta y la pagina raiz responde 200
 
 **Salida esperada:** `npm run build` exitoso sobre un esqueleto vacio pero valido.
 
@@ -644,6 +644,28 @@ automatica.
 
 **Senal de alerta:** un build que falla sin que haya cambiado el codigo de la aplicacion.
 
+### R16 — `@churchofjesuschrist/festack-scripts` esta deprecado
+
+**Probabilidad:** alta (ya ocurrio) · **Impacto:** medio
+
+Sus propios mantenedores lo deprecaron en la version 27.1.0 (2026-09-02, dos dias antes de
+iniciar la Etapa 1): "ya no aporta delta real sobre las herramientas estandar". Sigue
+funcionando sin degradacion — `npm install` y todo el toolchain operan con normalidad — pero
+no recibira mas actualizaciones ni parches de seguridad nunca.
+
+**Mitigacion:** decision explicita de mantenerlo por ahora (ver Registro de decisiones). El
+changelog de 27.1.0 trae un prompt de migracion oficial, validado por el equipo de la
+herramienta contra repos reales, para retirarlo sin cambiar de comportamiento (vendorizar los
+`.mjs` de configuracion desde `node_modules/@churchofjesuschrist/festack-scripts/lib/config/`,
+promover sus dependencias a directas, reescribir los scripts npm). Cuanto antes se ejecute esa
+migracion, mas barata sale: hoy solo la tocan 5 archivos de configuracion; cada etapa que pasa
+sin migrar aumenta ligeramente el costo de la migracion futura, aunque el radio de impacto se
+mantiene acotado a esos mismos archivos.
+
+**Senal de alerta:** una vulnerabilidad de seguridad reportada en una dependencia que
+festack-scripts ya no pueda actualizar, o un cambio de mayor en Next.js/Vitest/ESLint que
+festack-scripts no vaya a soportar por estar congelado.
+
 ---
 
 ## Registro de decisiones
@@ -654,3 +676,5 @@ automatica.
 | 2026-09-04 | TypeScript `strict` con `tsconfig` y `typecheck` propios | JavaScript con JSDoc, como el proyecto hermano |
 | 2026-09-04 | Varias filas simultaneas, **una sola adjudicacion activa** por participante | Sin limite (riesgo de acaparamiento); una sola solicitud por convocatoria (demasiado restrictivo) |
 | 2026-09-04 | Plazo de liquidacion en **horas naturales** | Horas habiles con calendario de festivos de Mexico |
+| 2026-09-04 | Mantener `@churchofjesuschrist/festack-scripts` pese a su deprecacion reciente | Migrar de inmediato a eslint/prettier/stylelint/vitest directos, pese a que el costo hoy es minimo (riesgo R16) |
+| 2026-09-04 | `typescript` fijado a `6.0.3` exacto | Ultima version publicada (`7.0.2`): rompe `typescript-eslint@8.69` (`peerDependency typescript: >=4.8.4 <6.1.0`), confirmado ademas por el propio changelog de festack-scripts 27.0.7 |

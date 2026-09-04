@@ -1,0 +1,13 @@
+{
+  "comun": {
+    "nombreAplicacion": "Fleet Vehicle Sale",
+    "cargando": "Loading…",
+    "error": "Something went wrong"
+  },
+  "estadoServicio": {
+    "titulo": "Service status",
+    "etiquetaEstado": "Status",
+    "etiquetaVersion": "Version",
+    "etiquetaHora": "Checked"
+  }
+}

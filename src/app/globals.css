@@ -1,0 +1,11 @@
+/*
+ * @churchofjesuschrist/eden-normalize ya aplica normalizaciones de navegador
+ * y define los tokens de diseno (--unity-*). Este archivo solo agrega lo que
+ * Normalize no cubre.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}

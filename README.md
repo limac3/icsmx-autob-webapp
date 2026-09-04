@@ -3,7 +3,8 @@
 Aplicacion web para la **venta de vehiculos obsoletos de flotilla** mediante convocatorias
 de venta con fila de adjudicacion por orden de llegada (FIFO) y trazabilidad auditable.
 
-> Estado: **etapa 0 — planeacion**. No hay codigo de aplicacion todavia.
+> Estado: **etapa 1 — scaffold y toolchain**. Next.js compila, pasa lint y ejecuta pruebas;
+> sin logica de negocio todavia.
 > El plan de ejecucion vive en [agent_files/plan-ejecucion.md](agent_files/plan-ejecucion.md).
 
 ---

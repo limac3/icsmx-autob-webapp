@@ -233,3 +233,97 @@ la invalidacion por etiquetas no basta.
 
 Probar la publicacion programada con `publicadaEn` **en el futuro**. Con fecha pasada, el
 defecto es invisible.
+
+## 6) festack-scripts deprecado y TypeScript 7 incompatible con su lint
+
+### Problema
+
+Instalar el toolchain de la Etapa 1 (`@churchofjesuschrist/festack-scripts`, TypeScript strict)
+segun lo especificado en `CLAUDE.md`.
+
+### Sintoma
+
+`npm install` completo sin errores, pero con dos avisos:
+
+```
+npm warn deprecated @churchofjesuschrist/festack-scripts@27.1.0: festack-scripts is deprecated.
+Migrate to the underlying tools directly. See the 27.1.0 release notes for an AI agent
+migration prompt: https://github.com/ICS-Eng/festack-scripts/blob/main/CHANGELOG.md#2710-2026-09-02
+npm warn deprecated eslint@9.39.5: This version is no longer supported.
+```
+
+### Causa raiz
+
+Dos hechos independientes, descubiertos antes de escribir codigo de negocio (verificando
+versiones reales via `npm view`/`npm pack`, no asumiendolas):
+
+1. **`festack-scripts` fue deprecado por sus propios mantenedores** en la version 27.1.0
+   (2026-09-02, dos dias antes de esta etapa): "ya no aporta delta real sobre las herramientas
+   estandar". Sigue funcionando sin degradacion, pero no recibira mas actualizaciones.
+2. **La ultima version publicada de `typescript` es la 7.0.2**, pero
+   `typescript-eslint@8.69.0` (dependencia de `festack-scripts`) declara
+   `peerDependency typescript: ">=4.8.4 <6.1.0"`. Instalar TypeScript 7 habria dejado el lint de
+   TypeScript silenciosamente roto o en conflicto de peers. El propio changelog de
+   `festack-scripts@27.0.7` confirma este mismo limite de forma independiente: "typescript 6 → 7:
+   typescript-eslint@8.65.0 requires typescript@>=4.8.4 <6.1.0. Revisit once typescript-eslint
+   supports TypeScript 7."
+
+### Solucion aplicada
+
+- **`typescript` fijado a `6.0.3` exacto** (la ultima version estable dentro del rango que acepta
+  `typescript-eslint`), no a `^` ni a la ultima publicada. Registrado en el Registro de
+  decisiones de `plan-ejecucion.md`.
+- **Se mantiene `festack-scripts`** por decision explicita del usuario, pese a la deprecacion.
+  Se documenta como riesgo R16 en `plan-ejecucion.md`, con la migracion oficial (el changelog de
+  27.1.0 trae un prompt de migracion completo y validado por el equipo de la herramienta) lista
+  para ejecutarse cuando se decida, idealmente pronto: hoy solo la usan 5 archivos de
+  configuracion, y cada etapa que pasa sin migrar encarece ligeramente el cambio.
+
+### Regla para futuro
+
+**Verificar version real instalable antes de fijarla en `package.json`, nunca asumir que "la
+ultima" es segura.** `npm view <paquete> version` puede devolver una version que rompe un peer
+dependency de otro paquete del mismo toolchain; `npm view <paquete> peerDependencies` en las
+piezas que se acoplan (aqui, `typescript-eslint`) es lo que revela el limite real.
+
+Ante un aviso `npm warn deprecated` en una dependencia mandada por `CLAUDE.md` o `AGENTS.md`,
+no seguir de largo ni migrar por cuenta propia: es una decision de alcance de proyecto y
+corresponde preguntar, igual que cualquier otra desviacion de una instruccion escrita.
+
+## 7) `Text2` de Eden reenvia `emphasized` crudo al DOM
+
+### Problema
+
+Usar `<Text2 emphasized>` (`@churchofjesuschrist/eden-text@11.0.5`) para resaltar el valor del
+estado del servicio en `EstadoServicio.tsx`.
+
+### Sintoma
+
+`npm run test` fallo con `Error: Received \`true\` for a non-boolean attribute \`emphasized\`.`
+festack-scripts convierte todo `console.error` de React en una excepcion durante las pruebas
+(`vitest-javascript.setup.mjs`), asi que el warning de React se volvio un fallo duro en vez de
+pasar inadvertido.
+
+### Causa raiz
+
+El tipo publicado de `Text2` (`types.d.ts`) declara `emphasized?: boolean` como prop legitima,
+pero la implementacion real (`components/Text2.jsx` dentro del paquete publicado) no la
+consume: hace `const { children, renderAs: RenderAs = "div", className, ...props } = props` y
+esparce `...props` —incluido `emphasized`— directo sobre el elemento host (`RenderAs`). React
+rechaza un booleano crudo en un atributo DOM que no reconoce. Es un desfase entre el tipo
+publicado y la implementacion de esta version del paquete, no un error de uso.
+
+### Solucion aplicada
+
+Se dejo de pasar `emphasized` — el contenido no lo necesitaba realmente, era un adorno visual.
+**No se parcheo ni se envolvio el componente**: la regla 10 de `CLAUDE.md` pide usar los
+componentes Eden tal cual.
+
+### Regla para futuro
+
+Si una prop de un componente Eden produce un warning de React al usarla, **verificar la
+implementacion real del paquete instalado** (`node_modules/@churchofjesuschrist/<paquete>/lib/cjs/components/*.js`),
+no solo su `.d.ts` — el tipo publicado puede no coincidir con el runtime en una version dada.
+Si la prop es prescindible para el caso de uso, omitirla es preferible a rodear el componente
+con un wrapper o a silenciar el warning. Si resulta indispensable, reportarlo al equipo de Eden
+en vez de trabajarlo por fuera.

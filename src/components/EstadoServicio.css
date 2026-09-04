@@ -1,0 +1,16 @@
+.estado-servicio__lista {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.estado-servicio__fila {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.estado-servicio__fila dt,
+.estado-servicio__fila dd {
+  margin: 0;
+}

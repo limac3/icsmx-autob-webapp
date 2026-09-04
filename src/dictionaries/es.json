@@ -1,0 +1,13 @@
+{
+  "comun": {
+    "nombreAplicacion": "Venta de Vehiculos de Flotilla",
+    "cargando": "Cargando…",
+    "error": "Ocurrio un error"
+  },
+  "estadoServicio": {
+    "titulo": "Estado del servicio",
+    "etiquetaEstado": "Estado",
+    "etiquetaVersion": "Version",
+    "etiquetaHora": "Consultado"
+  }
+}
