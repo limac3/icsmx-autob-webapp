@@ -123,29 +123,39 @@ Luego:
 
 **Dependencias:** Etapa 1.
 
-- [ ] `src/lib/auth/auth0.ts` — cliente `Auth0Client` apuntando a Okta, con helper que devuelve
+- [x] `src/lib/auth/auth0.ts` — cliente `Auth0Client` apuntando a Okta, con helper que devuelve
       valor de relleno durante `next build` para no exigir secretos en build
-- [ ] `src/proxy.ts` — middleware del SDK, resolucion de idioma y `Cache-Control: no-store` en
-      rutas autenticadas (Next.js 16 usa `proxy`, no `middleware`)
-- [ ] `src/lib/auth/session.ts` — `getSession()` con `import "server-only"`, devuelve
+- [x] `src/proxy.ts` — middleware del SDK, resolucion de idioma y `Cache-Control: no-store` en
+      rutas autenticadas (Next.js 16 usa `proxy`, no `middleware`) — incluye ademas CSP con nonce
+      por peticion (ver `arquitectura-tecnica-aws.md` seccion 5)
+- [x] `src/lib/auth/session.ts` — `getSession()` con `import "server-only"`, devuelve
       `{ participanteId, oktaSub, correo, nombre, roles, tipoParticipante }` o `null`
-- [ ] `src/lib/auth/eas.ts` — adaptador conmutable (real / mock) segun `ENABLE_DEV_TOOLS`
-- [ ] `src/lib/auth/easAdapter.ts` — consulta real con timeout; **sin fallback silencioso**:
+      (`participanteId` = `oktaSub` hasta el *upsert* real de la Etapa 4 — ver
+      `desafios-implementacion.md` seccion 8)
+- [x] `src/lib/auth/eas.ts` — adaptador conmutable (real / mock) segun `ENABLE_DEV_TOOLS`
+- [x] `src/lib/auth/easAdapter.ts` — consulta real con timeout; **sin fallback silencioso**:
       si EAS falla, error explicito (regla 15)
-- [ ] `src/lib/auth/devMode.ts` — `ENABLE_DEV_TOOLS`, lanza error si no es `OFF` en produccion
-- [ ] `src/lib/auth/permisos.ts` — `puedeEjecutar({ accion, roles, contexto })` puro, sin I/O,
+- [x] `src/lib/auth/devMode.ts` — `ENABLE_DEV_TOOLS`, lanza error si no es `OFF` en produccion
+- [x] `src/lib/auth/permisos.ts` — `puedeEjecutar({ accion, roles, contexto })` puro, sin I/O,
       derivado linea por linea de `permission-matrix.md`
-- [ ] `src/types/identidad.ts` — tipos de rol, tipo de participante y sesion
-- [ ] Pagina protegida de prueba que muestra rol y tipo de participante
-- [ ] `src/lib/auth/permisos.test.ts` — casos **allow y deny para los seis roles**
-- [ ] `src/proxy.test.ts`
+- [x] `src/types/identidad.ts` — tipos de rol, tipo de participante y sesion
+- [x] Pagina protegida de prueba que muestra rol y tipo de participante (`src/app/sesion/page.tsx`
+      + `src/app/forbidden.tsx`)
+- [x] `src/lib/auth/permisos.test.ts` — casos **allow y deny para los seis roles** (cobertura
+      cartesiana completa de las 33 acciones, mas los 7 invariantes de `permission-matrix.md`)
+- [x] `src/proxy.test.ts`
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Un usuario sin sesion es redirigido a login
-- [ ] Un usuario con sesion pero sin rol suficiente recibe 403, no 500
-- [ ] Cobertura de allow y deny para cada uno de los seis roles
+- [x] Compuerta de calidad completa en verde
+- [x] Un usuario sin sesion es redirigido a login — verificado con `curl` contra `npm run dev`
+      (307 a `/auth/login`)
+- [x] Un usuario con sesion pero sin rol suficiente recibe 403, no 500 — mecanismo verificado
+      (`forbidden()` + `experimental.authInterrupts`, documentado por Next.js; `build` confirma
+      que compila). El recorrido de punta a punta exige una sesion real de Okta, que no existe en
+      este entorno de desarrollo; queda pendiente de una verificacion manual cuando haya
+      credenciales de un tenant de prueba
+- [x] Cobertura de allow y deny para cada uno de los seis roles
 
 **Salida esperada:** login real contra Okta y decisiones de permiso probadas de forma aislada.
 
@@ -678,3 +688,5 @@ festack-scripts no vaya a soportar por estar congelado.
 | 2026-09-04 | Plazo de liquidacion en **horas naturales** | Horas habiles con calendario de festivos de Mexico |
 | 2026-09-04 | Mantener `@churchofjesuschrist/festack-scripts` pese a su deprecacion reciente | Migrar de inmediato a eslint/prettier/stylelint/vitest directos, pese a que el costo hoy es minimo (riesgo R16) |
 | 2026-09-04 | `typescript` fijado a `6.0.3` exacto | Ultima version publicada (`7.0.2`): rompe `typescript-eslint@8.69` (`peerDependency typescript: >=4.8.4 <6.1.0`), confirmado ademas por el propio changelog de festack-scripts 27.0.7 |
+| 2026-09-04 | `participanteId` = `oktaSub` hasta la Etapa 4 | Construir el *upsert* en DynamoDB ahora, adelantando parte de la Etapa 4 dentro de la Etapa 2 (rompe la separacion de capas de `CLAUDE.md`) |
+| 2026-09-04 | CSP con nonce por peticion en `script-src`; `style-src` con `unsafe-inline` | `style-src` con nonce tambien: mas estricto, pero arriesga romper visualmente componentes Eden cuyo uso de estilos en linea no se pudo verificar (sin acceso al MCP de Eden en este entorno) |

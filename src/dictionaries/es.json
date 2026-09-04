@@ -9,5 +9,28 @@
     "etiquetaEstado": "Estado",
     "etiquetaVersion": "Version",
     "etiquetaHora": "Consultado"
+  },
+  "sesion": {
+    "titulo": "Mi sesion",
+    "etiquetaNombre": "Nombre",
+    "etiquetaCorreo": "Correo",
+    "etiquetaRoles": "Roles",
+    "etiquetaTipoParticipante": "Tipo de participante"
+  },
+  "roles": {
+    "ADMINISTRADOR": "Administrador",
+    "APROBADOR_CONVOCATORIA": "Aprobador de convocatorias",
+    "EMPLEADO": "Empleado",
+    "OTRO_USUARIO": "Otro usuario",
+    "OPERADOR_TESORERIA": "Operador de tesoreria",
+    "AUDITOR_CUMPLIMIENTO": "Auditor de cumplimiento"
+  },
+  "tiposParticipante": {
+    "EMPLEADO": "Empleado",
+    "OTRO_USUARIO": "Otro usuario"
+  },
+  "prohibido": {
+    "titulo": "Sin acceso",
+    "descripcion": "Tu cuenta no tiene un rol asignado en esta aplicacion. Si crees que es un error, contacta al administrador."
   }
 }

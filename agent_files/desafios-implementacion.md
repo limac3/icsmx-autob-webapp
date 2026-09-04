@@ -327,3 +327,77 @@ no solo su `.d.ts` — el tipo publicado puede no coincidir con el runtime en un
 Si la prop es prescindible para el caso de uso, omitirla es preferible a rodear el componente
 con un wrapper o a silenciar el warning. Si resulta indispensable, reportarlo al equipo de Eden
 en vez de trabajarlo por fuera.
+
+---
+
+## 8) `participanteId` no puede resolverse contra DynamoDB todavia
+
+### Problema
+
+`identidad-autorizacion.md` (Etapa 0) especifica que `getSession()` hace un *upsert* del
+participante en DynamoDB por `oktaSub` para obtener un `participanteId` propio y estable, mas
+corto que el `sub` de Okta.
+
+### Sintoma
+
+No hubo sintoma en ejecucion: se detecto al implementar `session.ts` en la Etapa 2. El *upsert*
+exige un cliente de DynamoDB y una tabla — ambos son entregables de la Etapa 3
+(infraestructura Amplify) y la Etapa 4 (`src/lib/data`), que todavia no existen. La Etapa 2
+depende solo de la Etapa 1 y su objetivo declarado es "sin datos de negocio aun".
+
+### Causa raiz
+
+El plan secuencia identidad (Etapa 2) antes que infraestructura y capa de datos (Etapas 3-4),
+pero el diseno de `getSession()` en `identidad-autorizacion.md` da por hecho que la tabla ya
+existe. Es una dependencia cruzada que el propio plan crea entre etapas no adyacentes.
+
+### Solucion aplicada
+
+`session.ts` resuelve `participanteId` con una funcion propia,
+`resolverParticipanteId(oktaSub)`, que hoy simplemente devuelve el `oktaSub` tal cual — sigue
+siendo un identificador unico y estable, solo que con el formato largo de Okta en vez de un id
+interno corto. Es la unica funcion que la Etapa 4 debe reemplazar por el *upsert* real; el
+contrato de `getSession()` (forma de `Sesion`, `null` si no hay sesion) no cambia.
+
+### Regla para futuro
+
+Al implementar la Etapa 4, sustituir el cuerpo de `resolverParticipanteId` en
+`src/lib/auth/session.ts` por el *upsert* contra DynamoDB. Ninguna otra parte de la Etapa 2
+(permisos, proxy, pagina de sesion) debe requerir cambios: todas consumen `Sesion.participanteId`
+como valor opaco.
+
+---
+
+## 9) `next dev` reescribe `Cache-Control` en paginas, aunque `proxy.ts` ya lo fijo
+
+### Problema
+
+Verificar manualmente que `src/proxy.ts` fija `Cache-Control: no-store, no-cache,
+must-revalidate, proxy-revalidate, private` en toda respuesta (Etapa 2).
+
+### Sintoma
+
+Con `npm run dev`, `curl -I http://localhost:3000/` muestra `Cache-Control: no-cache,
+must-revalidate` — **no** el valor completo que `proxy.ts` establece. `/api/health` (Route
+Handler) si muestra el valor completo; solo las paginas (RSC) lo pierden.
+
+### Causa raiz
+
+`base-server.js` de Next.js sobrescribe `Cache-Control` en toda respuesta de pagina **cuando
+`this.dev` es verdadero**, para que el navegador pueda restaurarla del cache HTTP al navegar
+atras/adelante en desarrollo, sin usar `no-store` (que rompe ese caso con HMR). Es deliberado y
+esta comentado en el propio codigo fuente de Next; no distingue quien fijo el header antes.
+
+Se confirmo que **no ocurre en produccion**: con `next build && next start`, `/` devuelve el
+`Cache-Control` completo que fija `proxy.ts`, identico al de `/api/health`.
+
+### Solucion aplicada
+
+Ninguna — no es un defecto. Se deja documentado para que una verificacion manual futura con
+`npm run dev` no se lea como que `proxy.ts` fallo en fijar el header.
+
+### Regla para futuro
+
+Para verificar cabeceras de cache de una pagina (no de un Route Handler), probar contra
+`next build && next start`, nunca contra `next dev`: el modo desarrollo altera `Cache-Control`
+en toda pagina por una razon ajena a la aplicacion.

@@ -2,6 +2,7 @@ import { H1 } from "@churchofjesuschrist/eden-headings";
 import EstadoServicio from "@/components/EstadoServicio";
 import { obtenerDiccionario } from "@/dictionaries";
 import { obtenerEstadoAplicacion } from "@/lib/estadoAplicacion";
+import { obtenerIdiomaDePeticion } from "@/lib/idioma";
 
 // Pagina minima de la Etapa 1 (scaffold y toolchain). El catalogo real de
 // convocatorias llega en la Etapa 7; ver agent_files/plan-ejecucion.md.
@@ -13,8 +14,9 @@ import { obtenerEstadoAplicacion } from "@/lib/estadoAplicacion";
 // peticion entra a cache estatica).
 export const dynamic = "force-dynamic";
 
-const InicioPagina = () => {
-  const diccionario = obtenerDiccionario();
+const InicioPagina = async () => {
+  const idioma = await obtenerIdiomaDePeticion();
+  const diccionario = obtenerDiccionario(idioma);
   const estado = obtenerEstadoAplicacion();
 
   return (

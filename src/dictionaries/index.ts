@@ -1,8 +1,8 @@
 import es from "./es.json";
 import en from "./en.json";
 
-// Idioma por defecto "es" (regla 11 de CLAUDE.md). La resolucion del idioma
-// del visitante se conecta en la Etapa 2 desde src/proxy.ts; por ahora este
+// Idioma por defecto "es" (regla 11 de CLAUDE.md). src/proxy.ts resuelve el
+// idioma del visitante y lo expone como header "x-lang" (Etapa 2); este
 // modulo solo resuelve un diccionario dado un idioma explicito.
 export type Idioma = "es" | "en";
 

@@ -214,8 +214,19 @@ El correo **nunca** bloquea ni revierte una adjudicacion.
 | S3 | Sin acceso publico; fotografias solo por CloudFront con OAC; comprobantes solo por Route Handler |
 | DynamoDB | Rol de minimo privilegio, con **`Deny` explicito de `UpdateItem`/`DeleteItem` sobre `AUDIT#`** |
 | Sesion | Cookie `httpOnly` y `secure`; duracion absoluta acotada |
-| Rutas autenticadas | `Cache-Control: no-store` desde `proxy.ts` |
+| Rutas autenticadas | `Cache-Control: no-store` desde `proxy.ts` — en la practica es toda ruta: no hay contenido publico/anonimo en esta aplicacion (ni el catalogo publicado exige rol, seccion 3 de `permission-matrix.md`) |
 | Subidas | Tipo y tamano validados en servidor; nombre de archivo generado, nunca el del cliente |
+
+**CSP con nonce (Etapa 2, `src/proxy.ts`):** nonce distinto por peticion en `script-src`, con
+`'strict-dynamic'`. `style-src` se deja con `'unsafe-inline'` a proposito — Eden es una libreria
+externa cuyo uso de estilos en linea no esta verificado (sin acceso al MCP de Eden en el entorno
+de desarrollo); endurecerlo sin poder revisar cada componente visualmente es mas riesgo que
+beneficio. Revisar en la Etapa 12, cuando haya oportunidad de una pasada visual completa.
+
+El nonce por peticion **obliga a renderizado dinamico en toda la aplicacion** (Next.js no puede
+inyectar un nonce en una pagina generada en build). Esto no estorba la seccion 3: `cacheLife` y
+`revalidateTag` siguen operando dentro de una respuesta dinamica, solo que ya no hay paginas
+completamente estaticas que perder.
 
 ### 5.1 La politica IAM que mas importa
 

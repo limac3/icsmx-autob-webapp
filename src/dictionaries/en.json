@@ -9,5 +9,28 @@
     "etiquetaEstado": "Status",
     "etiquetaVersion": "Version",
     "etiquetaHora": "Checked"
+  },
+  "sesion": {
+    "titulo": "My session",
+    "etiquetaNombre": "Name",
+    "etiquetaCorreo": "Email",
+    "etiquetaRoles": "Roles",
+    "etiquetaTipoParticipante": "Participant type"
+  },
+  "roles": {
+    "ADMINISTRADOR": "Administrator",
+    "APROBADOR_CONVOCATORIA": "Sale announcement approver",
+    "EMPLEADO": "Employee",
+    "OTRO_USUARIO": "Other user",
+    "OPERADOR_TESORERIA": "Treasury operator",
+    "AUDITOR_CUMPLIMIENTO": "Compliance auditor"
+  },
+  "tiposParticipante": {
+    "EMPLEADO": "Employee",
+    "OTRO_USUARIO": "Other user"
+  },
+  "prohibido": {
+    "titulo": "No access",
+    "descripcion": "Your account has no role assigned in this application. If you think this is a mistake, contact the administrator."
   }
 }

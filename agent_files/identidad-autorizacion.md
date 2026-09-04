@@ -112,12 +112,15 @@ necesitan mostrar.
 | Valor | Efecto |
 | --- | --- |
 | `OFF` | Solo EAS real. **Unico valor admisible en produccion** |
-| `MOCK_USERS` | Roles simulados, para desarrollar sin EAS |
-| `FULL` | Simulacion e impersonacion de rol |
+| `MOCK_USERS` | Roles simulados (por variable de entorno), para desarrollar sin EAS |
+| `FULL` | Pensado para simulacion e impersonacion interactiva de rol; hoy se comporta igual que
+  `MOCK_USERS` — la impersonacion (UI para elegir el rol simulado) no tiene pantalla todavia y se
+  construye cuando exista una que la necesite |
 
-`src/lib/auth/devMode.ts` **lanza un error de arranque** si `NODE_ENV=production` y el valor no
-es `OFF`. Es una salvaguarda deliberada: el modo de desarrollo nunca debe poder activarse por
-accidente en produccion.
+`src/lib/auth/devMode.ts` expone `exigirModoSeguro()`, que **lanza** si `NODE_ENV=production` y
+el modo no es `OFF`. Se invoca justo antes de usar el mock (en `eas.ts`), no al importar el
+modulo — importar tambien ocurre durante `next build`, y ahi no debe lanzar. Es una salvaguarda
+deliberada: el modo de desarrollo nunca debe poder activarse por accidente en produccion.
 
 La impersonacion solo funciona si **ya existe una sesion real de Okta**. Nunca sustituye la
 autenticacion, solo el rol.
@@ -172,8 +175,13 @@ puedeEjecutar({ accion, roles, contexto }): { permitido: true }
 
 - `accion` — identificador de `permission-matrix.md`, con formato `dominio:verbo`.
 - `roles` — los de la sesion.
-- `contexto` — lo que hace falta para las guardas: `creadoPor`, `titularId`, `tipoConvocatoria`,
-  `tipoParticipante`, `estatus`.
+- `contexto` — lo que hace falta para las guardas: identidad del actor (`participanteId`,
+  `tipoParticipante`), datos del recurso (`creadoPor`, `titularId`, `tipoConvocatoria`, y un
+  `estatus` por tipo de entidad — `estatusVehiculo`, `estatusConvocatoria`, `estatusSolicitud`),
+  y ventanas de tiempo o consultas **ya resueltas por quien invoca** (`ventaAbierta`,
+  `dentroDePlazo`, `tieneSolicitudViva`, etc. — el catalogo completo esta en
+  `src/lib/auth/permisos.ts`, tipo `Contexto`). `puedeEjecutar` nunca calcula fechas ni consulta
+  la fila: solo compone resultados que ya le llegaron evaluados.
 
 Que sea pura es lo que la hace exhaustivamente probable: los casos allow y deny de los seis
 roles se cubren sin levantar infraestructura.
