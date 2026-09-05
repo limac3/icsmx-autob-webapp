@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
 import { defineBackend } from "@aws-amplify/backend";
 import { CDKContextKey } from "@aws-amplify/platform-core";
-// Las extensiones `.js` son obligatorias: `ampx` ejecuta este archivo con el resolvedor de
-// modulos ESM de Node, que no completa extensiones. TypeScript las mapea de vuelta a `.ts`.
-import { AlmacenamientoAutob } from "./almacenamiento.js";
-import { barrido } from "./barrido/resource.js";
-import { aplicarPermisosAutob, RolComputoSsr } from "./permisos.js";
-import { TablaAutob } from "./tabla.js";
+// Las extensiones `.ts` son obligatorias y literales. `ampx` ejecuta este archivo con el
+// *type stripping* nativo de Node, cuyo resolvedor ESM no completa extensiones **ni mapea
+// `.js` a `.ts`**: hay que nombrar el archivo que existe en disco.
+import { AlmacenamientoAutob } from "./almacenamiento.ts";
+import { barrido } from "./barrido/resource.ts";
+import { aplicarPermisosAutob, RolComputoSsr } from "./permisos.ts";
+import { TablaAutob } from "./tabla.ts";
 
 /**
  * Backend de icsmx-autob-webapp.

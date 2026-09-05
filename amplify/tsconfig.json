@@ -13,7 +13,8 @@
     "skipLibCheck": true,
     "paths": {
       "$amplify/*": ["../.amplify/generated/*"]
-    }
+    },
+    "allowImportingTsExtensions": true
   },
   "include": ["."],
   "exclude": ["node_modules"]

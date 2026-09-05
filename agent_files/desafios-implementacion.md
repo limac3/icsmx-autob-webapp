@@ -487,7 +487,7 @@ bitacora.
 
 ---
 
-## 12) `ampx` no resuelve importaciones relativas sin extension
+## 12) `ampx` ejecuta `backend.ts` con el *type stripping* de Node, no con un bundler
 
 ### Problema
 La documentacion de Amplify Gen2 escribe las importaciones de `backend.ts` sin extension
@@ -498,39 +498,54 @@ La documentacion de Amplify Gen2 escribe las importaciones de `backend.ts` sin e
 `npx ampx sandbox` pasa la sintesis y el chequeo de tipos, y **despues** falla:
 
 ```
-✔ Backend synthesized in 0.64 seconds
-✔ Type checks completed in 12.89 seconds
+✔ Backend synthesized in 0.62 seconds
+✔ Type checks completed in 12.98 seconds
 [ERROR] [BackendBuildError] Unable to deploy due to CDK Assembly Error
   ∟ Caused by: [AssemblyError] Assembly builder failed
-    ∟ Caused by: [Error] Cannot find module '...\amplify\almacenamiento'
-      imported from ...\amplify\backend.ts
+    ∟ Caused by: [Error] Cannot find module '...amplifyalmacenamiento'
+      imported from ...amplifyackend.ts
 ```
 
 Lo confuso es el orden: los dos pasos que uno esperaria que detectaran un import roto —la
-sintesis y el `tsc`— pasan en verde. TypeScript nunca se queja porque con `bundler` la
-importacion es valida **para el compilador**.
+sintesis y el `tsc`— pasan en verde.
 
 ### Causa raiz
 Son dos resolvedores distintos sobre el mismo archivo. `tsc` usa `moduleResolution: "bundler"`
 y completa la extension; el paso de ensamblado de CDK **ejecuta** `backend.ts` con el
-resolvedor ESM de Node, que **no completa extensiones** y exige la ruta literal. El tsconfig
-describe una realidad que el runtime no comparte.
+*type stripping* nativo de **Node 24**, cuyo resolvedor ESM exige la ruta literal en disco.
+
+Ese resolvedor hace **dos** cosas que sorprenden, y hay que entender las dos:
+
+1. No completa extensiones — `"./almacenamiento"` no encuentra nada.
+2. **Tampoco mapea `.js` a `.ts`.** Esto es lo contraintuitivo, porque `.js` es la convencion
+   de ESM en TypeScript y funciona con `tsc`, con `tsx` y con los bundlers. Aqui no: el
+   archivo en disco se llama `almacenamiento.ts` y hay que nombrarlo asi.
+
+**El primer intento de arreglo fue poner `.js` y fue incorrecto.** Cambio el mensaje de
+`Cannot find module '...almacenamiento'` a `Cannot find module '...almacenamiento.js'` — mismo
+fallo, ruta distinta. Peor aun, la verificacion con `npx tsx amplify/backend.ts` **paso en
+verde**, porque `tsx` si hace el mapeo `.js` → `.ts`. Reproducir con la herramienta
+equivocada confirmo un arreglo que no funcionaba.
 
 ### Solucion aplicada
-Extension `.js` explicita en las importaciones relativas de `backend.ts`:
+Extension `.ts` explicita y literal en `backend.ts`:
 
 ```ts
-import { AlmacenamientoAutob } from "./almacenamiento.js";
+import { AlmacenamientoAutob } from "./almacenamiento.ts";
 ```
 
-Apunta a `.js` aunque el archivo sea `.ts`: es la convencion de ESM en TypeScript — se escribe
-la ruta que existira en ejecucion, y el compilador la mapea de vuelta al `.ts`. Funciona con
-los dos resolvedores a la vez, y `vitest` tambien la resuelve.
+Y `allowImportingTsExtensions: true` en `amplify/tsconfig.json`, que TypeScript exige para
+aceptarlas (solo es valido con `noEmit`, que ya estaba). Funciona con los tres: Node, `tsc` y
+`vitest`.
 
-Solo `backend.ts` la necesita: es el unico archivo de `amplify/` con importaciones relativas.
+Solo `backend.ts` lo necesita: es el unico archivo de `amplify/` con importaciones relativas.
 
 ### Regla para futuro
-Reproducir el paso que falla en vez de confiar en la compuerta de calidad. Aqui bastaba con
-`npx tsx amplify/backend.ts`, que ejecuta el archivo igual que `ampx` y falla —o pasa— en
-segundos, sin desplegar nada. Que `npm run typecheck` este verde **no prueba que un import se
-resuelva en ejecucion** cuando el tsconfig usa `bundler` y el runtime es Node ESM.
+Reproducir con **la misma herramienta que falla**, no con una parecida. Aqui el comando
+correcto es `node amplify/backend.ts` —Node pelado, que es lo que `ampx` usa— y falla o pasa
+en segundos sin desplegar nada. `npx tsx` es otro runtime con otro resolvedor, y da un falso
+verde.
+
+Corolario: `npm run typecheck` en verde **no prueba que un import se resuelva en ejecucion**
+cuando el tsconfig usa `bundler` y el runtime es Node ESM. Son dos resolvedores que pueden
+discrepar, y aqui discrepan.
