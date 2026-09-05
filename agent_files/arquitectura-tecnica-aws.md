@@ -15,7 +15,7 @@ Topologia, componentes y flujos de ejecucion. Las decisiones y su justificacion 
                         │
       ┌─────────────────┼──────────────────┬──────────────┐
       ▼                 ▼                  ▼              ▼
-  DynamoDB           S3 (privado)         SES           EAS
+  DynamoDB           S3 (privado)         CES           EAS
   tabla unica            │              (correo)      (roles)
       ▲                  ▼
       │            CloudFront ──▶ fotografias con URL firmada
@@ -78,11 +78,22 @@ El acotamiento al prefijo `vehiculos/` es `originPath`, no una regla de comporta
 peticion a `/x.jpg` resuelve `s3://<bucket>/vehiculos/x.jpg`, de modo que `comprobantes/` es
 inalcanzable por esta distribucion aunque alguien lo intente.
 
-### 2.5 SES
+### 2.5 CES — Church Email Service
 
-Correos transaccionales. Identidad y dominio verificados; DKIM activo.
+Correos transaccionales. **No se usa SES.** CES es un servicio REST corporativo: se le hace
+`POST` de un JSON con los datos del mensaje y se autentica con `Authorization: Basic`.
+
+La consecuencia arquitectonica es que **el correo no es infraestructura**. No hay identidad que
+verificar, ni DKIM que activar, ni plantilla que declarar en CloudFormation, ni permiso de IAM
+que otorgar: solo una URL y unas credenciales que llegan como secretos. La plantilla del mensaje
+pasa a ser codigo de la aplicacion en vez de un recurso de AWS.
 
 Se consume **solo desde el procesador del outbox**, nunca desde el flujo de adjudicacion (D-6).
+Que sea un servicio externo por HTTP refuerza D-6 en vez de debilitarlo: un tercero remoto
+tiene mas formas de fallar que un servicio de AWS, y ninguna puede tocar la transaccion.
+
+> CES **aun no esta aprobado** para este proyecto (riesgo R17). El procesador del outbox se
+> construye en la Etapa 10; hasta entonces no hay integracion que probar.
 
 ### 2.6 Lambda programada — barrido
 
@@ -203,7 +214,7 @@ segundo en llegar falla la condicion y no hace nada.
 ```
 T2 / T5 encolan mensaje en OUTBOX  (misma transaccion, evento CORREO_ENCOLADO)
 Barrido → Query GSI4 OUTBOX_PENDIENTE
-    → SES → exito: CORREO_ENVIADO y se retiran las claves GSI4
+    → CES → exito: CORREO_ENVIADO y se retiran las claves GSI4
            → fallo: reintento con retroceso; agotados, CORREO_FALLIDO
 ```
 

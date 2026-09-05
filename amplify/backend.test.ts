@@ -38,7 +38,6 @@ const construirBackend = async (tipoDespliegue: "sandbox" | "branch") => {
   );
 
   vi.stubEnv("CLOUDFRONT_PUBLIC_KEY_PATH", rutaLlave);
-  vi.stubEnv("SES_IDENTIDAD", "no-reply@ejemplo.org");
   vi.stubEnv("AWS_REGION", "us-east-1");
   vi.stubEnv("CDK_DEFAULT_ACCOUNT", "111111111111");
   vi.stubEnv("CDK_DEFAULT_REGION", "us-east-1");
@@ -65,14 +64,15 @@ beforeAll(async () => {
 });
 
 describe("backend.ts", () => {
-  it("sintetiza la pila completa con la tabla, el bucket, CloudFront y el correo", () => {
+  it("sintetiza la pila completa con la tabla, el bucket y CloudFront", () => {
     const plantilla = Template.fromStack(sandbox.pila);
 
     plantilla.resourceCountIs("AWS::DynamoDB::GlobalTable", 1);
     plantilla.resourceCountIs("AWS::S3::Bucket", 1);
     plantilla.resourceCountIs("AWS::CloudFront::Distribution", 1);
-    plantilla.resourceCountIs("AWS::SES::EmailIdentity", 1);
-    plantilla.resourceCountIs("AWS::SES::Template", 1);
+
+    // El correo sale por CES, un servicio REST externo: no hay recursos de SES que declarar.
+    plantilla.resourceCountIs("AWS::SES::EmailIdentity", 0);
 
     // Contar roles seria fragil —en sandbox el bucket agrega el suyo para autoborrarse—, asi
     // que se afirma lo que importa: hay exactamente un rol que Amplify Hosting puede asumir.
@@ -122,21 +122,7 @@ describe("backend.ts", () => {
     );
   });
 
-  it("falta SES_IDENTIDAD y falla con un mensaje que dice como arreglarlo", async () => {
-    vi.stubEnv("SES_IDENTIDAD", "");
-    vi.stubEnv(
-      "CLOUDFRONT_PUBLIC_KEY_PATH",
-      join(temporal, "cloudfront-sandbox.pem"),
-    );
-    vi.resetModules();
-
-    // Sin fallback silencioso (regla 15): un backend sin identidad de correo no se despliega
-    // a medias, falla al sintetizar.
-    await expect(import("./backend")).rejects.toThrow(/SES_IDENTIDAD/);
-  });
-
   it("falta la llave publica y falla antes de crear una distribucion sin firma", async () => {
-    vi.stubEnv("SES_IDENTIDAD", "no-reply@ejemplo.org");
     vi.stubEnv("CLOUDFRONT_PUBLIC_KEY_PATH", join(temporal, "no-existe.pem"));
     vi.resetModules();
 

@@ -54,7 +54,7 @@ convocatoria posterior para publico general.
 | Identidad | Okta OIDC via `@auth0/nextjs-auth0` v4 + EAS para roles |
 | Datos | DynamoDB (single-table design) via `@aws-sdk/lib-dynamodb` |
 | Archivos | S3 + CloudFront con URLs firmadas |
-| Correo | Amazon SES con patron outbox |
+| Correo | CES (Church Email Service, REST corporativo) con patron outbox |
 | Infra / IaC | AWS Amplify Gen2 (`defineBackend` + constructos CDK) y Amplify Hosting SSR |
 | Calidad | `@churchofjesuschrist/festack-scripts` (ESLint + Stylelint + Prettier + Vitest 4 + axe) |
 

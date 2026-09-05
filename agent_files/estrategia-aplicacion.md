@@ -240,11 +240,15 @@ que hay que recordar y una propiedad estructural.
 
 ### D-6 — Correo por outbox
 
-**Alternativa descartada:** enviar con SES dentro del flujo de adjudicacion.
+**Alternativa descartada:** enviar el correo dentro del flujo de adjudicacion.
 
-**Razon:** SES no participa en la transaccion de DynamoDB. Enviarlo en linea significaria o
-adjudicar sin notificar, o fallar la adjudicacion por un problema de correo. El outbox
-desacopla: la adjudicacion es atomica y el envio se reintenta aparte.
+**Razon:** el proveedor de correo no participa en la transaccion de DynamoDB. Enviarlo en linea
+significaria o adjudicar sin notificar, o fallar la adjudicacion por un problema de correo. El
+outbox desacopla: la adjudicacion es atomica y el envio se reintenta aparte.
+
+El argumento no dependia del proveedor, y por eso sobrevivio al cambio de SES a **CES**
+(servicio REST corporativo, ver `arquitectura-tecnica-aws.md` 2.5): con un tercero remoto por
+HTTP la razon solo se vuelve mas fuerte.
 
 ### D-7 — Barrido mas verificacion perezosa
 

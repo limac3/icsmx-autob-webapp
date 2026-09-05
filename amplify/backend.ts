@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
 import { defineBackend } from "@aws-amplify/backend";
 import { CDKContextKey } from "@aws-amplify/platform-core";
-import { AlmacenamientoAutob } from "./almacenamiento";
-import { barrido } from "./barrido/resource";
-import { CorreoAutob } from "./correo";
-import { aplicarPermisosAutob, RolComputoSsr } from "./permisos";
-import { TablaAutob } from "./tabla";
+// Las extensiones `.js` son obligatorias: `ampx` ejecuta este archivo con el resolvedor de
+// modulos ESM de Node, que no completa extensiones. TypeScript las mapea de vuelta a `.ts`.
+import { AlmacenamientoAutob } from "./almacenamiento.js";
+import { barrido } from "./barrido/resource.js";
+import { aplicarPermisosAutob, RolComputoSsr } from "./permisos.js";
+import { TablaAutob } from "./tabla.js";
 
 /**
  * Backend de icsmx-autob-webapp.
@@ -13,6 +14,10 @@ import { TablaAutob } from "./tabla";
  * No se declaran `defineAuth` ni `defineData`: la identidad la da Okta directamente
  * (`identidad-autorizacion.md`) y el modelo es una tabla unica propia, no un esquema de
  * AppSync. Todo lo demas son constructos CDK dentro de una pila propia.
+ *
+ * Tampoco hay recursos de correo. El correo transaccional sale por **CES** (Church Email
+ * Service), un servicio REST externo con autenticacion basica: no es infraestructura de AWS
+ * y no se declara aqui. Sus credenciales se inyectan al procesador del outbox en la Etapa 10.
  */
 export const backend = defineBackend({ barrido });
 
@@ -21,18 +26,6 @@ export const backend = defineBackend({ barrido });
 // que exporte variables a mano. En CI el archivo no existe y mandan las del entorno.
 if (existsSync(".env.local")) {
   process.loadEnvFile(".env.local");
-}
-
-const identidadCorreo = process.env.SES_IDENTIDAD;
-if (!identidadCorreo) {
-  throw new Error(
-    [
-      "Falta SES_IDENTIDAD: el dominio o el correo verificado desde el que sale el correo",
-      "transaccional. Un dominio (ejemplo.org) habilita DKIM y es lo correcto en entornos",
-      "compartidos; un correo concreto se verifica solo y basta para un sandbox personal.",
-      "Ver `.env.local.example`.",
-    ].join("\n"),
-  );
 }
 
 // Se exporta para que `backend.test.ts` pueda sintetizarla y verificar el cableado; `ampx`
@@ -48,12 +41,10 @@ const tabla = new TablaAutob(pila, "Tabla", { esSandbox });
 const almacenamiento = new AlmacenamientoAutob(pila, "Almacenamiento", {
   esSandbox,
 });
-const correo = new CorreoAutob(pila, "Correo", { identidad: identidadCorreo });
 
 const recursos = {
   tabla: tabla.tabla,
   bucket: almacenamiento.bucket,
-  identidadCorreo: correo.identidad,
 };
 
 const rolSsr = new RolComputoSsr(pila, "RolComputoSsr", {
@@ -81,7 +72,6 @@ backend.addOutput({
       bucket: almacenamiento.bucket.bucketName,
       distribucion: almacenamiento.distribucion.distributionDomainName,
       grupoDeLlavesCloudFront: almacenamiento.grupoDeLlaves.keyGroupId,
-      identidadCorreo,
       // Se adjunta a mano en la consola de Amplify: App settings > IAM roles > Compute role.
       // Amplify Hosting no forma parte de `defineBackend`, asi que el rol se crea aqui pero
       // la asociacion es un paso de consola. Ver `runbooks.md`.

@@ -484,3 +484,53 @@ Todo permiso que la aplicacion necesite en runtime se declara en `aplicarPermiso
 la consola. Esa funcion la comparten el rol de SSR y el de la funcion de barrido a proposito:
 dos listas separadas se desincronizan, y la que se olvide seria justo la que deja escribir la
 bitacora.
+
+---
+
+## 12) `ampx` no resuelve importaciones relativas sin extension
+
+### Problema
+La documentacion de Amplify Gen2 escribe las importaciones de `backend.ts` sin extension
+(`import { auth } from "./auth/resource"`), y `amplify/tsconfig.json` usa
+`moduleResolution: "bundler"`, que las acepta. El proyecto se escribio asi.
+
+### Sintoma
+`npx ampx sandbox` pasa la sintesis y el chequeo de tipos, y **despues** falla:
+
+```
+✔ Backend synthesized in 0.64 seconds
+✔ Type checks completed in 12.89 seconds
+[ERROR] [BackendBuildError] Unable to deploy due to CDK Assembly Error
+  ∟ Caused by: [AssemblyError] Assembly builder failed
+    ∟ Caused by: [Error] Cannot find module '...\amplify\almacenamiento'
+      imported from ...\amplify\backend.ts
+```
+
+Lo confuso es el orden: los dos pasos que uno esperaria que detectaran un import roto —la
+sintesis y el `tsc`— pasan en verde. TypeScript nunca se queja porque con `bundler` la
+importacion es valida **para el compilador**.
+
+### Causa raiz
+Son dos resolvedores distintos sobre el mismo archivo. `tsc` usa `moduleResolution: "bundler"`
+y completa la extension; el paso de ensamblado de CDK **ejecuta** `backend.ts` con el
+resolvedor ESM de Node, que **no completa extensiones** y exige la ruta literal. El tsconfig
+describe una realidad que el runtime no comparte.
+
+### Solucion aplicada
+Extension `.js` explicita en las importaciones relativas de `backend.ts`:
+
+```ts
+import { AlmacenamientoAutob } from "./almacenamiento.js";
+```
+
+Apunta a `.js` aunque el archivo sea `.ts`: es la convencion de ESM en TypeScript — se escribe
+la ruta que existira en ejecucion, y el compilador la mapea de vuelta al `.ts`. Funciona con
+los dos resolvedores a la vez, y `vitest` tambien la resuelve.
+
+Solo `backend.ts` la necesita: es el unico archivo de `amplify/` con importaciones relativas.
+
+### Regla para futuro
+Reproducir el paso que falla en vez de confiar en la compuerta de calidad. Aqui bastaba con
+`npx tsx amplify/backend.ts`, que ejecuta el archivo igual que `ampx` y falla —o pasa— en
+segundos, sin desplegar nada. Que `npm run typecheck` este verde **no prueba que un import se
+resuelva en ejecucion** cuando el tsconfig usa `bundler` y el runtime es Node ESM.

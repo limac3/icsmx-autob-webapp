@@ -70,13 +70,14 @@ resuelve su propio vencimiento. Comunica la demora y prioriza el arreglo.
 
 1. `Query` GSI4 `OUTBOX_PENDIENTE` → antiguedad de lo encolado.
 2. Eventos `CORREO_FALLIDO` y su motivo.
-3. Reputacion de SES, rebotes y quejas. **Verifica si la cuenta sigue en modo prueba**: en ese
-   modo solo se entrega a direcciones verificadas, y es la causa mas frecuente en entornos
-   nuevos.
+3. Respuesta de **CES** al ultimo intento: codigo HTTP y cuerpo. Un `401` es credenciales
+   (`CES_USER`/`CES_PASSWORD`); un `4xx` con detalle suele ser el JSON mal formado o un
+   destinatario rechazado; un `5xx` o un timeout es indisponibilidad del servicio y se
+   reintenta solo.
 
 **Resolucion:**
 
-1. Corrige la causa (verificacion de dominio, cuotas, salida del modo prueba).
+1. Corrige la causa (credenciales, formato del mensaje, o esperar a que CES se restablezca).
 2. Reejecuta el procesador del outbox. Los mensajes pendientes se reintentan solos.
 3. Para un caso puntual, reencola con el runbook R-3.
 
@@ -255,15 +256,14 @@ En desarrollo o produccion la genera el operador y la privada nunca sale de su c
 sandbox personal —cuyos datos son desechables— el agente puede generarla si el operador lo
 autoriza.
 
-### Paso 2 — Elegir `SES_IDENTIDAD` · **[OPERADOR]**
+### Paso 2 — Credenciales de CES · **[OPERADOR]** · *no aplica todavia*
 
-Va en `.env.local` (o en las variables de la consola de Amplify). Con arroba es un correo
-suelto, que se verifica solo y basta para un sandbox; sin arroba es un dominio, que habilita
-DKIM y es lo que corresponde en entornos compartidos.
+El correo transaccional sale por **CES** (Church Email Service), un servicio REST corporativo,
+no por SES. No hay nada que preparar en AWS: son `CES_URL`, `CES_USER` y `CES_PASSWORD` en
+`.env.local` o en los secretos de Amplify.
 
-Es del operador porque hay que **elegir una direccion o dominio que se controle** y **abrir el
-correo de verificacion que manda AWS**. Recuerda que en modo prueba SES solo entrega a
-direcciones verificadas (ver R-2): es la causa mas frecuente de correos no recibidos.
+**CES aun no esta aprobado para este proyecto** (riesgo R17) y el procesador del outbox se
+construye en la Etapa 10, asi que hoy este paso se omite: el backend despliega sin el.
 
 ### Paso 3 — Desplegar el backend · **[AGENTE]**
 

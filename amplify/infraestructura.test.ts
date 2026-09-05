@@ -4,7 +4,6 @@ import { App, Stack } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { AlmacenamientoAutob } from "./almacenamiento";
-import { CorreoAutob } from "./correo";
 import { RolComputoSsr } from "./permisos";
 import { TablaAutob } from "./tabla";
 
@@ -48,13 +47,9 @@ const sintetizar = (esSandbox = false): Template => {
     esSandbox,
     llavePublicaPem,
   });
-  const correo = new CorreoAutob(pila, "Correo", {
-    identidad: "no-reply@ejemplo.org",
-  });
   new RolComputoSsr(pila, "RolSsr", {
     tabla: tabla.tabla,
     bucket: almacenamiento.bucket,
-    identidadCorreo: correo.identidad,
   });
 
   const plantilla = Template.fromStack(pila);
@@ -220,29 +215,6 @@ describe("almacenamiento", () => {
   });
 });
 
-describe("correo", () => {
-  it("registra la identidad y la plantilla de adjudicacion", () => {
-    const plantilla = sintetizar();
-    plantilla.hasResourceProperties("AWS::SES::EmailIdentity", {
-      EmailIdentity: "no-reply@ejemplo.org",
-    });
-    plantilla.hasResourceProperties(
-      "AWS::SES::Template",
-      Match.objectLike({
-        Template: Match.objectLike({ TemplateName: "autob-adjudicacion" }),
-      }),
-    );
-  });
-
-  it("un valor sin arroba se trata como dominio, para habilitar DKIM", () => {
-    const pila = new Stack(new App(), "Dominio");
-    new CorreoAutob(pila, "Correo", { identidad: "ejemplo.org" });
-    Template.fromStack(pila).hasResourceProperties("AWS::SES::EmailIdentity", {
-      EmailIdentity: "ejemplo.org",
-    });
-  });
-});
-
 describe("rol de computo SSR", () => {
   it("solo Amplify Hosting puede asumirlo", () => {
     sintetizar().hasResourceProperties(
@@ -282,13 +254,9 @@ describe("rol de computo SSR", () => {
       esSandbox: true,
       llavePublicaPem,
     });
-    const correo = new CorreoAutob(pila, "Correo", {
-      identidad: "no-reply@ejemplo.org",
-    });
     new RolComputoSsr(pila, "RolSsr", {
       tabla: tabla.tabla,
       bucket: almacenamiento.bucket,
-      identidadCorreo: correo.identidad,
       esSandbox: true,
     });
 

@@ -169,14 +169,13 @@ Luego:
 
 **Primera tarea, antes de escribir infraestructura** (ver riesgo R1):
 
-- [ ] **PENDIENTE — requiere accion del usuario.** Confirmar que la cuenta AWS permite crear
-      apps de Amplify Gen2 y que existe un camino de despliegue aprobado. La sesion de SSO de
-      `aws-church-dev` esta vencida y `aws sso login` necesita un navegador, asi que no se
-      pudo verificar. Lo que **si** quedo comprobado: los paquetes de Amplify Gen2 estan
-      disponibles en el Artifactory corporativo (`@aws-amplify/backend` 1.24.0,
-      `aws-cdk-lib` 2.268.0), asi que R10 no bloquea esta etapa. Si al validar no hubiera
-      camino de despliegue, **detener** y decidir entre gestionarlo o migrar el IaC a
-      Terraform/ECS, que es el precedente de la organizacion
+- [x] Confirmar que la cuenta AWS permite crear apps de Amplify Gen2 y que existe un camino de
+      despliegue aprobado. **Confirmado por el operador y verificado por evidencia:** la cuenta
+      de desarrollo (377193866391) ya tiene varias aplicaciones Amplify Gen2 desplegadas
+      —`aws cloudformation list-stacks` devuelve pilas `amplify-*` de otros proyectos, con
+      `defineData`/`defineAuth`—, asi que no hacia falta una prueba. Los paquetes tambien
+      estan en el Artifactory corporativo (`@aws-amplify/backend` 1.24.0, `aws-cdk-lib`
+      2.268.0). **Riesgo R1 cerrado:** no hay que migrar el IaC a Terraform/ECS
 
 Luego:
 
@@ -185,7 +184,10 @@ Luego:
       `modelo-datos-dynamodb.md`, PITR activado
 - [x] Bucket S3 para fotografias, sin acceso publico
 - [x] Distribucion CloudFront con acceso restringido al bucket y llave para URLs firmadas
-- [x] Identidad de SES verificada y plantilla de correo de adjudicacion
+- [x] ~~Identidad de SES verificada y plantilla de correo de adjudicacion~~ **Sin efecto: el
+      correo no sale por SES.** La aplicacion usa **CES** (Church Email Service), un servicio
+      REST corporativo con autenticacion basica, que no es infraestructura de AWS y por tanto no
+      se declara en `amplify/`. La plantilla pasa a ser codigo de la Etapa 10. Ver riesgo R17
 - [x] Politica IAM del rol de la aplicacion con **`Deny` explicito de `UpdateItem` y
       `DeleteItem` sobre items `AUDIT#`** (regla 5). Incluye tambien `BatchWriteItem`,
       las acciones PartiQL que mutan, y el borrado de comprobantes
@@ -507,6 +509,11 @@ internamente (Dockerfile, healthcheck, politicas IAM, plantillas de pipeline).
 **Senal de alerta:** `npx ampx sandbox` falla por permisos, o no hay a quien pedir la
 aprobacion del despliegue.
 
+> **CERRADO (2026-09-04, Etapa 3).** La premisa era falsa: la cuenta de desarrollo
+> (377193866391) ya tiene varias aplicaciones Amplify Gen2 desplegadas, de otros equipos. Hay
+> precedente organizacional y no hacen falta permisos nuevos. La ruta de escape a Terraform/ECS
+> queda documentada por si cambia el criterio, pero **no hay que ejercerla**.
+
 ### R2 — Dos participantes adjudicados sobre el mismo lote
 
 **Probabilidad:** alta si se implementa mal · **Impacto:** critico
@@ -693,6 +700,31 @@ festack-scripts no vaya a soportar por estar congelado.
 
 ---
 
+### R17 — CES aun no esta aprobado para este proyecto
+
+**Probabilidad:** media · **Impacto:** alto si se materializa tarde
+
+El correo transaccional sale por **CES** (Church Email Service), un servicio REST corporativo
+—`POST` de un JSON con autenticacion basica— y no por SES. La decision lo saca por completo de
+la infraestructura: no hay identidad que verificar ni permiso de IAM que otorgar, solo una URL y
+credenciales. Pero **la aprobacion de uso todavia no existe**.
+
+**Por que importa:** sin correo, un adjudicado no se entera de que gano, y su plazo de
+liquidacion corre igual (R-13). Es el unico camino por el que el sistema le habla al
+participante.
+
+**Mitigacion:** el patron outbox (D-6) ya aisla el envio de la transaccion critica, asi que un
+CES ausente **no bloquea adjudicar**: los mensajes se acumulan en la tabla y se despachan cuando
+el servicio exista. Eso convierte un bloqueo en una demora. El adaptador de CES se construye en
+la Etapa 10 detras de una interfaz propia, de modo que sustituirlo por SES —o por cualquier
+otro proveedor— sea cambiar un archivo. Gestionar la aprobacion es tarea del operador y conviene
+iniciarla mucho antes de la Etapa 10.
+
+**Senal de alerta:** llegar a la Etapa 10 sin aprobacion, o sin la URL y las credenciales de un
+entorno de prueba.
+
+---
+
 ## Registro de decisiones
 
 | Fecha | Decision | Alternativa descartada |
@@ -709,3 +741,5 @@ festack-scripts no vaya a soportar por estar congelado.
 | 2026-09-04 | Rol de computo SSR creado en la pila, adjuntado a mano en la consola | Crearlo tambien a mano: dejaria el `Deny` de la bitacora fuera del repositorio, en un procedimiento que se puede omitir |
 | 2026-09-04 | `esbuild` como dependencia directa de desarrollo | Depender de Docker Desktop para empaquetar el Lambda del barrido, que en una maquina corporativa puede no existir |
 | 2026-09-04 | Llave **publica** de CloudFront versionada en el repositorio | Inyectarla por variable de entorno: los PEM multilinea en variables son fragiles, y rotar la llave invalidaria todas las URLs firmadas vigentes |
+| 2026-09-04 | Correo por **CES** (REST corporativo), no por SES | Amazon SES: era lo planeado en la Etapa 0, pero no hay configuracion ni aprobacion para usarlo. Saca el correo de la infraestructura por completo (riesgo R17) |
+| 2026-09-04 | Importaciones relativas con extension `.js` en `amplify/backend.ts` | Sin extension, como en la documentacion de Amplify: falla en el paso de ensamblado de CDK, que ejecuta el archivo con el resolvedor ESM de Node (`Cannot find module`) |

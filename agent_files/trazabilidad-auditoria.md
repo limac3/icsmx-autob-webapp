@@ -148,7 +148,7 @@ es un documento sensible y el acceso a documentos sensibles es en si mismo audit
 | Tipo | Cuando |
 | --- | --- |
 | `CORREO_ENCOLADO` | Mensaje puesto en el outbox |
-| `CORREO_ENVIADO` | Aceptado por SES, con el identificador de mensaje |
+| `CORREO_ENVIADO` | Aceptado por CES, con el identificador de mensaje |
 | `CORREO_FALLIDO` **M** | Fallo permanente tras agotar reintentos |
 
 Prueban que se notifico al adjudicado, que es parte de la equidad del proceso.

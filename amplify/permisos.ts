@@ -9,13 +9,11 @@ import {
 import type { IGrantable, IRole } from "aws-cdk-lib/aws-iam";
 import type { TableV2 } from "aws-cdk-lib/aws-dynamodb";
 import type { Bucket } from "aws-cdk-lib/aws-s3";
-import type { EmailIdentity } from "aws-cdk-lib/aws-ses";
 import { Construct } from "constructs";
 
 export type RecursosAutob = {
   readonly tabla: TableV2;
   readonly bucket: Bucket;
-  readonly identidadCorreo: EmailIdentity;
 };
 
 /**
@@ -60,8 +58,8 @@ const negarMutacionDeAuditoria = (tabla: TableV2): PolicyStatement[] => [
 ];
 
 /**
- * Permisos de minimo privilegio sobre la tabla, el bucket y el correo, mas los `Deny` que
- * sostienen la inmutabilidad de la bitacora y de los comprobantes.
+ * Permisos de minimo privilegio sobre la tabla y el bucket, mas los `Deny` que sostienen la
+ * inmutabilidad de la bitacora y de los comprobantes.
  *
  * Se aplica igual al rol de computo SSR y al de la funcion de barrido: ambos tocan la
  * bitacora y ninguno de los dos debe poder alterarla.
@@ -71,7 +69,7 @@ export const aplicarPermisosAutob = (
   rol: IRole,
   recursos: RecursosAutob,
 ): void => {
-  const { tabla, bucket, identidadCorreo } = recursos;
+  const { tabla, bucket } = recursos;
 
   tabla.grantReadWriteData(destino);
 
@@ -96,14 +94,9 @@ export const aplicarPermisosAutob = (
     }),
   );
 
-  rol.addToPrincipalPolicy(
-    new PolicyStatement({
-      sid: "EnviarCorreoTransaccional",
-      effect: Effect.ALLOW,
-      actions: ["ses:SendEmail", "ses:SendTemplatedEmail", "ses:SendRawEmail"],
-      resources: [identidadCorreo.emailIdentityArn],
-    }),
-  );
+  // Sin permisos de correo: el correo transaccional sale por CES, un servicio REST externo
+  // con autenticacion basica. No es un servicio de AWS, asi que no hay nada que autorizar
+  // en IAM — solo credenciales, que llegan como secretos al procesador del outbox.
 };
 
 /**
