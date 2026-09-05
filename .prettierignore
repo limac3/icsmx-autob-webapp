@@ -1,0 +1,8 @@
+# Se suma a los patrones que ya trae festack-scripts, no los reemplaza.
+
+# Artefactos que genera Amplify en cada despliegue: plantillas de CloudFormation,
+# cache de hotswap, tipos de entorno de las funciones y las salidas del backend.
+# Estan en .gitignore, pero Prettier los revisa igual y hacen fallar `verify`
+# despues de cada `ampx sandbox`.
+.amplify/
+amplify_outputs*

@@ -192,24 +192,23 @@ Luego:
       `DeleteItem` sobre items `AUDIT#`** (regla 5). Incluye tambien `BatchWriteItem`,
       las acciones PartiQL que mutan, y el borrado de comprobantes
 - [x] Funcion programada para el barrido de vencimientos (sin logica todavia, solo el andamio)
-- [ ] **PENDIENTE — bloqueado por la primera tarea.** `npx ampx sandbox` levanta el backend
-      personal sin errores. Lo verificable sin AWS ya se verifico: `amplify/backend.test.ts`
-      sintetiza `backend.ts` completo —incluido el empaquetado del Lambda del barrido— y
-      comprueba la pila, los permisos heredados y las variables de entorno. Falta solo el
-      despliegue real
+- [x] `npx ampx sandbox` levanta el backend personal sin errores. Desplegado el 2026-09-04 en
+      la cuenta 377193866391, pila `amplify-icsmxautobwebapp-CesarLima-sandbox-cbbf835390`
+      (279 s la primera vez, por la distribucion de CloudFront)
 
 **Verificacion:**
 
 - [x] Compuerta de calidad completa en verde
-- [ ] **ESCRITA, PENDIENTE DE EJECUTAR.** Prueba de integracion que confirma que **escribir**
-      un item `AUDIT#` funciona y que **modificarlo o borrarlo es rechazado por IAM**
-      (`amplify/auditoriaInmutable.integracion.test.ts`). Asume el rol real de computo SSR, no
-      credenciales de desarrollador. Se omite sola mientras no haya sandbox desplegado, para
-      que la compuerta corra en una maquina sin AWS. La cobertura que **si** corre hoy esta en
-      `amplify/infraestructura.test.ts`: la politica existe con las acciones y la condicion
-      exactas
-- [ ] **ESCRITA, PENDIENTE DE EJECUTAR.** La tabla responde a un `PutItem` y un `Query` de
-      humo desde la aplicacion (en el mismo archivo de integracion)
+- [x] Prueba de integracion que confirma que **escribir** un item `AUDIT#` funciona y que
+      **modificarlo o borrarlo es rechazado por IAM**
+      (`amplify/auditoriaInmutable.integracion.test.ts`, 5 pruebas en verde contra el sandbox).
+      Asume el rol real de computo SSR con STS, no credenciales de desarrollador, asi que
+      ejerce **la politica que correra en produccion** y no una copia. Incluye la comprobacion
+      inversa —que el mismo rol si modifica y borra items que no son de la bitacora—, sin la
+      cual un `Deny` demasiado amplio pasaria inadvertido. Se omite sola si no hay sandbox
+      desplegado, para que la compuerta corra en una maquina sin AWS
+- [x] La tabla responde a un `PutItem` y un `Query` de humo desde la aplicacion (en el mismo
+      archivo de integracion)
 
 **Salida esperada:** sandbox funcional y auditoria demostrablemente inmutable.
 
