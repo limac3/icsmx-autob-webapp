@@ -160,9 +160,10 @@ Recorre el gating triple (R-01) **en este orden**:
 
 1. `estatus = PUBLICADA`.
 2. `publicadaEn <= ahora`. **Comparalo en UTC**, no en hora local: es la confusion mas frecuente.
-3. Tipo compatible: convocatoria `EMPLEADOS` solo para `tipoParticipante = EMPLEADO`.
-4. Roles del participante en EAS. Si EAS estaba caido, la sesion debio fallar de forma
-   explicita, no dejarlo sin roles.
+3. Tipo compatible: convocatoria `EMPLEADOS` solo para quien tiene `Autob_Venta_a_empleados`.
+4. Permisos del participante en EAS. Si EAS estaba caido, la sesion debio fallar de forma
+   explicita, no dejarlo con el conjunto de permisos vacio — si ves un usuario "sin permisos",
+   descarta primero que no sea un `ErrorConsultaEas` mal manejado aguas arriba.
 5. Cache: si el estatus y las fechas son correctos pero no aparece, **es cache** (riesgo R4).
    Fuerza `revalidateTag("convocatorias:visibles")` y registra el hallazgo — significa que una
    ruta dependiente de `publicadaEn` quedo cacheada, que es un defecto a corregir.

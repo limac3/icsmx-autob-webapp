@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth/auth0";
 
 // Next.js 16 renombro `middleware` a `proxy` (AGENTS.md). Este archivo NO
 // autoriza: distingue publico de autenticado y prepara idioma/CSP. Las
-// decisiones por rol viven en el Server Component o la Server Action, con la
+// decisiones por permiso viven en el Server Component o la Server Action, con la
 // sesion completa y el contexto del recurso a la vista (ver
 // agent_files/identidad-autorizacion.md seccion 2.3).
 
@@ -25,12 +25,19 @@ const esRedireccion = (response: NextResponse) =>
 
 const generarNonce = () => Buffer.from(crypto.randomUUID()).toString("base64");
 
+// Origen del Font Foundry de la Iglesia. `<Fonts>` de @churchofjesuschrist/eden-fonts
+// monta un `<link rel="stylesheet">` hacia aqui y desde ahi se descargan los
+// woff2, asi que el origen tiene que estar autorizado en **style-src y
+// font-src**. Sin esto la aplicacion se dibuja con tipografia de respaldo y la
+// consola del navegador se llena de violaciones de CSP: ni `next build` ni
+// jsdom lo detectan, porque ninguno de los dos aplica CSP.
+const FOUNDRY = "https://foundry.churchofjesuschrist.org";
+
 // Nonce estricto para script-src: es la superficie que de verdad importa
-// contra XSS. style-src se deja con 'unsafe-inline' a proposito: Eden es una
-// libreria externa cuyo uso de estilos en linea no esta verificado todavia
-// (no hay acceso al MCP de Eden en este entorno); endurecerlo sin poder
-// revisar visualmente cada componente es mas riesgo que beneficio. Revisar
-// en la Etapa 12 — ver agent_files/desafios-implementacion.md.
+// contra XSS. style-src conserva 'unsafe-inline' porque el uso de estilos en
+// linea de Eden no esta verificado todavia; endurecerlo sin poder revisar
+// visualmente cada componente es mas riesgo que beneficio. Revisar en la
+// Etapa 12 — ver agent_files/desafios-implementacion.md.
 const construirCsp = (nonce: string) => {
   const enDesarrollo = process.env.NODE_ENV === "development";
   const dominioCloudfront = process.env.CLOUDFRONT_DOMAIN;
@@ -41,9 +48,9 @@ const construirCsp = (nonce: string) => {
   return [
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${enDesarrollo ? " 'unsafe-eval'" : ""}`,
-    `style-src 'self' 'unsafe-inline'`,
+    `style-src 'self' 'unsafe-inline' ${FOUNDRY}`,
     `img-src 'self' data: blob:${origenImagenes}`,
-    `font-src 'self'`,
+    `font-src 'self' ${FOUNDRY}`,
     `connect-src 'self'`,
     `object-src 'none'`,
     `base-uri 'none'`,
@@ -54,7 +61,7 @@ const construirCsp = (nonce: string) => {
 };
 
 // Ninguna ruta de esta aplicacion es publica/anonima: hasta el catalogo de
-// convocatorias publicadas exige sesion (permission-matrix.md seccion 3), asi
+// convocatorias publicadas exige sesion (permission-matrix.md seccion 4), asi
 // que "no-store" aplica a toda respuesta salvo las que maneja el propio SDK
 // de autenticacion.
 const CACHE_CONTROL_SIN_ALMACENAR =

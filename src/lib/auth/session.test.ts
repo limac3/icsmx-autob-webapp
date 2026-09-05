@@ -1,26 +1,29 @@
 // @vitest-environment node
 vi.mock("server-only", () => ({}));
 vi.mock("./auth0", () => ({ auth: { getSession: vi.fn() } }));
-vi.mock("./eas", () => ({ obtenerRoles: vi.fn() }));
+vi.mock("./eas", () => ({ obtenerPermisos: vi.fn() }));
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Permiso } from "@/types/identidad";
 import { auth } from "./auth0";
-import { obtenerRoles } from "./eas";
+import { obtenerPermisos } from "./eas";
 import { getSession } from "./session";
 
 const authGetSession = vi.mocked(auth.getSession);
-const obtenerRolesMock = vi.mocked(obtenerRoles);
+const obtenerPermisosMock = vi.mocked(obtenerPermisos);
+
+const permisos = (...valores: Permiso[]) => new Set(valores);
 
 beforeEach(() => {
   authGetSession.mockReset();
-  obtenerRolesMock.mockReset();
+  obtenerPermisosMock.mockReset();
 });
 
 describe("getSession", () => {
   it("devuelve null si no hay sesion de Okta", async () => {
     authGetSession.mockResolvedValue(null);
     expect(await getSession()).toBeNull();
-    expect(obtenerRolesMock).not.toHaveBeenCalled();
+    expect(obtenerPermisosMock).not.toHaveBeenCalled();
   });
 
   it("devuelve null si la sesion de Okta no trae sub", async () => {
@@ -28,47 +31,61 @@ describe("getSession", () => {
     expect(await getSession()).toBeNull();
   });
 
-  it("resuelve tipoParticipante EMPLEADO cuando EAS incluye ese rol", async () => {
+  it("consolida la sesion con los permisos que devuelve EAS", async () => {
     authGetSession.mockResolvedValue({
       user: { sub: "okta|1", email: "ana@example.com", name: "Ana" },
     } as never);
-    obtenerRolesMock.mockResolvedValue(["EMPLEADO", "ADMINISTRADOR"]);
+    obtenerPermisosMock.mockResolvedValue(
+      permisos("Autob_Venta_a_empleados", "Autob_Venta_en_general"),
+    );
 
     expect(await getSession()).toEqual({
       participanteId: "okta|1",
       oktaSub: "okta|1",
       correo: "ana@example.com",
       nombre: "Ana",
-      roles: ["EMPLEADO", "ADMINISTRADOR"],
-      tipoParticipante: "EMPLEADO",
+      permisos: permisos("Autob_Venta_a_empleados", "Autob_Venta_en_general"),
+      tiposDeConvocatoriaPermitidos: ["EMPLEADOS", "PUBLICO_GENERAL"],
     });
   });
 
-  it("resuelve tipoParticipante OTRO_USUARIO cuando EAS no incluye EMPLEADO", async () => {
+  it("con solo Autob_Venta_en_general no alcanza las convocatorias de empleados", async () => {
     authGetSession.mockResolvedValue({ user: { sub: "okta|2" } } as never);
-    obtenerRolesMock.mockResolvedValue(["OTRO_USUARIO"]);
-    expect((await getSession())?.tipoParticipante).toBe("OTRO_USUARIO");
+    obtenerPermisosMock.mockResolvedValue(permisos("Autob_Venta_en_general"));
+    expect((await getSession())?.tiposDeConvocatoriaPermitidos).toEqual([
+      "PUBLICO_GENERAL",
+    ]);
   });
 
-  it("una sesion autenticada sin roles no lanza y cae a OTRO_USUARIO", async () => {
+  it("un permiso administrativo no da acceso a ningun tipo de convocatoria", async () => {
     authGetSession.mockResolvedValue({ user: { sub: "okta|3" } } as never);
-    obtenerRolesMock.mockResolvedValue([]);
+    obtenerPermisosMock.mockResolvedValue(
+      permisos("Autob_Administrar_Convocatorias"),
+    );
     const sesion = await getSession();
-    expect(sesion?.roles).toEqual([]);
-    expect(sesion?.tipoParticipante).toBe("OTRO_USUARIO");
+    expect(sesion?.tiposDeConvocatoriaPermitidos).toEqual([]);
+    expect(sesion?.permisos.has("Autob_Administrar_Convocatorias")).toBe(true);
+  });
+
+  it("una sesion autenticada sin permisos no lanza: se distingue de un EAS caido", async () => {
+    authGetSession.mockResolvedValue({ user: { sub: "okta|4" } } as never);
+    obtenerPermisosMock.mockResolvedValue(permisos());
+    const sesion = await getSession();
+    expect(sesion?.permisos.size).toBe(0);
+    expect(sesion?.tiposDeConvocatoriaPermitidos).toEqual([]);
   });
 
   it("propaga el error si EAS falla — sin fallback silencioso (regla 15)", async () => {
-    authGetSession.mockResolvedValue({ user: { sub: "okta|4" } } as never);
-    obtenerRolesMock.mockRejectedValue(new Error("EAS no responde"));
+    authGetSession.mockResolvedValue({ user: { sub: "okta|5" } } as never);
+    obtenerPermisosMock.mockRejectedValue(new Error("EAS no responde"));
     await expect(getSession()).rejects.toThrow("EAS no responde");
   });
 
   it("usa el correo como nombre de respaldo si Okta no envia name", async () => {
     authGetSession.mockResolvedValue({
-      user: { sub: "okta|5", email: "x@example.com" },
+      user: { sub: "okta|6", email: "x@example.com" },
     } as never);
-    obtenerRolesMock.mockResolvedValue([]);
+    obtenerPermisosMock.mockResolvedValue(permisos());
     expect((await getSession())?.nombre).toBe("x@example.com");
   });
 });

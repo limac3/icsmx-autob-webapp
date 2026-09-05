@@ -40,17 +40,18 @@ Disponibles en la organizacion: `eden-buttons` (`Primary`, `Secondary`), `eden-f
 
 `src/app/layout.tsx`: `Normalize` + `Fonts`, `WorkforceHeader`, contenido, `WorkforceFooter`.
 
-**Navegacion por rol.** Solo se muestran las secciones que el usuario puede usar:
+**Navegacion por permiso.** Solo se muestran las secciones que el usuario puede usar:
 
-| Rol | Secciones |
+| Permiso | Secciones |
 | --- | --- |
-| `EMPLEADO`, `OTRO_USUARIO` | Convocatorias · Mis solicitudes |
-| `ADMINISTRADOR` | Vehiculos · Convocatorias (admin) |
-| `APROBADOR_CONVOCATORIA` | Por aprobar |
-| `OPERADOR_TESORERIA` | Verificacion de pagos |
-| `AUDITOR_CUMPLIMIENTO` | Auditoria |
+| `Autob_Venta_a_empleados`, `Autob_Venta_en_general` | Convocatorias · Mis solicitudes |
+| `Autob_Administrar_Vehiculos`, `Autob_Administrar_Convocatorias` | Vehiculos · Convocatorias (admin) |
+| `Autob_Aprobar_Convocatorias` | Por aprobar |
+| `Autob_Operar_Tesoreria` | Verificacion de pagos |
+| `Autob_Auditar` | Auditoria |
 
-Con varios roles, se muestran todas las secciones que correspondan.
+Con varios permisos, se muestran todas las secciones que correspondan. Ocultar una seccion es
+solo cortesia: el servidor vuelve a decidir en cada action y en cada pagina.
 
 En movil la navegacion colapsa; el destino mas usado de cada rol queda accesible en un toque.
 
@@ -130,7 +131,7 @@ Toda la logica de la pantalla se reduce a esta tabla:
 | `RECHAZADA_POR_TESORERIA` | `Alert` de error **con el motivo** |
 | `NO_ADJUDICADA` | "Este vehiculo fue vendido a otro participante." |
 | Lote `VENDIDO`, sin solicitud propia | `Badge` "Vendido"; boton oculto |
-| `OTRO_USUARIO` en convocatoria de empleados | **No llega aqui:** 404 |
+| Sin `Autob_Venta_a_empleados` en convocatoria de empleados | **No llega aqui:** 404 |
 
 > Que `EN_VERIFICACION` **no** muestre cuenta regresiva es un requisito, no un olvido: el reloj
 > se detuvo (`proyecto.md`, 5.4) y dejarlo corriendo haria creer al participante que puede

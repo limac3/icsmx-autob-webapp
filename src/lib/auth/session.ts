@@ -1,10 +1,12 @@
 import "server-only";
-import type { Rol, Sesion, TipoParticipante } from "@/types/identidad";
+import { cache } from "react";
+import {
+  tiposDeConvocatoriaPermitidos,
+  type Permiso,
+  type Sesion,
+} from "@/types/identidad";
 import { auth } from "./auth0";
-import { obtenerRoles } from "./eas";
-
-const resolverTipoParticipante = (roles: Rol[]): TipoParticipante =>
-  roles.includes("EMPLEADO") ? "EMPLEADO" : "OTRO_USUARIO";
+import { obtenerPermisos } from "./eas";
 
 // El upsert real en DynamoDB (para obtener un participanteId propio y
 // estable, distinto del `sub` de Okta) llega en la Etapa 4 junto con
@@ -16,20 +18,29 @@ const resolverTipoParticipante = (roles: Rol[]): TipoParticipante =>
 const resolverParticipanteId = async (oktaSub: string): Promise<string> =>
   oktaSub;
 
+// Memoizado por peticion con `cache()` de React: una pagina que llama a
+// getSession() desde el layout y desde tres componentes consulta EAS **una
+// sola vez** (identidad-autorizacion.md 4.3). El cache dura lo que la
+// peticion y nada mas: un permiso revocado surte efecto en la siguiente
+// navegacion, sin esperar una expiracion.
+const permisosDeLaPeticion = cache(
+  async (oktaSub: string): Promise<Set<Permiso>> => obtenerPermisos(oktaSub),
+);
+
 /**
  * Sesion consolidada del participante autenticado, o `null` si no hay
  * sesion de Okta. Nunca lanza por ausencia de sesion; si lanza es porque EAS
  * fallo (sin fallback silencioso, regla 15 de CLAUDE.md) y el error se
  * propaga tal cual a quien llama.
  */
-export const getSession = async (): Promise<Sesion | null> => {
+export const getSession = cache(async (): Promise<Sesion | null> => {
   const sesionOkta = await auth.getSession();
   const usuario = sesionOkta?.user;
   if (!usuario?.sub) return null;
 
-  const [participanteId, roles] = await Promise.all([
+  const [participanteId, permisos] = await Promise.all([
     resolverParticipanteId(usuario.sub),
-    obtenerRoles(usuario.sub),
+    permisosDeLaPeticion(usuario.sub),
   ]);
 
   return {
@@ -37,7 +48,7 @@ export const getSession = async (): Promise<Sesion | null> => {
     oktaSub: usuario.sub,
     correo: usuario.email ?? "",
     nombre: usuario.name ?? usuario.email ?? usuario.sub,
-    roles,
-    tipoParticipante: resolverTipoParticipante(roles),
+    permisos,
+    tiposDeConvocatoriaPermitidos: tiposDeConvocatoriaPermitidos(permisos),
   };
-};
+});

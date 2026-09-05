@@ -23,6 +23,28 @@ describe("proxy", () => {
     expect(csp).toMatch(/script-src 'self' 'nonce-[^']+' 'strict-dynamic'/);
   });
 
+  it("autoriza el Font Foundry en style-src y en font-src", async () => {
+    // `<Fonts>` de eden-fonts carga una hoja de estilo remota desde este
+    // origen y desde ahi los woff2. Con la CSP anterior ('self' en ambas
+    // directivas) el navegador bloqueaba las dos cosas y la aplicacion se
+    // dibujaba con tipografia de respaldo. No lo detecta ni el build ni
+    // jsdom: ninguno aplica CSP, por eso la regresion se vigila aqui.
+    const csp =
+      (await proxy(crearRequest("/sesion"))).headers.get(
+        "Content-Security-Policy",
+      ) ?? "";
+    const foundry = "https://foundry.churchofjesuschrist.org";
+
+    const directiva = (nombre: string) =>
+      csp
+        .split(";")
+        .map((parte) => parte.trim())
+        .find((parte) => parte.startsWith(`${nombre} `)) ?? "";
+
+    expect(directiva("style-src")).toContain(foundry);
+    expect(directiva("font-src")).toContain(foundry);
+  });
+
   it("genera un nonce distinto en cada peticion", async () => {
     const extraerNonce = (respuesta: NextResponse) =>
       respuesta.headers

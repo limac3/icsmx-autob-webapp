@@ -16,7 +16,8 @@ npm run format     # Prettier. Ejecutar antes de verify si hubo cambios
 npm run typecheck  # tsc --noEmit
 npm run test       # Vitest
 npm run lint       # ESLint + Stylelint
-npm run verify     # lint + test + format check. Obligatorio antes de commit
+npm run verify:rapido  # compuerta completa sin el chequeo de desactualizados (~50 s)
+npm run verify     # lo anterior + chequeo de paquetes desactualizados (~2.5 min)
 npm run build      # build de produccion
 npx ampx sandbox   # backend Amplify Gen2 personal
 ```
@@ -142,7 +143,9 @@ export const __test__ = { helperPrivado };
 const sesion = await getSession();
 if (!sesion) redirect("/auth/login");
 
-const resultado = await listarConvocatoriasVisibles(sesion.tipoParticipante);
+const resultado = await listarConvocatoriasVisibles(
+  sesion.tiposDeConvocatoriaPermitidos,
+);
 if (!resultado.ok) throw new Error(resultado.error);
 ```
 
@@ -183,7 +186,8 @@ Los `vi.mock` van **antes** de los imports: se elevan.
 ### Obligatorios
 
 - Reglas puras de `src/lib/domain/`, con fronteras de tiempo.
-- Casos **allow y deny** de los seis roles.
+- Casos **allow y deny** de cada permiso, mas las invariantes de `permission-matrix.md`
+  seccion 9 — incluida la 8: quitar un campo a la vez del contexto minimo debe denegar.
 - **Concurrencia** en todo cambio al motor de fila: N solicitudes en paralelo, turnos unicos y
   estrictamente crecientes, una sola adjudicacion. Se ejecuta **varias veces** — una carrera que
   pasa una vez no prueba nada.
@@ -214,7 +218,9 @@ Detalle en `CLAUDE.md`. Resumen operativo:
 
 Mensaje en imperativo, en espanol, explicando el **por que** cuando no sea obvio.
 
-Antes de commit: `npm run verify` limpio y `npm run build` exitoso.
+Antes de commit: `npm run verify:rapido` limpio y `npm run build` exitoso. `npm run verify`
+completo de vez en cuando — solo agrega el aviso de paquetes desactualizados, que nunca falla
+el build (ver `desafios-implementacion.md` seccion 15).
 
 Si la tarea cambio reglas, contratos o decisiones, actualizar el documento de `agent_files/` que
 corresponda **en la misma entrega** — la tabla de clasificacion esta en `CLAUDE.md`.

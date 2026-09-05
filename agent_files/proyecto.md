@@ -28,27 +28,46 @@ Fijar esto evita que el proyecto crezca sin control:
 
 ## 3. Perfiles
 
-Seis roles. Un mismo usuario puede tener mas de un rol administrativo, pero el **tipo de
-participante** es exactamente uno.
+Seis perfiles de negocio. Una misma persona puede tener mas de uno.
 
-| Rol | Que puede hacer |
+| Perfil | Que puede hacer | Permiso que lo materializa |
+| --- | --- | --- |
+| Administrador de vehiculos | Registrar y editar vehiculos y sus fotografias | `Autob_Administrar_Vehiculos` |
+| Administrador de convocatorias | Crear convocatorias; incluir y retirar vehiculos; enviar a aprobacion; publicar y concluir | `Autob_Administrar_Convocatorias` |
+| Aprobador | Aprobar o rechazar una convocatoria antes de su publicacion | `Autob_Aprobar_Convocatorias` |
+| Comprador empleado | Participar en convocatorias de empleados **y** de publico general | `Autob_Venta_a_empleados` **y** `Autob_Venta_en_general` |
+| Comprador general | Participar solo en convocatorias de publico general | `Autob_Venta_en_general` |
+| Operador de tesoreria | Avalar o rechazar comprobantes de pago y marcar el vehiculo como vendido | `Autob_Operar_Tesoreria` |
+| Auditor de cumplimiento | Consultar la bitacora completa, en solo lectura | `Autob_Auditar` |
+
+### 3.1 Los perfiles son de negocio; la aplicacion solo conoce permisos
+
+**EAS no expone roles: responde un booleano por permiso.** Los perfiles de la tabla son el
+lenguaje con el que la organizacion piensa el sistema, y EAS los traduce a permisos con sus
+propias reglas internas. La aplicacion recibe unicamente el resultado.
+
+Consecuencia importante para el alcance de este documento: **las reglas de quien puede hacer que
+se configuran en EAS, no en el codigo.** Cuando una regla de este documento diga "quien
+administra no compra", eso describe la configuracion vigente de EAS, no una prohibicion
+programada. Si la organizacion decide lo contrario, cambia la configuracion y la aplicacion no
+se modifica.
+
+Lo que **si** vive en el codigo son las reglas que dependen del recurso y del momento — estado
+de la maquina, propiedad de la solicitud, auto-aprobacion, plazos —, porque EAS no puede
+conocerlas. Es la division que detalla `identidad-autorizacion.md`.
+
+### 3.2 A que convocatorias accede cada quien
+
+Los dos permisos de venta determinan el acceso, y **lo resuelve el servidor**, nunca el cliente:
+
+| Permiso | Da acceso a |
 | --- | --- |
-| `ADMINISTRADOR` | Registrar y editar vehiculos y sus fotografias; crear convocatorias; incluir y retirar vehiculos; enviar a aprobacion; publicar y concluir |
-| `APROBADOR_CONVOCATORIA` | Aprobar o rechazar una convocatoria antes de su publicacion |
-| `EMPLEADO` | Participar en convocatorias de empleados **y** de publico general |
-| `OTRO_USUARIO` | Participar solo en convocatorias de publico general |
-| `OPERADOR_TESORERIA` | Avalar o rechazar comprobantes de pago y marcar el vehiculo como vendido |
-| `AUDITOR_CUMPLIMIENTO` | Consultar la bitacora completa. **Solo lectura, sin excepcion** |
+| `Autob_Venta_a_empleados` | Convocatorias `EMPLEADOS` |
+| `Autob_Venta_en_general` | Convocatorias `PUBLICO_GENERAL` |
 
-### 3.1 Tipo de participante
-
-`EMPLEADO` y `OTRO_USUARIO` son a la vez rol y **tipo de participante**. El tipo determina a
-que convocatorias se tiene acceso y **lo resuelve el servidor** contra EAS, nunca el cliente.
-
-Un `EMPLEADO` es superconjunto de `OTRO_USUARIO` para efectos de participacion: ve todo lo que
-ve un `OTRO_USUARIO`, mas las convocatorias de empleados.
-
-El detalle de como se obtiene esta senal esta en `identidad-autorizacion.md`.
+Un empleado recibe ambos, asi que ve todo lo que ve un comprador general mas las convocatorias
+de empleados. Esa relacion de superconjunto es una **decision de configuracion**, no un caso
+especial del codigo.
 
 ---
 
@@ -70,8 +89,8 @@ Agrupa uno o mas vehiculos para su venta durante una ventana de tiempo.
 Atributos: tipo, descripcion de participacion, fecha y hora de publicacion, de inicio de venta
 y de fin de venta, horas para liquidacion del pago, y estatus.
 
-**Tipos:** `EMPLEADOS` (restringida a participantes `EMPLEADO`) y `PUBLICO_GENERAL` (abierta a
-`EMPLEADO` y `OTRO_USUARIO`).
+**Tipos:** `EMPLEADOS` (exige `Autob_Venta_a_empleados`) y `PUBLICO_GENERAL` (exige
+`Autob_Venta_en_general`).
 
 ### 4.3 Lote
 
@@ -109,16 +128,16 @@ BORRADOR ──enviar a aprobacion──> EN_APROBACION ──aprobar──> APR
     └─────────────────────────── (OCULTA puede volver a BORRADOR) ────────────────────────
 ```
 
-| Origen | Evento | Destino | Rol | Guardas |
+| Origen | Evento | Destino | Permiso | Guardas |
 | --- | --- | --- | --- | --- |
-| `BORRADOR` | Enviar a aprobacion | `EN_APROBACION` | `ADMINISTRADOR` | Al menos un lote; fechas coherentes (R-14); horas de liquidacion > 0 |
-| `EN_APROBACION` | Aprobar | `APROBADA` | `APROBADOR_CONVOCATORIA` | **No puede ser quien la creo** (R-05) |
-| `EN_APROBACION` | Rechazar | `BORRADOR` | `APROBADOR_CONVOCATORIA` | Motivo obligatorio, se guarda en la bitacora |
-| `APROBADA` | Publicar | `PUBLICADA` | `ADMINISTRADOR` | — |
-| `PUBLICADA` | Concluir | `CONCLUIDA` | `ADMINISTRADOR` | Solo despues del fin de venta, o sin solicitudes vivas |
-| `BORRADOR`, `EN_APROBACION`, `APROBADA` | Ocultar | `OCULTA` | `ADMINISTRADOR` | — |
-| `OCULTA` | Reactivar | `BORRADOR` | `ADMINISTRADOR` | — |
-| `PUBLICADA` | Ocultar | `OCULTA` | `ADMINISTRADOR` | **Prohibido si existe alguna solicitud** (R-06) |
+| `BORRADOR` | Enviar a aprobacion | `EN_APROBACION` | `Autob_Administrar_Convocatorias` | Al menos un lote; fechas coherentes (R-14); horas de liquidacion > 0 |
+| `EN_APROBACION` | Aprobar | `APROBADA` | `Autob_Aprobar_Convocatorias` | **No puede ser quien la creo** (R-05) |
+| `EN_APROBACION` | Rechazar | `BORRADOR` | `Autob_Aprobar_Convocatorias` | Motivo obligatorio, se guarda en la bitacora |
+| `APROBADA` | Publicar | `PUBLICADA` | `Autob_Administrar_Convocatorias` | — |
+| `PUBLICADA` | Concluir | `CONCLUIDA` | `Autob_Administrar_Convocatorias` | Solo despues del fin de venta, o sin solicitudes vivas |
+| `BORRADOR`, `EN_APROBACION`, `APROBADA` | Ocultar | `OCULTA` | `Autob_Administrar_Convocatorias` | — |
+| `OCULTA` | Reactivar | `BORRADOR` | `Autob_Administrar_Convocatorias` | — |
+| `PUBLICADA` | Ocultar | `OCULTA` | `Autob_Administrar_Convocatorias` | **Prohibido si existe alguna solicitud** (R-06) |
 
 > `EN_APROBACION` es una adicion deliberada a los cinco estatus del enunciado original. Sin el
 > no se puede distinguir un borrador que se sigue editando de uno que espera dictamen, y el
@@ -130,16 +149,16 @@ solo la ve si ademas `publicadaEn <= ahora`. Ver R-01.
 
 ### 5.2 Vehiculo
 
-| Origen | Evento | Destino | Rol |
+| Origen | Evento | Destino | Permiso |
 | --- | --- | --- | --- |
-| — | Registrar | `DISPONIBLE` | `ADMINISTRADOR` |
-| `DISPONIBLE` | Incluir en convocatoria | `EN_CONVOCATORIA` | `ADMINISTRADOR` |
-| `EN_CONVOCATORIA` | Retirar de convocatoria | `DISPONIBLE` | `ADMINISTRADOR` |
+| — | Registrar | `DISPONIBLE` | `Autob_Administrar_Vehiculos` |
+| `DISPONIBLE` | Incluir en convocatoria | `EN_CONVOCATORIA` | `Autob_Administrar_Convocatorias` |
+| `EN_CONVOCATORIA` | Retirar de convocatoria | `DISPONIBLE` | `Autob_Administrar_Convocatorias` |
 | `EN_CONVOCATORIA` | Adjudicar su lote | `RESERVADO` | sistema |
 | `RESERVADO` | Liberar (vencimiento o rechazo) | `EN_CONVOCATORIA` | sistema |
-| `RESERVADO` | Avalar pago | `VENDIDO` | `OPERADOR_TESORERIA` |
+| `RESERVADO` | Avalar pago | `VENDIDO` | `Autob_Operar_Tesoreria` |
 | `EN_CONVOCATORIA` | Concluir sin venta | `DISPONIBLE` | sistema |
-| `DISPONIBLE` | Retirar del catalogo | `RETIRADO` | `ADMINISTRADOR` |
+| `DISPONIBLE` | Retirar del catalogo | `RETIRADO` | `Autob_Administrar_Vehiculos` |
 
 `VENDIDO` es **terminal**. `DISPONIBLE` es lo que habilita la reoferta descrita en R-11.
 
@@ -168,9 +187,9 @@ EN_FILA ──adjudicar──> ADJUDICADA ──subir comprobante──> EN_VERI
    └── el lote se vende o se concluye ──> NO_ADJUDICADA
 ```
 
-| Origen | Evento | Destino | Rol | Guardas |
+| Origen | Evento | Destino | Permiso | Guardas |
 | --- | --- | --- | --- | --- |
-| — | Solicitar compra | `EN_FILA` | `EMPLEADO`, `OTRO_USUARIO` | Venta abierta; acceso al tipo de convocatoria; sin solicitud previa viva en el mismo lote (R-07) |
+| — | Solicitar compra | `EN_FILA` | permiso de venta del tipo | Venta abierta; acceso al tipo de convocatoria; sin solicitud previa viva en el mismo lote (R-07) |
 | `EN_FILA` | Adjudicar | `ADJUDICADA` | sistema | Turno menor vivo; lote sin adjudicacion; titular sin otra adjudicacion activa (R-09) |
 | `EN_FILA` | Cancelar | `CANCELADA_POR_PARTICIPANTE` | titular | — |
 | `EN_FILA` | El titular gana otro lote | `CONGELADA` | sistema | R-09 |
@@ -179,8 +198,8 @@ EN_FILA ──adjudicar──> ADJUDICADA ──subir comprobante──> EN_VERI
 | `ADJUDICADA` | Subir comprobante | `EN_VERIFICACION` | titular | Dentro del plazo |
 | `ADJUDICADA` | Vencer el plazo | `CANCELADA_POR_VENCIMIENTO` | sistema | `ahora > venceEn` (R-13) |
 | `ADJUDICADA` | Cancelar | `CANCELADA_POR_PARTICIPANTE` | titular | Libera el lote de inmediato |
-| `EN_VERIFICACION` | Avalar pago | `VENDIDA` | `OPERADOR_TESORERIA` | — |
-| `EN_VERIFICACION` | Rechazar pago | `RECHAZADA_POR_TESORERIA` | `OPERADOR_TESORERIA` | Motivo obligatorio (R-16) |
+| `EN_VERIFICACION` | Avalar pago | `VENDIDA` | `Autob_Operar_Tesoreria` | — |
+| `EN_VERIFICACION` | Rechazar pago | `RECHAZADA_POR_TESORERIA` | `Autob_Operar_Tesoreria` | Motivo obligatorio (R-16) |
 
 > El enunciado original decia que al adjuntar el comprobante la solicitud "se marca como en
 > proceso de verificacion". Por eso **no existe** un estado intermedio `COMPROBANTE_CARGADO`:
@@ -199,12 +218,13 @@ al participante.
 ### Visibilidad y acceso
 
 **R-01 — Gating triple, siempre en servidor.** Una convocatoria es visible para un participante
-solo si se cumplen las tres condiciones: `estatus = PUBLICADA`, `publicadaEn <= ahora`, y el
-tipo es compatible con su tipo de participante. Falla cualquiera, la respuesta es 404 — no 403,
-para no revelar que existe. Nunca confiar en filtros de UI.
+solo si se cumplen las tres condiciones: `estatus = PUBLICADA`, `publicadaEn <= ahora`, y tiene
+el permiso de venta que corresponde al tipo de la convocatoria. Falla cualquiera, la respuesta es
+404 — no 403, para no revelar que existe. Nunca confiar en filtros de UI.
 
-**R-02 — Las convocatorias de empleados son exclusivas.** Tipo `EMPLEADOS` solo para
-participantes `EMPLEADO`. Tipo `PUBLICO_GENERAL` para ambos tipos.
+**R-02 — Las convocatorias de empleados son exclusivas.** Tipo `EMPLEADOS` solo para quien tiene
+`Autob_Venta_a_empleados`. Tipo `PUBLICO_GENERAL` solo para quien tiene `Autob_Venta_en_general`.
+Un empleado tiene ambos permisos y por eso alcanza ambos tipos (seccion 3.2).
 
 **R-03 — Publicacion y venta son dos momentos distintos.** Entre `publicadaEn` e `inicioVenta`
 el participante ve la convocatoria, sus vehiculos y sus fotografias, y sabe cuando abre la
@@ -218,7 +238,7 @@ hora del reloj del cliente.
 ### Convocatorias
 
 **R-05 — Separacion de funciones.** Quien crea o edita una convocatoria no puede aprobarla,
-aunque tenga ambos roles.
+aunque tenga ambos permisos.
 
 **R-06 — Una convocatoria con solicitudes no se puede ocultar ni borrar.** Ocultarla dejaria
 participantes en una fila invisible. Para terminarla anticipadamente se concluye, lo que cierra
@@ -316,7 +336,7 @@ automaticas, y lleva motivo cuando la transicion lo exige.
    cada uno, con su contador de turnos en cero.
 3. La envia a aprobacion (`EN_APROBACION`). Un aprobador distinto la aprueba (`APROBADA`).
 4. El administrador la publica (`PUBLICADA`). Sigue invisible hasta `publicadaEn`.
-5. Llegado `publicadaEn`, los participantes `EMPLEADO` la ven con sus vehiculos, fotografias y
+5. Llegado `publicadaEn`, quienes tienen `Autob_Venta_a_empleados` la ven con sus vehiculos, fotografias y
    la hora de apertura. Todavia no pueden solicitar (R-03).
 6. Llegado `inicioVenta`, solicitan. Cada uno recibe un `turno` del contador atomico del lote.
 7. El turno 1 obtiene la adjudicacion y recibe por correo los datos de pago y su plazo. Sus

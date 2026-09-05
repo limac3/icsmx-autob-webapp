@@ -127,10 +127,11 @@ Riesgo R4 — el punto mas delicado de la arquitectura.
 
 ### 3.1 La regla
 
-**Ninguna respuesta que dependa de `publicadaEn` o del `tipoParticipante` puede ser estatica.**
+**Ninguna respuesta que dependa de `publicadaEn` o de los permisos de venta puede ser estatica.**
 
 Dos razones distintas y ambas suficientes: una convocatoria programada no puede filtrarse antes
-de su hora, y una respuesta cacheada para un `EMPLEADO` no puede servirse a un `OTRO_USUARIO`.
+de su hora, y una respuesta cacheada para quien tiene `Autob_Venta_a_empleados` no puede servirse
+a quien no lo tiene.
 
 El patron es envolver la parte dependiente de sesion o de tiempo en `Suspense` con lectura
 dinamica, dejando estatico solo el armazon.
@@ -160,8 +161,8 @@ dinamica, dejando estatico solo el armazon.
 
 ```
 Navegador → proxy.ts (sesion) → page.tsx
-    → getSession() → oktaSub + roles EAS → tipoParticipante
-    → listarConvocatoriasVisibles(tipoParticipante, ahora)
+    → getSession() → oktaSub + permisos EAS → tipos de convocatoria permitidos
+    → listarConvocatoriasVisibles(tiposPermitidos, ahora)
         → Query GSI2 CONV_ESTATUS#PUBLICADA, GSI2SK <= ahora, filtro por tipo
     → DTO sin datos de otros participantes → render
 ```
@@ -236,10 +237,15 @@ El correo **nunca** bloquea ni revierte una adjudicacion.
 | Subidas | Tipo y tamano validados en servidor; nombre de archivo generado, nunca el del cliente |
 
 **CSP con nonce (Etapa 2, `src/proxy.ts`):** nonce distinto por peticion en `script-src`, con
-`'strict-dynamic'`. `style-src` se deja con `'unsafe-inline'` a proposito — Eden es una libreria
-externa cuyo uso de estilos en linea no esta verificado (sin acceso al MCP de Eden en el entorno
-de desarrollo); endurecerlo sin poder revisar cada componente visualmente es mas riesgo que
-beneficio. Revisar en la Etapa 12, cuando haya oportunidad de una pasada visual completa.
+`'strict-dynamic'`. `style-src` conserva `'unsafe-inline'` — el uso de estilos en linea de Eden no
+esta verificado y endurecerlo sin una pasada visual completa es mas riesgo que beneficio; se
+revisa en la Etapa 12.
+
+`style-src` y `font-src` autorizan ademas **`https://foundry.churchofjesuschrist.org`**. No es una
+concesion opcional: `<Fonts>` de `@churchofjesuschrist/eden-fonts` monta una hoja de estilo remota
+de ese origen y desde ahi se descargan los woff2. Con `'self'` a secas el navegador bloqueaba las
+dos cosas y la aplicacion se dibujaba con tipografia de respaldo — un defecto que **ni `next build`
+ni jsdom pueden ver**, porque ninguno aplica CSP.
 
 El nonce por peticion **obliga a renderizado dinamico en toda la aplicacion** (Next.js no puede
 inyectar un nonce en una pagina generada en build). Esto no estorba la seccion 3: `cacheLife` y
@@ -259,8 +265,26 @@ completamente estaticas que perder.
 }
 ```
 
-Es la unica garantia de inmutabilidad que **no depende de que el codigo este bien escrito**. Un
-`Deny` explicito no se puede sobrescribir con un `Allow`.
+Un `Deny` explicito no se puede sobrescribir con un `Allow`, asi que ningun permiso posterior
+reabre esta puerta.
+
+**Hasta donde llega — y hasta donde no.** Esta politica impide *modificar* y *borrar* un evento.
+**No impide reescribirlo**: un `PutItem` con la misma clave reemplaza el item completo, y
+`PutItem` tiene que quedar permitido porque es justo lo que la regla 4 obliga a escribir en la
+misma transaccion que la mutacion. No hay condicion de IAM que distinga un `Put` que crea de uno
+que reemplaza.
+
+Por eso la inmutabilidad se sostiene en **dos** mecanismos, no en uno:
+
+| Amenaza | Que la contiene |
+| --- | --- |
+| Codigo que intenta `UpdateItem` o `DeleteItem` sobre un `AUDIT#` | Este `Deny` de IAM |
+| Codigo con un error que reescribe un evento existente | `ConditionExpression: attribute_not_exists(PK)` en todo `Put` de evento (`modelo-datos-dynamodb.md` seccion 6) |
+| Codigo que deliberadamente omite la condicion | **Ninguno de los dos.** Exige un sumidero append-only fuera del alcance de la aplicacion — riesgo R20, se resuelve en la Etapa 11 |
+
+Las tres filas estan comprobadas contra AWS real en
+`amplify/auditoriaInmutable.integracion.test.ts`, incluida la segunda columna vacia de la tercera:
+hay una prueba que **confirma que la sobrescritura tiene exito** sin la condicion.
 
 `BatchWriteItem` se incluye porque tambien puede borrar, y omitirlo dejaria abierta justo la
 puerta que se intenta cerrar.

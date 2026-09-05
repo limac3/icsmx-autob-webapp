@@ -1,12 +1,14 @@
 import "server-only";
-import { ROLES, type Rol } from "@/types/identidad";
+import { PERMISOS, type Permiso } from "@/types/identidad";
 
-// Adaptador real de EAS. El contrato exacto del endpoint (forma de la
-// respuesta) todavia no esta confirmado por el equipo de EAS — se deja
-// escrito con la firma definitiva y una forma de respuesta razonable
-// ({ roles: string[] }), ver agent_files/identidad-autorizacion.md seccion
-// 4.2. Ajustar el parseo aqui cuando se confirme el contrato real; nada mas
-// deberia necesitar cambiar.
+// Adaptador real de EAS.
+//
+// EAS no expone roles: se le envian nombres de permiso y responde un booleano
+// por cada uno (agent_files/identidad-autorizacion.md seccion 4.2). Esa
+// semantica esta confirmada; **el sobre HTTP exacto no** — ruta, forma de la
+// peticion y de la respuesta pueden cambiar cuando el equipo de EAS confirme el
+// contrato (riesgo R19). Por eso el parseo vive aislado en este archivo: es lo
+// unico que deberia necesitar ajuste.
 
 export type CausaErrorEas =
   "timeout" | "red" | "respuesta_invalida" | "configuracion";
@@ -23,23 +25,61 @@ export class ErrorConsultaEas extends Error {
 
 const TIEMPO_LIMITE_MS = 5000;
 
-const ROLES_VALIDOS = new Set<string>(ROLES);
+/**
+ * Convierte la respuesta de EAS en el conjunto de permisos concedidos.
+ *
+ * Exige que **todos** los permisos preguntados vengan en la respuesta. Un
+ * permiso ausente no se interpreta como `false`: eso convertiria un cambio de
+ * contrato en "usuario sin acceso", que es indistinguible de una cuenta sin
+ * privilegios y por tanto imposible de depurar. Es la misma logica de la regla
+ * 15 de CLAUDE.md aplicada al detalle del contrato.
+ */
+const extraerPermisos = (
+  cuerpo: unknown,
+  solicitados: readonly Permiso[],
+): Set<Permiso> => {
+  if (!cuerpo || typeof cuerpo !== "object" || Array.isArray(cuerpo)) {
+    throw new ErrorConsultaEas(
+      "respuesta_invalida",
+      "EAS devolvio un cuerpo que no es un objeto de permisos",
+    );
+  }
 
-const extraerRoles = (cuerpo: unknown): Rol[] | null => {
-  if (!cuerpo || typeof cuerpo !== "object" || !("roles" in cuerpo))
-    return null;
-  const { roles } = cuerpo as { roles: unknown };
-  if (!Array.isArray(roles)) return null;
-  return roles.filter(
-    (valor): valor is Rol =>
-      typeof valor === "string" && ROLES_VALIDOS.has(valor),
-  );
+  const mapa = cuerpo as Record<string, unknown>;
+  const concedidos = new Set<Permiso>();
+  const ausentes: Permiso[] = [];
+
+  for (const permiso of solicitados) {
+    const valor = mapa[permiso];
+    if (typeof valor !== "boolean") {
+      ausentes.push(permiso);
+      continue;
+    }
+    if (valor) concedidos.add(permiso);
+  }
+
+  if (ausentes.length > 0) {
+    throw new ErrorConsultaEas(
+      "respuesta_invalida",
+      `EAS no respondio por ${ausentes.length} permiso(s) solicitado(s): ${ausentes.join(", ")}`,
+    );
+  }
+
+  return concedidos;
 };
 
-// Sin fallback silencioso (regla 15 de CLAUDE.md): cualquier fallo de
-// configuracion, red, timeout o forma de respuesta invalida lanza. Nunca
-// devuelve una lista vacia como sustituto de un error.
-export const consultarRolesEas = async (oktaSub: string): Promise<Rol[]> => {
+/**
+ * Consulta a EAS los permisos de `oktaSub`.
+ *
+ * Sin fallback silencioso (regla 15 de CLAUDE.md): configuracion incompleta,
+ * red, timeout o respuesta invalida **lanzan**. Nunca devuelve un conjunto
+ * vacio como sustituto de un error — un usuario sin permisos y un EAS caido
+ * deben verse distintos.
+ */
+export const consultarPermisosEas = async (
+  oktaSub: string,
+  solicitados: readonly Permiso[] = PERMISOS,
+): Promise<Set<Permiso>> => {
   const url = process.env.EAS_PROFILE_URL;
   const apiKey = process.env.EAS_API_KEY;
   if (!url || !apiKey) {
@@ -54,8 +94,13 @@ export const consultarRolesEas = async (oktaSub: string): Promise<Rol[]> => {
 
   let respuesta: Response;
   try {
-    respuesta = await fetch(`${url}/${encodeURIComponent(oktaSub)}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+    respuesta = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ oktaSub, permisos: solicitados }),
       signal: controlador.signal,
     });
   } catch (error) {
@@ -80,12 +125,15 @@ export const consultarRolesEas = async (oktaSub: string): Promise<Rol[]> => {
     );
   }
 
-  const roles = extraerRoles(await respuesta.json());
-  if (!roles) {
+  let cuerpo: unknown;
+  try {
+    cuerpo = await respuesta.json();
+  } catch (error) {
     throw new ErrorConsultaEas(
       "respuesta_invalida",
-      "EAS devolvio un formato inesperado",
+      `EAS devolvio un cuerpo que no es JSON: ${String(error)}`,
     );
   }
-  return roles;
+
+  return extraerPermisos(cuerpo, solicitados);
 };

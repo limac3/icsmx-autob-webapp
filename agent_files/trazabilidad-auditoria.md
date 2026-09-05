@@ -71,7 +71,7 @@ mas tarde daria una respuesta distinta y equivocada.
 La bitacora guarda `participanteId` de todos los involucrados. R-12 restringe lo que ve un
 **participante**, no lo que se registra: sin identidades no habria nada que auditar.
 
-El acceso a esos datos esta limitado a `AUDITOR_CUMPLIMIENTO` mediante
+El acceso a esos datos esta limitado a `Autob_Auditar` mediante
 `auditoria:ver-fila-historica` (`permission-matrix.md`, seccion 6).
 
 ---
@@ -176,16 +176,33 @@ ocurre.
 Prohibido escribir el evento en un `catch`, en un `finally`, en una cola posterior o en un
 `Promise.all` paralelo a la mutacion.
 
-### 4.2 Append-only por IAM — regla 5
+### 4.2 Append-only — regla 5
 
-La politica del rol de la aplicacion lleva un **`Deny` explicito** de `UpdateItem`, `DeleteItem`
-y `BatchWriteItem` sobre items cuya clave empieza con `AUDIT#`.
+Se sostiene en **dos** mecanismos, y conviene no confundir lo que hace cada uno.
 
-Es la capa que importa: las otras dependen de que el codigo este bien escrito; esta se cumple
-aunque el codigo este mal. Un `Deny` explicito no se puede sobrescribir con un `Allow`.
+**1. `Deny` de IAM.** La politica del rol de la aplicacion deniega `UpdateItem`, `DeleteItem` y
+`BatchWriteItem` sobre items cuya clave empieza con `AUDIT#`. Se cumple aunque el codigo este mal,
+y un `Deny` explicito no se puede sobrescribir con un `Allow`.
 
-Debe existir una **prueba de integracion** que confirme que escribir un evento funciona y que
-modificarlo o borrarlo es rechazado por IAM (Etapa 3).
+**2. `ConditionExpression: attribute_not_exists(PK)` en todo `Put` de evento.** Hace falta porque
+el `Deny` **no cubre la reescritura**: un `PutItem` con la misma clave reemplaza el item completo,
+y `PutItem` tiene que quedar permitido — es justamente lo que la regla 4 obliga a escribir en la
+misma transaccion que la mutacion. No existe condicion de IAM que distinga un `Put` que crea de
+uno que reemplaza.
+
+> Este documento afirmaba que el `Deny` era "la capa que se cumple aunque el codigo este mal", a
+> secas. Era **falso para la reescritura**, y quedo comprobado contra AWS real: la prueba de
+> integracion confirma que sobrescribir un `AUDIT#` con `Put` **tiene exito**. La correccion
+> importa porque de esa afirmacion dependia no poner la condicion en el codigo.
+
+**Lo que ninguno de los dos contiene** es codigo que deliberadamente omita la condicion. Para eso
+la bitacora tendria que salir del alcance de la aplicacion — un sumidero append-only alimentado
+por DynamoDB Streams (S3 con Object Lock o equivalente). Es el riesgo **R20** de
+`plan-ejecucion.md` y se resuelve en la Etapa 11.
+
+La **prueba de integracion** de `amplify/auditoriaInmutable.integracion.test.ts` cubre los tres
+casos: escribir funciona, modificar y borrar los rechaza IAM, y la condicion cierra la
+sobrescritura que IAM deja abierta.
 
 ### 4.3 Correccion por compensacion — R-20
 

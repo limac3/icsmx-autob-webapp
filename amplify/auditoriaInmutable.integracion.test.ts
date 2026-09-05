@@ -19,6 +19,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
  * politica puede estar en la plantilla y aun asi no surtir efecto por una condicion mal
  * escrita.
  *
+ * Delimita ademas **hasta donde llega** la garantia, que es menos de lo que se afirmo al
+ * cerrar la Etapa 3: `PutItem` sobre una clave existente la reemplaza, y no se puede denegar
+ * porque la regla 4 lo exige. La inmutabilidad frente a errores de codigo la da la escritura
+ * condicional; frente a codigo deliberadamente mal escrito, ninguna de las dos basta (R20).
+ *
  * Se ejecuta contra el sandbox personal. **Se omite** —no falla— cuando no hay
  * `amplify_outputs.json` o no hay credenciales: la compuerta de calidad tiene que poder
  * correr en una maquina sin AWS, y una prueba que falla por falta de infraestructura deja
@@ -128,6 +133,66 @@ describe.skipIf(!hayBackend)(
           new DeleteItemCommand({ TableName: tabla, Key: claveEvento }),
         ),
       ).rejects.toMatchObject({ name: "AccessDeniedException" });
+    });
+
+    // Los dos casos siguientes delimitan la garantia real, que es mas estrecha de lo que
+    // decia la documentacion hasta la Etapa 2.1: el `Deny` de IAM cierra `UpdateItem`,
+    // `DeleteItem` y `BatchWriteItem`, pero **no** puede cerrar `PutItem` — la regla 4 exige
+    // escribir el evento en la misma transaccion que la mutacion, asi que el permiso tiene
+    // que existir. Un `Put` con la misma clave reemplaza el item completo.
+
+    it("IAM NO impide sobrescribir un evento con Put: por eso hace falta la condicion", async () => {
+      const clave = {
+        PK: { S: `AUDIT#sobrescritura#${Date.now()}` },
+        SK: { S: `${new Date().toISOString()}#evento` },
+      };
+
+      await dynamo.send(
+        new PutItemCommand({
+          TableName: tabla,
+          Item: { ...clave, actor: { S: "original" } },
+        }),
+      );
+
+      // Esto tiene exito. No es un defecto de la politica: es su limite, y esta aqui escrito
+      // para que nadie vuelva a afirmar que IAM por si solo hace la bitacora append-only.
+      await expect(
+        dynamo.send(
+          new PutItemCommand({
+            TableName: tabla,
+            Item: { ...clave, actor: { S: "suplantado" } },
+          }),
+        ),
+      ).resolves.toMatchObject({ $metadata: { httpStatusCode: 200 } });
+    });
+
+    it("la escritura condicional si cierra la sobrescritura", async () => {
+      const clave = {
+        PK: { S: `AUDIT#condicional#${Date.now()}` },
+        SK: { S: `${new Date().toISOString()}#evento` },
+      };
+
+      await dynamo.send(
+        new PutItemCommand({
+          TableName: tabla,
+          Item: { ...clave, actor: { S: "original" } },
+          ConditionExpression: "attribute_not_exists(PK)",
+        }),
+      );
+
+      // Es el mecanismo que toda escritura de evento debe usar (seccion 6 de
+      // modelo-datos-dynamodb.md). Protege contra un error de codigo; no contra codigo que
+      // deliberadamente omita la condicion — para eso hace falta un sumidero fuera del
+      // alcance de la aplicacion, y es el riesgo R20 que atiende la Etapa 11.
+      await expect(
+        dynamo.send(
+          new PutItemCommand({
+            TableName: tabla,
+            Item: { ...clave, actor: { S: "suplantado" } },
+            ConditionExpression: "attribute_not_exists(PK)",
+          }),
+        ),
+      ).rejects.toMatchObject({ name: "ConditionalCheckFailedException" });
     });
 
     it("el mismo rol si modifica y borra un item que no es de la bitacora", async () => {

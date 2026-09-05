@@ -14,23 +14,24 @@
     "titulo": "Mi sesion",
     "etiquetaNombre": "Nombre",
     "etiquetaCorreo": "Correo",
-    "etiquetaRoles": "Roles",
-    "etiquetaTipoParticipante": "Tipo de participante"
-  },
-  "roles": {
-    "ADMINISTRADOR": "Administrador",
-    "APROBADOR_CONVOCATORIA": "Aprobador de convocatorias",
-    "EMPLEADO": "Empleado",
-    "OTRO_USUARIO": "Otro usuario",
-    "OPERADOR_TESORERIA": "Operador de tesoreria",
-    "AUDITOR_CUMPLIMIENTO": "Auditor de cumplimiento"
-  },
-  "tiposParticipante": {
-    "EMPLEADO": "Empleado",
-    "OTRO_USUARIO": "Otro usuario"
+    "etiquetaPermisos": "Permisos",
+    "etiquetaTiposDeConvocatoria": "Convocatorias a las que tiene acceso"
   },
   "prohibido": {
     "titulo": "Sin acceso",
-    "descripcion": "Tu cuenta no tiene un rol asignado en esta aplicacion. Si crees que es un error, contacta al administrador."
+    "descripcion": "Tu cuenta no tiene permisos asignados en esta aplicacion. Si crees que es un error, contacta al administrador."
+  },
+  "permisos": {
+    "Autob_Administrar_Vehiculos": "Administrar vehiculos",
+    "Autob_Administrar_Convocatorias": "Administrar convocatorias",
+    "Autob_Aprobar_Convocatorias": "Aprobar convocatorias",
+    "Autob_Venta_a_empleados": "Comprar en venta a empleados",
+    "Autob_Venta_en_general": "Comprar en venta al publico general",
+    "Autob_Operar_Tesoreria": "Operar tesoreria",
+    "Autob_Auditar": "Auditar"
+  },
+  "tiposConvocatoria": {
+    "EMPLEADOS": "De empleados",
+    "PUBLICO_GENERAL": "De publico general"
   }
 }

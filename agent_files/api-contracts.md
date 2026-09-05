@@ -82,7 +82,7 @@ comprueban al crear, al editar y de nuevo al enviar a aprobacion.
 - `incluirVehiculo` devuelve `conflicto_concurrencia` cuando el vehiculo ya esta en otra
   convocatoria activa (falla el centinela de R-10). No es error del usuario: la UI relee.
 - `aprobarConvocatoria` devuelve `forbidden` si el aprobador es el creador (R-05), **incluso
-  teniendo ambos roles**.
+  teniendo ambos permisos**.
 - `ocultarConvocatoria` devuelve `invalid_state` si existe cualquier solicitud (R-06).
 - `concluirConvocatoria` pasa las solicitudes `EN_FILA` y `CONGELADA` a `NO_ADJUDICADA`, pero
   **respeta las adjudicaciones vigentes** con su plazo intacto (R-18).
@@ -176,7 +176,7 @@ vencerlo por demora propia.
 | `exportarBitacora` | `{ filtros }` | `{ urlDescarga }` | `auditoria:exportar` |
 
 `FilaHistoricaDTO` **si incluye identidades** — es el unico contrato del sistema que lo hace, y
-esta reservado a `AUDITOR_CUMPLIMIENTO`.
+esta reservado a `Autob_Auditar`.
 
 `ResultadoVerificacion` devuelve las seis comprobaciones de la seccion 5.1 de
 `trazabilidad-auditoria.md`, cada una con veredicto y detalle. Los huecos de turno se reportan
@@ -231,7 +231,7 @@ propios duplicaria el flujo y lo romperia.
 | `EventoDTO` | Evento completo con actor | — |
 
 `PendienteDTO` **si** expone el correo del titular: tesoreria necesita identificar a quien
-pago. Es una excepcion deliberada a R-12, acotada al rol `OPERADOR_TESORERIA`.
+pago. Es una excepcion deliberada a R-12, acotada a `Autob_Operar_Tesoreria`.
 
 ---
 

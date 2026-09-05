@@ -549,3 +549,188 @@ verde.
 Corolario: `npm run typecheck` en verde **no prueba que un import se resuelva en ejecucion**
 cuando el tsconfig usa `bundler` y el runtime es Node ESM. Son dos resolvedores que pueden
 discrepar, y aqui discrepan.
+
+---
+
+## 13) Se asumio que EAS entregaba roles; entrega permisos
+
+### Problema
+
+La Etapa 2 construyo la autorizacion como RBAC: `puedeEjecutar({ accion, roles, contexto })`, un
+catalogo `accion → roles permitidos` y una `permission-matrix.md` con seis columnas de rol. Se
+esperaba que `getSession()` obtuviera de EAS la lista de roles del usuario.
+
+### Sintoma
+
+Dos defectos que en la superficie parecian independientes, encontrados por una revision externa:
+
+1. **La union de roles concedia lo que la matriz negaba.** `puedeEjecutar` permitia si *alguno*
+   de los roles del usuario estaba en la lista de la accion. Un usuario
+   `["ADMINISTRADOR", "EMPLEADO"]` podia ejecutar `solicitud:crear`, contra lo que la matriz
+   declaraba de forma explicita. Igual con `["AUDITOR_CUMPLIMIENTO", "OPERADOR_TESORERIA"]` y
+   `pago:avalar`, contra el "sin excepcion" del documento.
+2. Y no era un caso raro: `EMPLEADO` era **a la vez** permiso de compra y discriminador del
+   `tipoParticipante`, asi que un administrador **necesitaba** el rol de comprador solo para poder
+   *ver* una convocatoria de empleados. La combinacion no era una anomalia, era la normal.
+
+### Causa raiz
+
+Dos, una encima de la otra.
+
+La superficial: `EMPLEADO`/`OTRO_USUARIO` estaban modelados como roles cuando describen un
+**atributo de la persona**, no una concesion. `proyecto.md` incluso lo declaraba sin verlo como
+problema: *"`EMPLEADO` y `OTRO_USUARIO` son a la vez rol y tipo de participante"*.
+
+La de fondo, que solo aparecio al preguntarle al operador: **EAS no expone roles.** Se le pregunta
+por uno o varios permisos y responde un booleano por cada uno; los roles viven dentro de EAS, que
+calcula los permisos con reglas propias. El modelo entero estaba construido sobre una capacidad
+que el proveedor de identidad no tiene.
+
+Eso invalida tambien la correccion que parecia obvia. La primera propuesta fue un `deny-override`:
+declarar "quien administra nunca compra" como exclusion en el codigo. Habria sido **el error
+opuesto** — congelar politica organizacional en el repositorio. La regla es cierta hoy, pero puede
+cambiar, y cuando cambie se cambiara en la configuracion de EAS.
+
+### Solucion aplicada
+
+`puedeEjecutar({ accion, permisos, contexto })`, con la responsabilidad partida en dos:
+
+| Decide | Quien |
+| --- | --- |
+| **Capacidad** — "¿puede operar tesoreria?" | EAS |
+| **Aplicabilidad** — "¿esta solicitud esta en `EN_VERIFICACION`?" | La aplicacion |
+
+Las guardas contextuales se conservaron intactas: son justamente lo que EAS no puede saber. Lo que
+desaparecio fue el catalogo `accion → roles`.
+
+El tipo de convocatoria accesible pasa a salir de dos permisos —`Autob_Venta_a_empleados` y
+`Autob_Venta_en_general`—, con lo que la regla "un empleado es superconjunto" deja de ser un caso
+especial del codigo y pasa a ser configuracion.
+
+`Rol` sobrevive solo en `src/lib/auth/rolesSimulados.ts`, para el modo de desarrollo, que sigue
+razonando en roles porque es como piensa el equipo. Ningun otro archivo lo importa.
+
+### Regla para futuro
+
+**Antes de modelar autorizacion, confirmar que puede responder el proveedor de identidad.** No es
+lo mismo "dame los roles de esta persona" que "¿tiene este permiso?": el segundo contrato no
+permite reconstruir el primero, y toda la forma del codigo depende de cual de los dos es.
+
+Y la regla general que dejo: **si una regla se puede expresar como "quien tiene tal permiso puede
+tal cosa", no lleva codigo.** Cuando aparezca la tentacion de escribir una exclusion por rol,
+significa que la decision le pertenece a la configuracion, no al repositorio.
+
+---
+
+## 14) Una prueba de "cerrado por omision" que no ejercia el defecto
+
+### Problema
+
+Varias guardas de `puedeEjecutar` fallaban abiertas: rechazaban `=== false` pero dejaban pasar
+`undefined`. Como todos los campos de `Contexto` son opcionales, un dato que quien invoca olvidara
+pasar se convertia en un permiso concedido. Habia siete casos, entre ellos ocultar una convocatoria
+publicada **con fila viva** (R-06) y formarse dos veces en el mismo lote (R-07).
+
+Al corregirlos se escribio la invariante que debia impedir que volvieran: recorrer el catalogo con
+**contexto vacio** y exigir que toda accion con guarda denegara.
+
+### Sintoma
+
+La prueba pasaba en verde. Pero al revertir a proposito la correccion —volviendo `confirmado` a
+`valor !== false`— **seguia pasando**. No detectaba el defecto que existia para detectar.
+
+### Causa raiz
+
+Con contexto vacio, las comprobaciones de estado se evaluan primero y deniegan antes de llegar a
+la precondicion booleana:
+
+```ts
+if (c.estatusConvocatoria !== "BORRADOR") return denegar("invalid_state"); // deniega aqui
+if (!confirmado(c.fechasCoherentes)) return denegar("invalid_state");      // nunca se llega
+```
+
+La prueba afirmaba lo correcto sobre el resultado final, pero por el camino equivocado. Un caso de
+prueba que pasa por la razon equivocada es peor que no tenerla: da la señal de que el riesgo esta
+cubierto.
+
+### Solucion aplicada
+
+Cambiar la afirmacion: partir del contexto minimo que **si** satisface la guarda y quitar **un
+campo a la vez**, exigiendo que cada version incompleta deniegue. Cada campo del contexto minimo
+queda demostrado como indispensable.
+
+Se verifico por falsacion —revirtiendo `confirmado` y confirmando que la prueba falla— antes de
+darla por buena.
+
+Lleva una lista explicita de excepciones: `comprobante:descargar` con `Autob_Operar_Tesoreria` o
+`Autob_Auditar` concede por capacidad sola, sin mirar el recurso. Estan declaradas una por una para
+que agregar otra obligue a justificarla, en vez de debilitar la invariante.
+
+### Regla para futuro
+
+**Una prueba de seguridad nueva se valida rompiendo el codigo a proposito.** Si al revertir la
+correccion la prueba sigue en verde, no esta probando lo que dice. Es barato —dos comandos— y es la
+unica forma de distinguir una invariante real de una que solo parece exigente.
+
+Vale tambien para el control de cobertura del catalogo: `expect(CATALOGO_ESPERADO).toHaveLength(33)`
+parecia verificar que la matriz y el codigo no se separaran, pero contaba la tabla de expectativas
+contra si misma. Una accion 34 en el codigo no la habria hecho fallar. Comparar contra
+`Object.keys(CATALOGO_ACCIONES)` si lo hace.
+
+---
+
+## 15) `npm run verify` tardo 25 minutos en el chequeo de paquetes
+
+### Problema
+
+`npm run verify` es la compuerta previa a cada commit. Debe rondar el minuto.
+
+### Sintoma
+
+Una corrida tardo mas de 25 minutos. El 95% del tiempo se fue en "Check for outdated packages",
+que no imprime nada hasta terminar y parece colgado.
+
+### Causa raiz
+
+Tres cosas sumadas, en orden de importancia:
+
+1. **Latencia del registro en esta maquina.** El `.npmrc` apunta a Artifactory
+   (`icseng.jfrog.io`). Un `npm view` de un solo paquete tarda **5 a 21 segundos**; en un
+   registro sano es menos de uno. Con 21 paquetes, el piso son minutos. `npm-check-updates`
+   no tiene la culpa: es el transporte.
+2. **Cache frio.** La corrida lenta fue la primera despues de agregar los paquetes de AWS en
+   la Etapa 3. Ya en caliente, `ncu` tarda **95 segundos**.
+3. **Procesos huerfanos compitiendo.** Se habian lanzado varias corridas de `verify` y al
+   detenerlas quedaron vivos los procesos hijo de `ncu`, los tres golpeando el registro a la vez.
+
+Lo que **no** era la causa, pese a ser el sospechoso obvio: la bandera `--cooldown 1` que pasa
+festack. Medido, da lo mismo — 95 s sin ella, 99 s con ella.
+
+### Solucion aplicada
+
+`npm run verify:rapido` — **44 segundos** medidos, contra ~2.5 minutos del completo.
+
+`scripts/verify-rapido.mjs` invoca `npm run verify` con `CI=1` en el entorno.
+`festack-scripts-verify.mjs` omite el chequeo de desactualizados cuando `CI` o `AGENT_ID` estan
+definidas, y **ese chequeo nunca falla el build**: solo imprime una lista, y el propio festack lo
+describe como mantenimiento *"mensual"*. Solo sale con error si `ncu` mismo revienta. Formato,
+lint, pruebas y el chequeo de dependencias sin usar corren igual, asi que la compuerta no se
+debilita.
+
+Se delega en `npm run verify` en vez de invocar festack directamente para que las dos variantes
+no puedan separarse. No hizo falta ninguna dependencia nueva: `cross-env` no esta en el proyecto
+y `CI=1 npm run ...` no funciona en `cmd` ni en PowerShell, de ahi el script en vez de una linea
+en `package.json`.
+
+`npm run verify` completo se sigue corriendo de vez en cuando, que es justo la cadencia que
+sugiere el mensaje de festack.
+
+Antes de sospechar de la red, matar procesos `node` huerfanos: `ncu` de una corrida anterior
+sigue vivo aunque se haya cerrado la terminal.
+
+### Regla para futuro
+
+**Nunca dejar dos `verify` corriendo a la vez**, y verificar procesos huerfanos antes de culpar
+al entorno. Y al medir una lentitud, medir la hipotesis contra su alternativa —aqui, con y sin
+`--cooldown`— en vez de aceptar el sospechoso obvio: habria llevado a "arreglar" una bandera que
+no tenia nada que ver.

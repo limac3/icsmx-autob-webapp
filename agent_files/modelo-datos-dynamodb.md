@@ -193,7 +193,7 @@ PA-05 aplica las tres condiciones de R-01 **dentro** de la lectura:
 
 - `estatus = PUBLICADA` → esta en la clave de particion del GSI2.
 - `publicadaEn <= ahora` → condicion de rango sobre `GSI2SK`.
-- Tipo compatible → `FilterExpression` derivado del `tipoParticipante` **de la sesion**.
+- Tipo compatible → `FilterExpression` derivado de los **permisos de venta de la sesion**.
 
 Lo que no se recupera no puede filtrarse mal despues. El tipo va como filtro y no como clave
 porque un `EMPLEADO` necesita ambos tipos en una sola pantalla; el volumen es pequeno y el
@@ -216,6 +216,13 @@ de DynamoDB.
 Toda escritura de solicitud incluye su evento de auditoria en la **misma**
 `TransactWriteItems` (regla 4 de `CLAUDE.md`). Si el evento no cabe, la mutacion no ocurre.
 
+> **Todo `Put` de evento lleva `ConditionExpression: attribute_not_exists(PK)`.** Sin esa
+> condicion la bitacora **no es append-only**: un `Put` con la misma clave reemplaza el item
+> completo. El `Deny` de IAM no lo puede impedir, porque `PutItem` es justamente lo que la
+> regla 4 obliga a permitir — esta comprobado contra AWS real en
+> `amplify/auditoriaInmutable.integracion.test.ts`. La condicion es lo que convierte "no se
+> puede modificar" en "no se puede modificar **ni** reescribir".
+
 ### T1 — Solicitar compra
 
 Dos pasos, en este orden y no en otro.
@@ -237,7 +244,19 @@ la convocatoria y decidir despues, que es la carrera que el diseno evita.
 
 1. `Put` solicitud con `SK = SOL#<turno:010d>` y estado `EN_FILA`.
 2. `Put` centinela de fila, con `attribute_not_exists(SK)` — R-07.
-3. `Put` evento `SOLICITUD_CREADA`.
+3. `Put` evento `SOLICITUD_CREADA`, con `attribute_not_exists(PK)`.
+4. `ConditionCheck` sobre la **convocatoria**: `estatus = PUBLICADA`.
+
+> **Por que el `ConditionCheck` del item 4.** Los atributos desnormalizados del lote se propagan
+> por tandas al publicar (T8), y la convocatoria se marca al final. Una interrupcion a la mitad
+> deja lotes que ya dicen `PUBLICADA` bajo una convocatoria que todavia no lo esta — y como el
+> paso 1 solo mira el lote, esos lotes serian comprables. El `ConditionCheck` devuelve la
+> autoridad a la convocatoria **en el momento del commit**, sin costo de una lectura previa.
+>
+> Contrapartida: una lectura fuerte sobre un unico item por cada solicitud. A la escala de esta
+> aplicacion es aceptable; si el volumen crece hasta hacer del item de convocatoria una particion
+> caliente, se revisa. El paso 1 puede haber incrementado igual y dejar un hueco, que ya es un
+> resultado aceptado.
 
 > **Los turnos son unicos y estrictamente crecientes, pero pueden tener huecos.** Si el paso 1
 > tiene exito y el paso 2 falla — tipicamente porque el participante ya estaba en la fila — el
@@ -253,6 +272,40 @@ la convocatoria y decidir despues, que es la carrera que el diseno evita.
 >
 > La prueba de concurrencia debe afirmar **unicidad y orden estricto**, no contiguidad.
 
+#### Carrera abierta entre el paso 1 y el paso 2 — riesgo R18
+
+**Este diseno todavia no es correcto y no debe implementarse tal cual.** Entre el paso 1 y el
+paso 2 existe una ventana en la que el turno ya se asigno pero la solicitud **aun no es visible**
+para la consulta de la fila (PA-07). Con adjudicacion inmediata —`proyecto.md` seccion 7 punto 7:
+"el turno 1 obtiene la adjudicacion"— esta intercalacion es posible:
+
+1. A obtiene el turno 1 y su proceso se pausa antes del paso 2.
+2. B obtiene el turno 2, completa su paso 2 y dispara la adjudicacion.
+3. PA-07 solo ve a B. **B gana el vehiculo.**
+4. A completa su paso 2 con el turno 1, ya tarde.
+
+Viola R-08 ("el orden manda sobre el tiempo") y la invariante 4 de la seccion 7 de este mismo
+documento. La ventana es de un viaje de red, pero el momento de maxima concurrencia es
+exactamente `inicioVenta`, cuando llegan todas las solicitudes a la vez.
+
+**Lo que NO es el problema:** que los contadores atomicos no sean idempotentes. Un reintento
+ambiguo consume un turno de mas y produce un **hueco**, que este diseno ya acepta de forma
+explicita. Eso no rompe ninguna invariante.
+
+**Lo que tampoco funciona:** hacerlo todo en una sola `TransactWriteItems`.
+`TransactWriteItems` **no devuelve valores**, asi que el turno que produce un `ADD` no se puede
+usar como clave de un `Put` de la misma transaccion. La Etapa 8 de `plan-ejecucion.md` lo exigia;
+era irrealizable y ya esta corregido ahi.
+
+**Mecanismo candidato, a validar con el prototipo:** que el paso 1 registre la reserva del turno
+en el propio item del lote (`ADD contadorTurnos :uno SET reservas.#id = :ahora`) y que el paso 2
+la retire dentro de su transaccion. La adjudicacion se abstiene mientras haya reservas vigentes,
+y una reserva vieja se da por muerta pasado un umbral. El lote ya es el punto de serializacion
+—el paso 1 lo escribe de todos modos—, asi que no cuesta una escritura adicional.
+
+**La prueba tiene que intercalar solicitud y adjudicacion.** Adjudicar solo despues de que todas
+las solicitudes terminaron no ejerce la carrera: con esa forma de prueba, el defecto pasa.
+
 ### T2 — Adjudicar
 
 Una sola `TransactWriteItems`, con bucle de candidatos por fuera.
@@ -267,6 +320,7 @@ Una sola `TransactWriteItems`, con bucle de candidatos por fuera.
 3. Put centinela      PART#<id> / ADJUDICACION_ACTIVA
                       CONDITION attribute_not_exists(SK)                      <- R-09
 4. Put evento         LOTE_ADJUDICADO
+                      CONDITION attribute_not_exists(PK)
 ```
 
 `venceEn = adjudicadoEn + horasLiquidacion` en horas naturales (R-13).
@@ -294,7 +348,7 @@ distinguir "el lote ya se adjudico" de "prueba con el siguiente".
                           GSI2PK = SOL_ESTATUS#EN_VERIFICACION
                       REMOVE GSI4PK, GSI4SK                    <- detiene el reloj
                       CONDITION estatus = ADJUDICADA AND venceEn > :ahora
-2. Put evento         COMPROBANTE_CARGADO
+2. Put evento         COMPROBANTE_CARGADO   CONDITION attribute_not_exists(PK)
 ```
 
 La condicion `venceEn > :ahora` impide subir el comprobante fuera de plazo aunque el barrido
@@ -308,7 +362,7 @@ todavia no haya pasado.
 3. Update vehiculo    -> VENDIDO
 4. Delete centinela   PART#<id> / ADJUDICACION_ACTIVA
 5. Delete centinela   VEH#<id> / ACTIVO
-6. Put evento         PAGO_AVALADO
+6. Put evento         PAGO_AVALADO          CONDITION attribute_not_exists(PK)
 ```
 
 Las solicitudes restantes del lote pasan a `NO_ADJUDICADA` **fuera** de esta transaccion: son
@@ -328,8 +382,8 @@ Un solo acto atomico que cierra al vencido y adjudica al siguiente:
 4. Update solicitud nueva    -> ADJUDICADA, con claves GSI4
                              CONDITION estatus = EN_FILA
 5. Put centinela             adjudicacion activa del nuevo   CONDITION attribute_not_exists
-6. Put evento                SOLICITUD_VENCIDA
-7. Put evento                LOTE_ADJUDICADO
+6. Put evento                SOLICITUD_VENCIDA   CONDITION attribute_not_exists(PK)
+7. Put evento                LOTE_ADJUDICADO     CONDITION attribute_not_exists(PK)
 ```
 
 La condicion del item 3 (`adjudicacionActual = :solicitudVencida`) es lo que hace segura la
@@ -352,7 +406,7 @@ y condicion `estatus = EN_VERIFICACION`.
 1. Put lote            con contadorTurnos = 0
 2. Put centinela       VEH#<id> / ACTIVO    CONDITION attribute_not_exists(SK)   <- R-10
 3. Update vehiculo     -> EN_CONVOCATORIA
-4. Put evento          VEHICULO_INCLUIDO
+4. Put evento          VEHICULO_INCLUIDO   CONDITION attribute_not_exists(PK)
 ```
 
 ### T8 — Publicar convocatoria
@@ -363,6 +417,20 @@ Actualiza la convocatoria y **propaga los atributos desnormalizados a cada lote*
 Con mas de ~95 lotes se supera el limite de `TransactWriteItems`; se procesa por tandas y la
 publicacion se marca **al final**, de modo que una interrupcion deje la convocatoria sin
 publicar en lugar de publicada a medias.
+
+> **Esa intencion no bastaba por si sola.** Marcar la convocatoria al final protege a la
+> convocatoria, pero no a los lotes: los de las tandas ya procesadas quedan con
+> `estatusConvocatoria = PUBLICADA` grabado, y la condicion del paso 1 de T1 solo mira el lote.
+> Una interrupcion dejaba esos lotes comprables bajo una convocatoria sin publicar. Lo cierra el
+> `ConditionCheck` sobre la convocatoria que ahora lleva el paso 2 de T1.
+>
+> Consecuencia para quien implemente el gating: **la convocatoria es el registro autoritativo**.
+> Los atributos desnormalizados del lote sirven para filtrar y para condicionar barato, nunca
+> para ser la ultima palabra. El `estatusConvocatoria` que se le pasa a `puedeEjecutar` debe
+> salir de la convocatoria, no de la copia del lote.
+>
+> La propagacion debe ser **idempotente y reanudable**: repetir una tanda ya aplicada no puede
+> cambiar nada.
 
 ---
 

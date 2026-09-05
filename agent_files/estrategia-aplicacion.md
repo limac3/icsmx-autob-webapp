@@ -270,6 +270,38 @@ Entidades, estados y acciones se nombran en espanol (`solicitarCompra`, `EN_FILA
 introduce una capa de interpretacion donde la precision importa. Coincide ademas con el
 `CLAUDE.md` del proyecto hermano.
 
+### D-9 — Autorizacion por permisos: la aplicacion no codifica politica
+
+`puedeEjecutar` decide con **permisos**, no con roles. EAS no expone roles: se le pregunta por
+nombres de permiso y responde un booleano por cada uno. La aplicacion declara **que permiso exige
+cada accion** y **bajo que condiciones del recurso aplica**; quien tiene ese permiso lo decide la
+organizacion en EAS.
+
+**Razon:** la politica organizacional cambia sin avisar y a distinto ritmo que el codigo. Hoy
+quien administra no compra; manana puede cambiar. Con permisos, ese cambio es una reconfiguracion
+en EAS y este repositorio no se toca. Con roles, seria un despliegue.
+
+**Division de responsabilidades:**
+
+| Decide | Quien | Por que |
+| --- | --- | --- |
+| Capacidad — "¿puede operar tesoreria?" | EAS | Conoce los roles y caracteristicas de la persona |
+| Aplicabilidad — "¿esta solicitud esta en `EN_VERIFICACION`?" | La aplicacion | EAS no conoce el recurso ni el momento |
+
+**Alternativas descartadas:**
+
+- **RBAC con la lista de roles en el codigo** (lo que habia hasta la Etapa 2). Se descarto porque
+  EAS no puede entregar roles, y porque congelaba politica organizacional en el repositorio. Tenia
+  ademas un defecto concreto: unir los roles de una persona concedia acciones que la matriz
+  negaba, y la causa raiz era que `EMPLEADO` era a la vez permiso de compra y discriminador del
+  tipo de participante.
+- **RBAC con exclusiones explicitas** (`deny-override`: "quien administra nunca compra"). Se
+  descarto por lo mismo: es politica organizacional escrita en el codigo. Ademas volveria
+  imposible de expresar el caso legitimo de que la organizacion quiera permitirlo.
+- **Un permiso por accion** (33 permisos). Se descarto por costo de configuracion en EAS y porque
+  fragmenta capacidades que en la practica se conceden juntas. Se eligio granularidad de
+  capacidad: siete permisos, en `permission-matrix.md` seccion 1.
+
 ---
 
 ## 7. Testing
@@ -277,7 +309,7 @@ introduce una capa de interpretacion donde la precision importa. Coincide ademas
 | Capa | Enfoque |
 | --- | --- |
 | `src/lib/domain/` | Puro. Sin mocks. Fronteras de tiempo y transiciones invalidas |
-| `src/lib/auth/permisos.ts` | Puro. Allow y deny de los seis roles; matriz completa |
+| `src/lib/auth/permisos.ts` | Puro. Allow y deny por permiso; matriz completa y guardas cerradas por omision |
 | `src/lib/<feature>/` | Cliente falso inyectado por `deps`. Cabecera `// @vitest-environment node` + `vi.mock("server-only")` |
 | Motor de fila | **Concurrencia real** contra DynamoDB local o sandbox. N solicitudes en paralelo |
 | Componentes | `getTestContext()` + `genericTests()` con axe |

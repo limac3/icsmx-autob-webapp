@@ -14,23 +14,24 @@
     "titulo": "My session",
     "etiquetaNombre": "Name",
     "etiquetaCorreo": "Email",
-    "etiquetaRoles": "Roles",
-    "etiquetaTipoParticipante": "Participant type"
-  },
-  "roles": {
-    "ADMINISTRADOR": "Administrator",
-    "APROBADOR_CONVOCATORIA": "Sale announcement approver",
-    "EMPLEADO": "Employee",
-    "OTRO_USUARIO": "Other user",
-    "OPERADOR_TESORERIA": "Treasury operator",
-    "AUDITOR_CUMPLIMIENTO": "Compliance auditor"
-  },
-  "tiposParticipante": {
-    "EMPLEADO": "Employee",
-    "OTRO_USUARIO": "Other user"
+    "etiquetaPermisos": "Permissions",
+    "etiquetaTiposDeConvocatoria": "Sale announcements you can access"
   },
   "prohibido": {
     "titulo": "No access",
-    "descripcion": "Your account has no role assigned in this application. If you think this is a mistake, contact the administrator."
+    "descripcion": "Your account has no permissions in this application. If you think this is a mistake, contact the administrator."
+  },
+  "permisos": {
+    "Autob_Administrar_Vehiculos": "Manage vehicles",
+    "Autob_Administrar_Convocatorias": "Manage sale announcements",
+    "Autob_Aprobar_Convocatorias": "Approve sale announcements",
+    "Autob_Venta_a_empleados": "Buy in employee sales",
+    "Autob_Venta_en_general": "Buy in general public sales",
+    "Autob_Operar_Tesoreria": "Operate treasury",
+    "Autob_Auditar": "Audit"
+  },
+  "tiposConvocatoria": {
+    "EMPLEADOS": "Employee",
+    "PUBLICO_GENERAL": "General public"
   }
 }

@@ -6,8 +6,9 @@ Aplicacion de **venta de vehiculos obsoletos de flotilla** mediante convocatoria
 con fila de adjudicacion por orden de llegada (FIFO) y trazabilidad auditable de punta a punta.
 
 Stack: Next.js 16 App Router + React 19 + **TypeScript strict**, Eden UI, Okta OIDC via
-`@auth0/nextjs-auth0`, EAS para roles, **DynamoDB single-table**, S3 + CloudFront para
-fotografias, SES para correo, **AWS Amplify Gen2** como IaC y hosting SSR, toolchain
+`@auth0/nextjs-auth0`, **EAS para permisos** (responde un booleano por permiso, no roles),
+**DynamoDB single-table**, S3 + CloudFront para fotografias, **CES** para correo (REST
+corporativo, no SES), **AWS Amplify Gen2** como IaC y hosting SSR, toolchain
 `@churchofjesuschrist/festack-scripts`.
 
 El cobro **no** ocurre en esta aplicacion: es un proceso externo. Aqui se registra el
@@ -24,8 +25,8 @@ Lee estos archivos al inicio de cada tarea. Estan en `agent_files/`:
 | `agent_files/estrategia-aplicacion.md` | Principios, capas, decisiones arquitectonicas |
 | `agent_files/modelo-datos-dynamodb.md` | Patrones de acceso, claves, GSIs, transacciones |
 | `agent_files/arquitectura-tecnica-aws.md` | Topologia AWS, Amplify Gen2, cache, flujos |
-| `agent_files/identidad-autorizacion.md` | Okta OIDC, EAS, tipos de participante, flujo de aprobacion |
-| `agent_files/permission-matrix.md` | Matriz de permisos: rol x accion = allow/deny |
+| `agent_files/identidad-autorizacion.md` | Okta OIDC, permisos de EAS, tipos de convocatoria accesibles, flujo de aprobacion |
+| `agent_files/permission-matrix.md` | Matriz de permisos: permiso x accion = allow/deny, mas guardas contextuales |
 | `agent_files/trazabilidad-auditoria.md` | Eventos auditables, formato, garantias de inmutabilidad |
 | `agent_files/api-contracts.md` | Contratos de Server Actions y Route Handlers |
 | `agent_files/ui-ux-requerimientos.md` | Requerimientos por pantalla: estructura, datos, interacciones |
@@ -43,7 +44,8 @@ npm run dev        # servidor de desarrollo (puerto 3000)
 npm run format     # ajustar formato; si hubo cambios en codigo, ejecutar antes de verify
 npm run typecheck  # tsc --noEmit
 npm run test       # Vitest
-npm run verify     # lint + test + format (ejecutar antes de commit)
+npm run verify:rapido  # compuerta completa sin el chequeo de desactualizados (~50 s)
+npm run verify     # lo anterior + chequeo de paquetes desactualizados (~2.5 min)
 npm run build      # build de produccion
 npx ampx sandbox   # backend Amplify Gen2 personal
 ```
@@ -60,14 +62,16 @@ npx ampx sandbox   # backend Amplify Gen2 personal
    `TransactWriteItems`.** Si el evento no se puede escribir, la mutacion no ocurre.
 5. **Los eventos de auditoria son append-only.** Prohibido `UpdateItem` o `DeleteItem` sobre
    items `AUDIT#`; la politica IAM del rol de la aplicacion debe denegarlo explicitamente.
+   Ademas **todo `Put` de evento lleva `attribute_not_exists(PK)`**: IAM no puede impedir la
+   sobrescritura, porque `PutItem` es justo lo que la regla 4 obliga a permitir.
 6. **La adjudicacion se gana con escritura condicional**, no con una lectura previa:
    `ConditionExpression: attribute_not_exists(adjudicacionActual)`. Nunca "leer y luego decidir".
 7. **Un participante nunca ve la identidad de otro.** Los DTOs de fila exponen solo
    `miTurno`, `miPosicion` y `tamanoFila`. Ninguna proyeccion enviada al cliente incluye
    `participanteId`, correo ni nombre de terceros.
 8. **Gating de convocatoria en el servidor, siempre triple:** por `estatus = PUBLICADA`,
-   por `publicadaEn <= ahora`, y por tipo (`EMPLEADOS` solo para participantes `EMPLEADO`).
-   No confiar en filtros de UI.
+   por `publicadaEn <= ahora`, y por el **permiso de venta que corresponde al tipo**
+   (`EMPLEADOS` exige `Autob_Venta_a_empleados`). No confiar en filtros de UI.
 9. **Zona horaria unica de negocio: `America/Mexico_City`.** Constante en
    `src/lib/domain/fechas.ts`, con `Intl.DateTimeFormat().formatToParts`. Persistir siempre
    ISO-8601 UTC. Prohibido comparar ventanas de venta con la hora local del cliente.
@@ -88,6 +92,16 @@ npx ampx sandbox   # backend Amplify Gen2 personal
     una sola adjudicacion y turnos unicos y estrictamente crecientes. Los huecos de turno son
     legitimos —`ADD` es atomico y no se puede deshacer—; lo que jamas puede haber es turnos
     repetidos o desordenados.
+17. **La aplicacion no codifica politica organizacional.** `puedeEjecutar` decide con
+    **permisos**, nunca con roles: EAS responde un booleano por permiso y quien tiene cada uno
+    lo decide la organizacion. El codigo declara *que permiso* exige cada accion y *bajo que
+    condiciones del recurso* aplica (estado, propiedad, auto-aprobacion, plazo) — eso ultimo es
+    lo unico que EAS no puede saber. Si una regla se expresa como "quien tiene tal permiso puede
+    tal cosa", **no lleva codigo**. Prohibidas las listas de roles permitidos y las exclusiones
+    por rol.
+18. **Las guardas de permiso fallan cerradas.** Toda precondicion booleana del contexto exige
+    `=== true`; un `undefined` deniega. Como los campos de `Contexto` son opcionales, rechazar
+    solo `=== false` convierte un dato que quien invoca olvido pasar en un permiso concedido.
 
 ## Arquitectura en Capas
 
@@ -123,10 +137,11 @@ Configurado en `tsconfig.json` (`paths`) y resuelto en tests por `vite-tsconfig-
 ## Definition of Done
 
 - [ ] `npm run typecheck` sin errores
-- [ ] `npm run verify` limpio (lint + test + format)
+- [ ] `npm run verify:rapido` limpio (lint + test + format + dependencias)
 - [ ] `npm run build` exitoso
 - [ ] Pruebas unitarias de validaciones y reglas de negocio puras
-- [ ] Casos allow y deny de autorizacion cubiertos por rol
+- [ ] Casos allow y deny de autorizacion cubiertos por **permiso**, y guardas verificadas
+      cerradas por omision (quitar un campo del contexto minimo debe denegar)
 - [ ] Si toca el motor de fila: prueba de concurrencia con N solicitudes simultaneas
 - [ ] Eventos de auditoria persistidos y verificados en prueba
 - [ ] Ninguna proyeccion al cliente filtra identidad de terceros
@@ -147,7 +162,7 @@ Al terminar cualquier tarea, clasifica lo ocurrido y actualiza el documento corr
 | Cambio arquitectonico o de estrategia | "usemos Route Handler aqui", "cambia la politica de cache" | `estrategia-aplicacion.md` |
 | Patron de acceso o clave nueva en DynamoDB | nuevo GSI, nueva entidad, nueva query | `modelo-datos-dynamodb.md` |
 | Cambio de contrato de action o endpoint | nuevos parametros, nueva respuesta | `api-contracts.md` |
-| Cambio de permisos por rol | nueva accion, nuevo rol, regla allow/deny | `permission-matrix.md` |
+| Cambio de autorizacion | nueva accion, nuevo permiso, regla allow/deny | `permission-matrix.md` |
 | Nuevo evento auditable | nueva transicion de estado que debe quedar registrada | `trazabilidad-auditoria.md` |
 | Problema resuelto o workaround | error inesperado, comportamiento raro de libreria, fix no obvio | `desafios-implementacion.md` (seccion numerada) |
 | Tarea completada sin incidentes | implementacion directa de algo ya especificado | `plan-ejecucion.md` (marcar `[x]`) |

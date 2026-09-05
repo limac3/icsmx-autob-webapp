@@ -3,7 +3,9 @@
 Fuente de verdad del avance del proyecto. Cada etapa se marca `[x]` solo cuando **todos** sus
 entregables estan hechos y su compuerta de calidad pasa en verde.
 
-> Ultima actualizacion: 2026-09-04 — **Etapa 1 completada.** Siguiente: Etapa 2 (identidad y autorizacion).
+> Ultima actualizacion: 2026-09-04 — **Etapas 0 a 3 completadas, mas la Etapa 2.1 de correcciones**
+> (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora). Siguiente: Etapa 4
+> (dominio y capa de datos), y despues el prototipo concurrente de la fila (riesgo R18).
 
 ---
 
@@ -21,14 +23,14 @@ entregables estan hechos y su compuerta de calidad pasa en verde.
 ```bash
 npm run format     # solo si hubo cambios de codigo
 npm run typecheck  # tsc --noEmit, sin errores
-npm run verify     # lint + test + format check, limpio
+npm run verify:rapido  # lint + test + format check, limpio (~50 s)
 npm run build      # build de produccion exitoso
 ```
 
 Ademas, de la Definition of Done de `CLAUDE.md`:
 
 - [ ] Pruebas unitarias de las validaciones y reglas de negocio puras de la etapa
-- [ ] Casos **allow** y **deny** de autorizacion cubiertos por rol
+- [ ] Casos **allow** y **deny** de autorizacion cubiertos por permiso
 - [ ] Eventos de auditoria persistidos y verificados en prueba
 - [ ] Ninguna proyeccion al cliente filtra identidad de terceros
 - [ ] UI validada mobile-first con CardView de respaldo
@@ -49,7 +51,8 @@ implementar sin adivinar. Sin codigo todavia.
 - [x] `agent_files/plan-ejecucion.md` — este documento
 - [x] `agent_files/proyecto.md` — reglas de negocio y maquinas de estado
 - [x] `agent_files/identidad-autorizacion.md` — Okta OIDC, EAS, tipos de participante
-- [x] `agent_files/permission-matrix.md` — matriz rol x accion
+- [x] `agent_files/permission-matrix.md` — matriz permiso x accion (era rol x accion; se
+      reestructuro en la Etapa 2.1)
 - [x] `agent_files/modelo-datos-dynamodb.md` — single-table, claves, GSIs, transacciones
 - [x] `agent_files/trazabilidad-auditoria.md` — eventos auditables e inmutabilidad
 - [x] `agent_files/estrategia-aplicacion.md` — principios y decisiones arquitectonicas
@@ -67,7 +70,7 @@ implementar sin adivinar. Sin codigo todavia.
 **Verificacion:**
 
 - [x] Ningun enlace de `CLAUDE.md` ni de `README.md` apunta a un archivo inexistente
-- [x] Los seis roles y los nombres de estado son identicos en `proyecto.md`,
+- [x] El vocabulario de autorizacion y los nombres de estado son identicos en `proyecto.md`,
       `permission-matrix.md`, `modelo-datos-dynamodb.md` y `api-contracts.md`
 - [x] `.mcp.json` es JSON valido
 
@@ -119,7 +122,8 @@ Luego:
 
 ## Etapa 2 — Identidad y autorizacion
 
-**Objetivo:** saber quien entra, de que tipo es y que puede hacer. Sin datos de negocio aun.
+**Objetivo:** saber quien entra, que permisos trae y que puede hacer sobre cada recurso. Sin
+datos de negocio aun.
 
 **Dependencias:** Etapa 1.
 
@@ -129,20 +133,20 @@ Luego:
       rutas autenticadas (Next.js 16 usa `proxy`, no `middleware`) — incluye ademas CSP con nonce
       por peticion (ver `arquitectura-tecnica-aws.md` seccion 5)
 - [x] `src/lib/auth/session.ts` — `getSession()` con `import "server-only"`, devuelve
-      `{ participanteId, oktaSub, correo, nombre, roles, tipoParticipante }` o `null`
-      (`participanteId` = `oktaSub` hasta el *upsert* real de la Etapa 4 — ver
+      `{ participanteId, oktaSub, correo, nombre, permisos, tiposDeConvocatoriaPermitidos }` o
+      `null` (`participanteId` = `oktaSub` hasta el *upsert* real de la Etapa 4 — ver
       `desafios-implementacion.md` seccion 8)
-- [x] `src/lib/auth/eas.ts` — adaptador conmutable (real / mock) segun `ENABLE_DEV_TOOLS`
+- [x] `src/lib/auth/eas.ts` — adaptador conmutable (real / simulado) segun `ENABLE_DEV_TOOLS`
 - [x] `src/lib/auth/easAdapter.ts` — consulta real con timeout; **sin fallback silencioso**:
       si EAS falla, error explicito (regla 15)
 - [x] `src/lib/auth/devMode.ts` — `ENABLE_DEV_TOOLS`, lanza error si no es `OFF` en produccion
-- [x] `src/lib/auth/permisos.ts` — `puedeEjecutar({ accion, roles, contexto })` puro, sin I/O,
+- [x] `src/lib/auth/permisos.ts` — `puedeEjecutar({ accion, permisos, contexto })` puro, sin I/O,
       derivado linea por linea de `permission-matrix.md`
-- [x] `src/types/identidad.ts` — tipos de rol, tipo de participante y sesion
-- [x] Pagina protegida de prueba que muestra rol y tipo de participante (`src/app/sesion/page.tsx`
+- [x] `src/types/identidad.ts` — catalogo de permisos, tipos de convocatoria accesibles y sesion
+- [x] Pagina protegida de prueba que muestra permisos y acceso (`src/app/sesion/page.tsx`
       + `src/app/forbidden.tsx`)
-- [x] `src/lib/auth/permisos.test.ts` — casos **allow y deny para los seis roles** (cobertura
-      cartesiana completa de las 33 acciones, mas los 7 invariantes de `permission-matrix.md`)
+- [x] `src/lib/auth/permisos.test.ts` — cobertura cartesiana permiso x accion de las 33 acciones,
+      mas las 8 invariantes de `permission-matrix.md`
 - [x] `src/proxy.test.ts`
 
 **Verificacion:**
@@ -150,14 +154,93 @@ Luego:
 - [x] Compuerta de calidad completa en verde
 - [x] Un usuario sin sesion es redirigido a login — verificado con `curl` contra `npm run dev`
       (307 a `/auth/login`)
-- [x] Un usuario con sesion pero sin rol suficiente recibe 403, no 500 — mecanismo verificado
+- [x] Un usuario con sesion pero sin permisos recibe 403, no 500 — mecanismo verificado
       (`forbidden()` + `experimental.authInterrupts`, documentado por Next.js; `build` confirma
-      que compila). El recorrido de punta a punta exige una sesion real de Okta, que no existe en
-      este entorno de desarrollo; queda pendiente de una verificacion manual cuando haya
-      credenciales de un tenant de prueba
-- [x] Cobertura de allow y deny para cada uno de los seis roles
+      que compila)
+- [ ] **Recorrido real contra Okta.** Exige una sesion real de un tenant de prueba, que no existe
+      en este entorno. **[OPERADOR]** — pendiente desde el cierre original de la etapa
+- [x] Cobertura de allow y deny para cada permiso
 
 **Salida esperada:** login real contra Okta y decisiones de permiso probadas de forma aislada.
+
+---
+
+## Etapa 2.1 — Correcciones de autorizacion y endurecimiento
+
+> **Por que existe esta etapa.** Una evaluacion externa encontro siete hallazgos; seis se
+> verificaron reproducibles contra el codigo. Dos son de autorizacion y uno de ellos invalidaba el
+> modelo entero: se habia asumido RBAC, pero **EAS no expone roles — responde un booleano por
+> permiso**. La Etapa 2 no debio cerrarse con un control de cobertura que no controlaba nada
+> (`expect(CATALOGO_ESPERADO).toHaveLength(33)` no miraba el catalogo real).
+
+**Objetivo:** que la autorizacion decida por permisos, falle cerrada, y que sus pruebas ejerzan
+los riesgos que dicen cubrir.
+
+**Dependencias:** Etapa 3 (el sandbox desplegado, para la prueba de bitacora).
+
+### Autorizacion por permisos
+
+- [x] `permission-matrix.md` reestructurada de `rol x accion` a `permiso x accion`, con el
+      principio "EAS decide la capacidad, la aplicacion decide la aplicabilidad"
+- [x] Catalogo de siete permisos a granularidad de capacidad
+- [x] `identidad-autorizacion.md` secciones 4 y 5 reescritas; `proyecto.md` seccion 3;
+      `estrategia-aplicacion.md` decision **D-9**
+- [x] `src/types/identidad.ts` — `Permiso`, `PERMISOS`, `tiposDeConvocatoriaPermitidos`
+- [x] `src/types/convocatoria.ts` — `TipoConvocatoria`
+- [x] `src/lib/auth/rolesSimulados.ts` — tabla `rol → permisos`, **unico lugar donde sobrevive el
+      concepto de rol**
+- [x] `easAdapter.ts` — peticion con nombres de permiso, respuesta booleana; **un permiso
+      solicitado y ausente es violacion de contrato, no un `false`**
+- [x] `session.ts` — consulta unica por peticion con `cache()` de React
+- [x] `permisos.ts` — `puedeEjecutar({ accion, permisos, contexto })`
+- [x] Diccionarios: etiquetas de permiso en `es` y `en` (regla 11)
+
+### Guardas cerradas por omision
+
+- [x] Toda precondicion booleana exige `=== true`; `undefined` deniega
+- [x] Incluye los dos casos que el diagnostico externo no vio: `convocatoria:ocultar`
+      (`existeAlgunaSolicitud`) y `solicitud:crear` (`tieneSolicitudViva`)
+- [x] Y los que no eran booleanos: `estatusVehiculo` y `creadoPor` ausentes tambien deniegan
+
+### Pruebas
+
+- [x] Cobertura cartesiana comparada contra **las claves reales del catalogo**, no contra un
+      numero
+- [x] Invariante 8: quitar **un campo a la vez** del contexto minimo y exigir denegacion.
+      Verificada por falsacion — revirtiendo `confirmado` al comportamiento anterior, falla
+- [x] Invariante 1 recorre el catalogo completo, no cinco mutaciones a mano
+- [x] `easAdapter.test.ts` (12 casos) y `eas.test.ts` (13 casos) — no existian
+- [x] `session.test.ts` reescrito para permisos
+
+### CSP y fuentes Eden
+
+- [x] `style-src` y `font-src` autorizan `https://foundry.churchofjesuschrist.org`
+- [x] Prueba de regresion en `proxy.test.ts`
+- [ ] **[OPERADOR]** confirmacion en navegador: consola sin violaciones de CSP y tipografia Eden
+      aplicada. Ni `build` ni jsdom aplican CSP, asi que ninguna prueba automatica lo sustituye
+
+### Bitacora append-only
+
+- [x] `attribute_not_exists(PK)` en los siete `Put` de evento de `modelo-datos-dynamodb.md`
+- [x] Corregida en tres documentos la afirmacion falsa de que el `Deny` de IAM bastaba
+- [x] Prueba de integracion: **confirma contra AWS real que sobrescribir con `Put` tiene exito**
+      sin la condicion, y que con ella se rechaza
+
+### Decisiones registradas, no implementadas aqui
+
+- [x] Carrera FIFO documentada en T1 con causa raiz y mecanismo candidato (riesgo **R18**)
+- [x] Corregida la exigencia irrealizable de la Etapa 8 ("una sola `TransactWriteItems`")
+- [x] `ConditionCheck` sobre la convocatoria en T1, contra la publicacion parcial
+- [x] `desafios-implementacion.md` — seccion nueva con la causa raiz del modelo de roles
+
+**Verificacion:**
+
+- [x] Compuerta de calidad completa en verde
+- [x] La prueba de integracion de bitacora corre contra el sandbox
+- [x] Ningun archivo fuera de `rolesSimulados.ts` importa `Rol` (verificado con `grep`)
+
+**Salida esperada:** autorizacion que no codifica politica organizacional, falla cerrada y tiene
+pruebas que fallan cuando el defecto vuelve.
 
 ---
 
@@ -293,7 +376,7 @@ Capa de datos (`src/lib/data/`):
 - [ ] `revalidateTag` al publicar (ver riesgo R4)
 - [ ] Un vehiculo puede incluirse en mas de una convocatoria, pero **no en dos activas a la vez**
 - [ ] Pantallas de administracion y de aprobacion
-- [ ] Tests de transiciones validas e invalidas y de autorizacion por rol
+- [ ] Tests de transiciones validas e invalidas y de autorizacion por permiso
 
 **Verificacion:**
 
@@ -319,7 +402,7 @@ Capa de datos (`src/lib/data/`):
 - [ ] Mobile-first: CardView en movil, tabla en desktop (regla 12)
 - [ ] Etiquetas por diccionario, sin ENUMs crudos (regla 11)
 - [ ] Sin cache estatica en rutas que dependen de `publicadaEn` (regla 14)
-- [ ] Tests de gating: un `OTRO_USUARIO` **no** ve una convocatoria de empleados aunque conozca
+- [ ] Tests de gating: sin `Autob_Venta_a_empleados` **no** se ve una convocatoria de empleados aunque se conozca
       la URL directa
 
 **Verificacion:**
@@ -342,11 +425,18 @@ Capa de datos (`src/lib/data/`):
 
 **Dependencias:** Etapa 7.
 
-- [ ] `src/lib/fila/solicitarCompra.ts` — en **una sola** `TransactWriteItems`:
-  - [ ] `ADD` atomico al contador de turnos **del lote** para obtener `turno` (regla 3)
+- [ ] **Prototipo concurrente primero** (riesgo R18). El diseno de dos pasos de T1 tiene una
+      carrera: entre el `ADD` que asigna el turno y el `Put` que hace visible la solicitud, un
+      turno mayor puede ganar la adjudicacion. Validar el mecanismo antes de escribir la etapa
+- [ ] `src/lib/fila/solicitarCompra.ts` — en **dos pasos**, segun T1 de `modelo-datos-dynamodb.md`:
+  - [ ] `ADD` atomico al contador de turnos **del lote** para obtener `turno` (regla 3).
+        No puede ir en la transaccion: `TransactWriteItems` **no devuelve valores**, asi que el
+        turno que produce un `ADD` no se puede usar como clave de un `Put` de la misma
+        transaccion
   - [ ] Item de solicitud con `turno`, `solicitadoEn` informativo y estado `EN_FILA`
   - [ ] Condicion de unicidad: el participante no puede tener dos solicitudes en el mismo lote
-  - [ ] Evento de auditoria en la misma transaccion (regla 4)
+  - [ ] `ConditionCheck` sobre la convocatoria — contra la publicacion parcial
+  - [ ] Evento de auditoria en la misma transaccion, con `attribute_not_exists(PK)` (regla 4)
 - [ ] `src/lib/fila/adjudicar.ts` — adjudicacion por **escritura condicional**
       `attribute_not_exists(adjudicacionActual)`, jamas leer-y-decidir (regla 6)
 - [ ] Regla de una sola adjudicacion activa por participante: item de control y condicion
@@ -367,6 +457,9 @@ Capa de datos (`src/lib/data/`):
       **un** ganador
 - [ ] **Orden:** el ganador es siempre el de `turno` menor, nunca el de `solicitadoEn` menor
       (probar con timestamps deliberadamente desordenados)
+- [ ] **Intercalacion (R18):** la prueba debe entrelazar solicitud y adjudicacion, no adjudicar
+      despues de que todas las solicitudes terminaron. Con esa segunda forma la carrera no se
+      ejerce y el defecto pasa
 - [ ] **Privacidad:** test que **falla** si el DTO de fila contiene `participanteId`, correo o
       nombre de un tercero
 - [ ] **Auditoria:** cada solicitud y cada adjudicacion tiene su evento correspondiente
@@ -448,7 +541,7 @@ Capa de datos (`src/lib/data/`):
 - [ ] Verificacion de integridad: turnos contiguos, una sola adjudicacion vigente por lote,
       toda transicion con evento correspondiente
 - [ ] Exportacion de la bitacora
-- [ ] Acceso de **solo lectura** para `AUDITOR_CUMPLIMIENTO`, sin ninguna action de mutacion
+- [ ] Acceso de **solo lectura** con `Autob_Auditar`, sin ninguna action de mutacion
 - [ ] Tests de que el auditor no puede mutar nada
 
 **Verificacion:**
@@ -724,6 +817,65 @@ entorno de prueba.
 
 ---
 
+### R18 — Carrera FIFO: un turno mayor puede ganar la adjudicacion
+
+**Probabilidad:** alta · **Impacto:** critico
+
+T1 asigna el turno con un `ADD` (paso 1) y hace visible la solicitud con un `Put` en otra
+operacion (paso 2). Entre ambos hay una ventana en la que el turno existe pero **la fila no lo
+ve**. Con adjudicacion inmediata, el turno 2 puede completar su paso 2, disparar la adjudicacion
+y ganar el vehiculo mientras el turno 1 sigue en vuelo.
+
+Rompe R-08 —"el orden manda sobre el tiempo"— que es la regla en la que descansa la equidad de
+todo el sistema. La ventana es de un viaje de red, pero el momento de maxima concurrencia es
+exactamente `inicioVenta`.
+
+No confundir con la no-idempotencia de los contadores atomicos: eso produce **huecos**, que el
+diseno ya acepta y que no rompen ninguna invariante.
+
+**Mitigacion:** prototipo concurrente **antes** de escribir la Etapa 8, con el mecanismo de
+reservas sobre el item del lote que propone T1. La prueba debe **intercalar** solicitud y
+adjudicacion; adjudicar despues de que todas las solicitudes terminaron no ejerce la carrera.
+
+**Senal de alerta:** una prueba de concurrencia que crea las N solicitudes y solo despues llama a
+adjudicar. Pasa en verde con el defecto presente.
+
+### R19 — El contrato de EAS no esta confirmado
+
+**Probabilidad:** alta · **Impacto:** medio
+
+Esta confirmada la **semantica** —se pregunta por permisos, EAS responde un booleano por cada
+uno— pero no los nombres de permiso, la ruta ni la forma del sobre HTTP. El catalogo de siete
+permisos de `permission-matrix.md` seccion 1 es una propuesta.
+
+**Mitigacion:** el parseo vive aislado en `src/lib/auth/easAdapter.ts`; nada mas deberia cambiar.
+El modo `ENABLE_DEV_TOOLS` desbloquea todo el desarrollo mientras tanto. **[OPERADOR]** confirmar
+nombres y contrato con el equipo de EAS antes de la Etapa 12.
+
+**Senal de alerta:** `ErrorConsultaEas` con causa `respuesta_invalida` al primer intento contra el
+EAS real — es exactamente el sintoma que la regla "un permiso ausente es error, no `false`" existe
+para hacer visible.
+
+### R20 — La bitacora es sobrescribible por codigo de la propia aplicacion
+
+**Probabilidad:** baja · **Impacto:** alto
+
+El `Deny` de IAM cierra `UpdateItem`, `DeleteItem` y `BatchWriteItem` sobre `AUDIT#`, pero **no
+puede cerrar `PutItem`**: la regla 4 obliga a escribir el evento en la misma transaccion que la
+mutacion, asi que el permiso tiene que existir. Un `Put` con la misma clave reemplaza el item
+completo. Comprobado contra AWS real en `amplify/auditoriaInmutable.integracion.test.ts`.
+
+`attribute_not_exists(PK)` en cada `Put` de evento lo contiene frente a un **error de codigo**. No
+lo contiene frente a codigo que omita la condicion a proposito.
+
+**Mitigacion:** la condicion, ya documentada en las siete transacciones. La garantia fuerte exige
+sacar la bitacora del alcance de la aplicacion — DynamoDB Streams hacia un sumidero append-only
+(S3 con Object Lock o equivalente) — y se evalua en la **Etapa 11**.
+
+**Senal de alerta:** un `PutCommand` sobre una clave `AUDIT#` sin `ConditionExpression`.
+
+---
+
 ## Registro de decisiones
 
 | Fecha | Decision | Alternativa descartada |
@@ -742,3 +894,9 @@ entorno de prueba.
 | 2026-09-04 | Llave **publica** de CloudFront versionada en el repositorio | Inyectarla por variable de entorno: los PEM multilinea en variables son fragiles, y rotar la llave invalidaria todas las URLs firmadas vigentes |
 | 2026-09-04 | Correo por **CES** (REST corporativo), no por SES | Amazon SES: era lo planeado en la Etapa 0, pero no hay configuracion ni aprobacion para usarlo. Saca el correo de la infraestructura por completo (riesgo R17) |
 | 2026-09-04 | Importaciones relativas con extension **`.ts`** literal en `amplify/backend.ts`, mas `allowImportingTsExtensions` | Sin extension (como documenta Amplify) y con `.js` (la convencion ESM de TypeScript): **ninguna de las dos funciona**, porque `ampx` ejecuta el archivo con el type stripping de Node 24, que no completa extensiones ni mapea `.js` a `.ts` |
+| 2026-09-04 | **Autorizacion por permisos, no por roles** (D-9). EAS responde un booleano por permiso | RBAC con la lista de roles en el codigo, que era el modelo de la Etapa 2: EAS no puede entregar roles, y congelaba politica organizacional en el repositorio. Tambien se descarto el `deny-override` ("quien administra nunca compra"): mismo defecto, y volveria inexpresable el caso legitimo de que la organizacion decida permitirlo |
+| 2026-09-04 | Siete permisos a granularidad de **capacidad** | Un permiso por accion (33): mas fino, pero fragmenta capacidades que en la practica se conceden juntas y multiplica el costo de configuracion en EAS |
+| 2026-09-04 | Guardas cerradas por omision: toda precondicion exige `=== true` | Contexto tipado por accion (33 tipos), que el diagnostico externo proponia: mas seguro en compilacion, pero mucho mas costoso. La invariante 8 —quitar un campo a la vez y exigir denegacion— cubre la misma clase de defecto y ademas atrapa los futuros |
+| 2026-09-04 | `attribute_not_exists(PK)` en cada `Put` de evento, mas sumidero append-only en la Etapa 11 | Confiar solo en el `Deny` de IAM, que es lo que afirmaban tres documentos: **es falso**, `PutItem` sobrescribe y no se puede denegar sin romper la regla 4 |
+| 2026-09-04 | `ConditionCheck` sobre la convocatoria dentro de la transaccion de T1 | Confiar en los atributos desnormalizados del lote: una publicacion por tandas interrumpida deja lotes comprables bajo una convocatoria sin publicar |
+| 2026-09-04 | `style-src` y `font-src` autorizan el origen del Font Foundry | Mantener `self`: bloquea la hoja de estilo remota de `<Fonts>` de Eden y sus woff2, y ni `build` ni jsdom lo detectan porque no aplican CSP |

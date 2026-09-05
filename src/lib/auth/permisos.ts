@@ -1,14 +1,23 @@
-import type { Rol, TipoParticipante } from "@/types/identidad";
+import { TIPO_POR_PERMISO_DE_VENTA, type Permiso } from "@/types/identidad";
+import type { TipoConvocatoria } from "@/types/convocatoria";
 
 // Traduccion linea por linea de agent_files/permission-matrix.md. Si este
 // archivo y esa tabla discrepan, la tabla gana y este archivo se corrige
 // (encabezado del propio documento).
+//
+// Decide en dos tiempos, y la division no es casual (matriz, seccion 0):
+//
+//   1. CAPACIDAD    — la accion exige uno de los permisos que EAS concedio.
+//                     Aqui no hay politica organizacional escrita: quien tiene
+//                     cada permiso lo decide la organizacion en EAS.
+//   2. APLICABILIDAD — la guarda contextual. Es lo unico que EAS no puede
+//                     saber: estado, propiedad, auto-aprobacion, plazo.
 
 export type RazonDenegacion =
   | "forbidden"
   | "not_owner"
   | "self_approval"
-  | "wrong_participant_type"
+  | "sin_permiso_de_tipo"
   | "invalid_state";
 
 export type DecisionPermiso =
@@ -40,14 +49,11 @@ type EstatusSolicitud =
   | "CONGELADA"
   | "NO_ADJUDICADA";
 
-type TipoConvocatoria = "EMPLEADOS" | "PUBLICO_GENERAL";
-
 export type Contexto = {
   // Identidad del actor. La inyecta quien invoca puedeEjecutar a partir de la
   // sesion — nunca sale del input de negocio (AGENTS.md: "el actor sale de la
   // sesion, nunca del input").
   participanteId: string;
-  tipoParticipante: TipoParticipante;
 
   // Datos del recurso sobre el que se ejecuta la accion. Cada guarda usa solo
   // los campos que le aplican; el resto queda undefined.
@@ -75,10 +81,14 @@ export type Contexto = {
   motivoProvisto?: boolean;
 };
 
-type Guarda = (contexto: Contexto, roles: readonly Rol[]) => DecisionPermiso;
+type Guarda = (
+  contexto: Contexto,
+  permisos: ReadonlySet<Permiso>,
+) => DecisionPermiso;
 
 type DefinicionAccion = {
-  roles: readonly Rol[];
+  /** Cualquiera de estos permisos concede la capacidad. */
+  permisos: readonly Permiso[];
   guarda?: Guarda;
 };
 
@@ -88,14 +98,18 @@ const denegar = (razon: RazonDenegacion): DecisionPermiso => ({
   razon,
 });
 
-// Abreviaturas de agent_files/permission-matrix.md, usadas tal cual para que
-// cada entrada de CATALOGO_ACCIONES se lea junto a la fila que traduce.
-const ADM: Rol = "ADMINISTRADOR";
-const APR: Rol = "APROBADOR_CONVOCATORIA";
-const EMP: Rol = "EMPLEADO";
-const OTR: Rol = "OTRO_USUARIO";
-const TES: Rol = "OPERADOR_TESORERIA";
-const AUD: Rol = "AUDITOR_CUMPLIMIENTO";
+// Toda precondicion booleana se afirma en positivo. `undefined` deniega.
+//
+// Es la correccion central de la Etapa 2.1: las guardas rechazaban solo
+// `=== false`, asi que un campo de contexto olvidado por quien invoca se
+// convertia en un permiso concedido. Un dato que no llego no es un dato que
+// se cumple.
+const confirmado = (valor: boolean | undefined): boolean => valor === true;
+
+const VENTA: readonly Permiso[] = [
+  "Autob_Venta_a_empleados",
+  "Autob_Venta_en_general",
+];
 
 const ESTADOS_VIVOS_SOLICITUD: readonly EstatusSolicitud[] = [
   "EN_FILA",
@@ -107,71 +121,97 @@ const esPropio = (contexto: Contexto) =>
   contexto.titularId !== undefined &&
   contexto.titularId === contexto.participanteId;
 
-// Seccion 3 de la matriz: gating triple para ver una convocatoria publicada
-// (o el detalle de un lote suyo). Aplica por igual a los seis roles, sin
-// excepcion administrativa (R-01 de proyecto.md).
-const guardaGatingTriple: Guarda = (contexto) => {
+// Seccion 4 de la matriz: gating triple para ver una convocatoria publicada
+// (o el detalle de un lote suyo). Aplica por igual a cualquiera que tenga un
+// permiso de venta, sin excepcion administrativa (R-01 de proyecto.md).
+const guardaGatingTriple: Guarda = (contexto, permisos) => {
   if (contexto.estatusConvocatoria !== "PUBLICADA") {
     return denegar("invalid_state");
   }
-  if (contexto.yaPublicada === false) {
+  if (!confirmado(contexto.yaPublicada)) {
     return denegar("invalid_state");
   }
-  if (
-    contexto.tipoConvocatoria === "EMPLEADOS" &&
-    contexto.tipoParticipante !== "EMPLEADO"
-  ) {
-    return denegar("wrong_participant_type");
+  // Tercera pata: el permiso que corresponde al tipo. Sin tipo conocido no se
+  // puede afirmar compatibilidad, asi que se deniega.
+  if (contexto.tipoConvocatoria === undefined) {
+    return denegar("invalid_state");
+  }
+  if (!permisos.has(TIPO_POR_PERMISO_DE_VENTA[contexto.tipoConvocatoria])) {
+    return denegar("sin_permiso_de_tipo");
   }
   return permitir();
 };
 
 const CATALOGO_ACCIONES = {
   // 1. Vehiculos
-  "vehiculo:crear": { roles: [ADM] },
+  "vehiculo:crear": { permisos: ["Autob_Administrar_Vehiculos"] },
   "vehiculo:editar": {
-    roles: [ADM],
-    guarda: (c) =>
-      c.estatusVehiculo === "RESERVADO" || c.estatusVehiculo === "VENDIDO"
+    permisos: ["Autob_Administrar_Vehiculos"],
+    guarda: (c) => {
+      if (c.estatusVehiculo === undefined) return denegar("invalid_state");
+      return c.estatusVehiculo === "RESERVADO" ||
+        c.estatusVehiculo === "VENDIDO"
         ? denegar("invalid_state")
-        : permitir(),
+        : permitir();
+    },
   },
-  "vehiculo:ver-catalogo": { roles: [ADM, APR, AUD] },
+  "vehiculo:ver-catalogo": {
+    permisos: [
+      "Autob_Administrar_Vehiculos",
+      "Autob_Administrar_Convocatorias",
+      "Autob_Aprobar_Convocatorias",
+      "Autob_Auditar",
+    ],
+  },
   "vehiculo:retirar": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Vehiculos"],
     guarda: (c) =>
       c.estatusVehiculo === "DISPONIBLE"
         ? permitir()
         : denegar("invalid_state"),
   },
   "vehiculo:subir-fotografia": {
-    roles: [ADM],
-    guarda: (c) =>
-      c.estatusVehiculo === "VENDIDO" ? denegar("invalid_state") : permitir(),
+    permisos: ["Autob_Administrar_Vehiculos"],
+    guarda: (c) => {
+      if (c.estatusVehiculo === undefined) return denegar("invalid_state");
+      return c.estatusVehiculo === "VENDIDO"
+        ? denegar("invalid_state")
+        : permitir();
+    },
   },
   "vehiculo:eliminar-fotografia": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Vehiculos"],
     // "No se puede dejar sin fotografia principal" depende de contar las
     // fotografias existentes: es una validacion de datos, no de permisos, y
     // se aplica en el servicio de la Etapa 5 (puedeEjecutar no consulta
     // datos).
-    guarda: (c) =>
-      c.estatusVehiculo === "VENDIDO" ? denegar("invalid_state") : permitir(),
+    guarda: (c) => {
+      if (c.estatusVehiculo === undefined) return denegar("invalid_state");
+      return c.estatusVehiculo === "VENDIDO"
+        ? denegar("invalid_state")
+        : permitir();
+    },
   },
 
   // 2. Convocatorias — administracion
-  "convocatoria:crear": { roles: [ADM] },
+  "convocatoria:crear": { permisos: ["Autob_Administrar_Convocatorias"] },
   "convocatoria:editar": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "BORRADOR") return denegar("invalid_state");
-      if (c.fechasCoherentes === false) return denegar("invalid_state");
+      if (!confirmado(c.fechasCoherentes)) return denegar("invalid_state");
       return permitir();
     },
   },
-  "convocatoria:ver-administracion": { roles: [ADM, APR, AUD] },
+  "convocatoria:ver-administracion": {
+    permisos: [
+      "Autob_Administrar_Convocatorias",
+      "Autob_Aprobar_Convocatorias",
+      "Autob_Auditar",
+    ],
+  },
   "convocatoria:incluir-vehiculo": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "BORRADOR") return denegar("invalid_state");
       if (c.estatusVehiculo !== "DISPONIBLE") return denegar("invalid_state");
@@ -179,58 +219,65 @@ const CATALOGO_ACCIONES = {
     },
   },
   "convocatoria:retirar-vehiculo": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "BORRADOR") return denegar("invalid_state");
-      if (c.loteSinSolicitudesVivas === false) return denegar("invalid_state");
+      if (!confirmado(c.loteSinSolicitudesVivas))
+        return denegar("invalid_state");
       return permitir();
     },
   },
   "convocatoria:enviar-a-aprobacion": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "BORRADOR") return denegar("invalid_state");
-      if (c.tieneAlMenosUnLote === false) return denegar("invalid_state");
-      if (c.fechasCoherentes === false) return denegar("invalid_state");
+      if (!confirmado(c.tieneAlMenosUnLote)) return denegar("invalid_state");
+      if (!confirmado(c.fechasCoherentes)) return denegar("invalid_state");
       return permitir();
     },
   },
   "convocatoria:aprobar": {
-    roles: [APR],
+    permisos: ["Autob_Aprobar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "EN_APROBACION")
         return denegar("invalid_state");
+      // Sin saber quien la creo no se puede descartar la auto-aprobacion.
+      if (c.creadoPor === undefined) return denegar("invalid_state");
       if (c.creadoPor === c.participanteId) return denegar("self_approval");
       return permitir();
     },
   },
   "convocatoria:rechazar": {
-    roles: [APR],
+    permisos: ["Autob_Aprobar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "EN_APROBACION")
         return denegar("invalid_state");
+      if (c.creadoPor === undefined) return denegar("invalid_state");
       if (c.creadoPor === c.participanteId) return denegar("self_approval");
-      if (c.motivoProvisto === false) return denegar("invalid_state");
+      if (!confirmado(c.motivoProvisto)) return denegar("invalid_state");
       return permitir();
     },
   },
   "convocatoria:publicar": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) =>
       c.estatusConvocatoria === "APROBADA"
         ? permitir()
         : denegar("invalid_state"),
   },
   "convocatoria:ocultar": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     // proyecto.md 5.1 tiene dos filas para "Ocultar": desde BORRADOR /
     // EN_APROBACION / APROBADA sin guarda adicional, y desde PUBLICADA solo
-    // si no existe ninguna solicitud (R-06). permission-matrix.md solo
-    // menciona la segunda; ambas se conservan aqui porque la matriz no puede
-    // contradecir la maquina de estados de la que depende.
+    // si no existe ninguna solicitud (R-06).
     guarda: (c) => {
       if (c.estatusConvocatoria === "PUBLICADA") {
-        return c.existeAlgunaSolicitud ? denegar("invalid_state") : permitir();
+        // Hay que **saber** que no existe ninguna solicitud. Ignorarlo no
+        // equivale a que no las haya: ocultar una convocatoria con fila viva
+        // dejaria participantes formados en una cola invisible.
+        return c.existeAlgunaSolicitud === false
+          ? permitir()
+          : denegar("invalid_state");
       }
       if (
         c.estatusConvocatoria === "BORRADOR" ||
@@ -243,18 +290,18 @@ const CATALOGO_ACCIONES = {
     },
   },
   "convocatoria:reactivar": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) =>
       c.estatusConvocatoria === "OCULTA"
         ? permitir()
         : denegar("invalid_state"),
   },
   "convocatoria:concluir": {
-    roles: [ADM],
+    permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "PUBLICADA")
         return denegar("invalid_state");
-      return c.ventaFinalizada || c.sinSolicitudesVivas
+      return confirmado(c.ventaFinalizada) || confirmado(c.sinSolicitudesVivas)
         ? permitir()
         : denegar("invalid_state");
     },
@@ -262,32 +309,34 @@ const CATALOGO_ACCIONES = {
 
   // 3. Convocatorias — participacion
   "convocatoria:ver-publicada": {
-    roles: [ADM, APR, EMP, OTR, TES, AUD],
+    permisos: VENTA,
     guarda: guardaGatingTriple,
   },
   "lote:ver-detalle": {
-    roles: [ADM, APR, EMP, OTR, TES, AUD],
+    permisos: VENTA,
     guarda: guardaGatingTriple,
   },
 
   // 4. Fila y solicitudes
   "solicitud:crear": {
-    roles: [EMP, OTR],
-    guarda: (c, roles) => {
-      const gating = guardaGatingTriple(c, roles);
+    permisos: VENTA,
+    guarda: (c, permisos) => {
+      const gating = guardaGatingTriple(c, permisos);
       if (!gating.permitido) return gating;
-      if (c.ventaAbierta === false) return denegar("invalid_state");
-      if (c.tieneSolicitudViva) return denegar("invalid_state");
+      if (!confirmado(c.ventaAbierta)) return denegar("invalid_state");
+      // R-07: hay que saber que no tiene una solicitud viva en este lote.
+      // Ignorarlo permitiria formarse dos veces.
+      if (c.tieneSolicitudViva !== false) return denegar("invalid_state");
       return permitir();
     },
   },
   "solicitud:ver-mi-lugar": {
-    roles: [EMP, OTR],
+    permisos: VENTA,
     guarda: (c) => (esPropio(c) ? permitir() : denegar("not_owner")),
   },
-  "solicitud:ver-mis-solicitudes": { roles: [EMP, OTR] },
+  "solicitud:ver-mis-solicitudes": { permisos: VENTA },
   "solicitud:cancelar": {
-    roles: [EMP, OTR],
+    permisos: VENTA,
     guarda: (c) => {
       if (!esPropio(c)) return denegar("not_owner");
       if (
@@ -299,76 +348,88 @@ const CATALOGO_ACCIONES = {
       return permitir();
     },
   },
-  "fila:ver-completa": { roles: [AUD] },
+  "fila:ver-completa": { permisos: ["Autob_Auditar"] },
 
   // 5. Pago y tesoreria
   "comprobante:subir": {
-    roles: [EMP, OTR],
+    permisos: VENTA,
     guarda: (c) => {
       if (!esPropio(c)) return denegar("not_owner");
       if (c.estatusSolicitud !== "ADJUDICADA") return denegar("invalid_state");
-      if (c.dentroDePlazo === false) return denegar("invalid_state");
+      if (!confirmado(c.dentroDePlazo)) return denegar("invalid_state");
       return permitir();
     },
   },
   "comprobante:descargar": {
-    roles: [EMP, OTR, TES, AUD],
-    guarda: (c, roles) => {
-      if (roles.includes(TES) || roles.includes(AUD)) return permitir();
+    permisos: [...VENTA, "Autob_Operar_Tesoreria", "Autob_Auditar"],
+    guarda: (c, permisos) => {
+      if (
+        permisos.has("Autob_Operar_Tesoreria") ||
+        permisos.has("Autob_Auditar")
+      ) {
+        return permitir();
+      }
       return esPropio(c) ? permitir() : denegar("not_owner");
     },
   },
-  "tesoreria:ver-bandeja": { roles: [TES, AUD] },
+  "tesoreria:ver-bandeja": {
+    permisos: ["Autob_Operar_Tesoreria", "Autob_Auditar"],
+  },
   "pago:avalar": {
-    roles: [TES],
+    permisos: ["Autob_Operar_Tesoreria"],
     guarda: (c) =>
       c.estatusSolicitud === "EN_VERIFICACION"
         ? permitir()
         : denegar("invalid_state"),
   },
   "pago:rechazar": {
-    roles: [TES],
+    permisos: ["Autob_Operar_Tesoreria"],
     guarda: (c) => {
       if (c.estatusSolicitud !== "EN_VERIFICACION")
         return denegar("invalid_state");
-      if (c.motivoProvisto === false) return denegar("invalid_state");
+      if (!confirmado(c.motivoProvisto)) return denegar("invalid_state");
       return permitir();
     },
   },
 
   // 6. Auditoria
-  "auditoria:ver-bitacora": { roles: [AUD] },
-  "auditoria:ver-fila-historica": { roles: [AUD] },
-  "auditoria:exportar": { roles: [AUD] },
+  "auditoria:ver-bitacora": { permisos: ["Autob_Auditar"] },
+  "auditoria:ver-fila-historica": { permisos: ["Autob_Auditar"] },
+  "auditoria:exportar": { permisos: ["Autob_Auditar"] },
 } satisfies Record<string, DefinicionAccion>;
 
 export type Accion = keyof typeof CATALOGO_ACCIONES;
 
 /**
- * Decide si `roles` puede ejecutar `accion` sobre `contexto`. Pura: sin I/O,
- * sin red, sin base de datos — todo lo que la decision necesita ya llego en
- * `contexto`, resuelto por quien invoca.
+ * Decide si `permisos` puede ejecutar `accion` sobre `contexto`. Pura: sin
+ * I/O, sin red, sin base de datos — todo lo que la decision necesita ya llego
+ * en `contexto`, resuelto por quien invoca.
  *
- * Cerrada por omision: una accion que no existe en el catalogo se deniega
- * (nunca `permitido: true`), incluso si el tipo `Accion` se burla con `as`.
+ * Cerrada por omision en los dos sentidos: una accion que no existe en el
+ * catalogo se deniega (nunca `permitido: true`), y una guarda cuyo dato de
+ * contexto no llego tambien deniega.
  */
 export const puedeEjecutar = ({
   accion,
-  roles,
+  permisos,
   contexto,
 }: {
   accion: Accion;
-  roles: readonly Rol[];
+  permisos: ReadonlySet<Permiso>;
   contexto: Contexto;
 }): DecisionPermiso => {
   const definicion: DefinicionAccion | undefined = CATALOGO_ACCIONES[accion];
   if (!definicion) return denegar("forbidden");
 
-  const tieneRol = definicion.roles.some((rol) => roles.includes(rol));
-  if (!tieneRol) return denegar("forbidden");
+  // 1. Capacidad — la concede EAS, no este archivo.
+  const tienePermiso = definicion.permisos.some((permiso) =>
+    permisos.has(permiso),
+  );
+  if (!tienePermiso) return denegar("forbidden");
 
+  // 2. Aplicabilidad — lo unico que EAS no puede saber.
   if (!definicion.guarda) return permitir();
-  return definicion.guarda(contexto, roles);
+  return definicion.guarda(contexto, permisos);
 };
 
 export const __test__ = { CATALOGO_ACCIONES };
