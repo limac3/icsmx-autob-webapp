@@ -135,6 +135,27 @@ export const clave = {
   }),
 
   /**
+   * Reserva de turno — mecanismo de R18.
+   *
+   * Marca que un turno ya se entrego y su solicitud **todavia no es visible**
+   * en la fila. Se crea antes de pedir el turno y se borra dentro de la misma
+   * transaccion que hace visible la solicitud, asi que su presencia cubre la
+   * ventana entera; la adjudicacion se abstiene mientras exista alguna.
+   *
+   * Es un item propio y no un atributo del lote **por concurrencia**: dentro de
+   * una `TransactWriteItems`, escribir el item del lote hace que N solicitudes
+   * simultaneas se cancelen entre si con `TransactionConflict`. Con un item por
+   * intento no hay dos transacciones que toquen el mismo item.
+   *
+   * Vive en la particion del lote y ordena antes que `SOL#` y despues que
+   * `PART#`, de modo que ninguna consulta existente de la fila la ve.
+   */
+  reservaDeTurno: (loteId: string, reservaId: string): Clave => ({
+    PK: `LOTE#${exigirIdentificador(loteId, "loteId")}`,
+    SK: `RESERVA#${exigirIdentificador(reservaId, "reservaId")}`,
+  }),
+
+  /**
    * Centinela de adjudicacion activa — R-09. **Este centinela, y no el estado
    * `CONGELADA`, es lo que garantiza una sola adjudicacion por participante**
    * (modelo-datos 4.3).
@@ -186,6 +207,7 @@ export const PREFIJO = {
   lote: "LOTE#",
   solicitud: "SOL#",
   centinelaFila: "PART#",
+  reservaDeTurno: "RESERVA#",
 } as const;
 
 /**

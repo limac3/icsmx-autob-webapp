@@ -173,6 +173,13 @@ solo la ve si ademas `publicadaEn <= ahora`. Ver R-01.
 | `EN_OFERTA` | Concluir convocatoria | `NO_VENDIDO` | — |
 | `EN_OFERTA` | Retirar | `RETIRADO` | Sin solicitudes vivas |
 
+> **`ADJUDICADO` no cierra la fila.** Un lote adjudicado sigue admitiendo solicitudes mientras la
+> venta este abierta: es lo que exige R-17 y de lo que dependen `miPosicion`, `tamanoFila` y la
+> reasignacion de R-15 —que necesita un siguiente turno vivo al que reasignar—. Lo que si cierra
+> la fila es `VENDIDO`, `NO_VENDIDO` o `RETIRADO`. Se aclara aqui porque el modelo de datos
+> exigia `EN_OFERTA` para entrar a la fila, lo que la cerraba a los segundos de abrir la venta;
+> lo detecto el prototipo concurrente.
+
 ### 5.4 Solicitud de compra
 
 ```

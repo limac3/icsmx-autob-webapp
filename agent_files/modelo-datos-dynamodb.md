@@ -184,6 +184,32 @@ falla, la transaccion completa se cancela sin efectos, y el algoritmo marca esa 
 Asi, `CONGELADA` es un estado **derivado y de presentacion** — le explica al participante por
 que no avanza — mientras la garantia real la sostiene la base de datos.
 
+### 4.4 Reserva de turno — R18
+
+`LOTE#<loteId> / RESERVA#<reservaId>`, con `anotadaEn`.
+
+Marca que un turno ya se entrego y su solicitud **todavia no es visible** en la fila. Es lo que
+cierra la carrera entre los dos pasos de T1; el razonamiento completo esta en T1.
+
+- Se escribe **antes** de pedir el turno, no despues. El orden es la garantia: al reves quedaria
+  abierta justo la ventana que se quiere cerrar. Al derecho, lo peor que puede pasar es una
+  reserva huerfana que nadie reclama.
+- Se borra dentro de la **misma** `TransactWriteItems` que hace visible la solicitud, con
+  `attribute_exists(SK)`.
+- La adjudicacion se abstiene mientras exista alguna reserva mas joven que el umbral, y depura
+  las mas viejas.
+
+`reservaId` identifica el **intento**, no al participante: se genera nuevo cada vez, de modo que
+retirar una reserva nunca puede retirar la de otro intento.
+
+**Es un item propio y no un atributo del lote, y la diferencia es medible.** Dentro de una
+`TransactWriteItems`, tocar el item del lote hace que las solicitudes simultaneas se cancelen
+entre si con `TransactionConflict`: en el prototipo, de 10 solicitudes concurrentes se perdian
+entre 5 y 9. Con un item por intento no hay dos transacciones que compartan item, y las 10
+entran. Ver desafios-implementacion.md seccion 17.
+
+Ordena entre `PART#` y `SOL#`, asi que ninguna consulta de la fila la ve.
+
 ---
 
 ## 5. Patrones de acceso
@@ -243,13 +269,23 @@ Toda escritura de solicitud incluye su evento de auditoria en la **misma**
 
 ### T1 — Solicitar compra
 
-Dos pasos, en este orden y no en otro.
+Tres escrituras, en este orden y no en otro. El diseno esta **validado contra DynamoDB real**
+por el prototipo de R18 (`src/lib/fila/prototipoDeFila.integracion.test.ts`).
+
+**Paso 0 — `Put` de la reserva de turno** (seccion 4.4):
+
+```
+Item:   LOTE#<loteId> / RESERVA#<reservaId>, anotadaEn = :ahora
+```
+
+Va **antes** del contador, no despues. Si fuera despues, entre la entrega del turno y la marca
+quedaria abierta exactamente la ventana que la reserva existe para cerrar.
 
 **Paso 1 — `UpdateItem` sobre el lote** (atomico, sin transaccion):
 
 ```
 UpdateExpression:    ADD contadorTurnos :uno
-ConditionExpression: estatus = :enOferta
+ConditionExpression: (estatus = :enOferta OR estatus = :adjudicado)
                      AND estatusConvocatoria = :publicada
                      AND inicioVenta <= :ahora AND finVenta > :ahora
 ReturnValues:        UPDATED_NEW        -> devuelve el turno asignado
@@ -258,31 +294,53 @@ ReturnValues:        UPDATED_NEW        -> devuelve el turno asignado
 La condicion usa los atributos desnormalizados del lote (seccion 1). Sin ellos habria que leer
 la convocatoria y decidir despues, que es la carrera que el diseno evita.
 
+> **`ADJUDICADO` tambien admite fila, y esto es una correccion.** Este documento exigia
+> `estatus = EN_OFERTA`. Con adjudicacion inmediata el turno 1 pasa el lote a `ADJUDICADO` a los
+> segundos de `inicioVenta`, asi que esa condicion cerraba la fila casi al abrirla: nadie mas
+> podia formarse, `miPosicion` y `tamanoFila` no tendrian a quien contar, la reasignacion de
+> R-15 no tendria a quien reasignar, y R-17 —"sigue disponible para quien solicite despues,
+> mientras la venta siga abierta"— seria inalcanzable. Lo que si cierra la fila es un lote
+> `VENDIDO`, `NO_VENDIDO` o `RETIRADO`.
+
+Si el paso 1 falla, se borra la reserva del paso 0: no corresponde a ningun turno y solo
+demoraria adjudicaciones ajenas hasta el umbral.
+
 **Paso 2 — `TransactWriteItems`:**
 
 1. `Put` solicitud con `SK = SOL#<turno:010d>` y estado `EN_FILA`.
 2. `Put` centinela de fila, con `attribute_not_exists(SK)` — R-07.
 3. `Put` evento `SOLICITUD_CREADA`, con `attribute_not_exists(PK)`.
-4. `ConditionCheck` sobre la **convocatoria**: `estatus = PUBLICADA`.
+4. `Delete` de la reserva del paso 0, con `attribute_exists(SK)`.
 
-> **Por que el `ConditionCheck` del item 4.** Los atributos desnormalizados del lote se propagan
-> por tandas al publicar (T8), y la convocatoria se marca al final. Una interrupcion a la mitad
-> deja lotes que ya dicen `PUBLICADA` bajo una convocatoria que todavia no lo esta — y como el
-> paso 1 solo mira el lote, esos lotes serian comprables. El `ConditionCheck` devuelve la
-> autoridad a la convocatoria **en el momento del commit**, sin costo de una lectura previa.
->
-> Contrapartida: una lectura fuerte sobre un unico item por cada solicitud. A la escala de esta
-> aplicacion es aceptable; si el volumen crece hasta hacer del item de convocatoria una particion
-> caliente, se revisa. El paso 1 puede haber incrementado igual y dejar un hueco, que ya es un
-> resultado aceptado.
+El orden de los items fija la prioridad del diagnostico: `CancellationReasons` es posicional y
+se toma el **primer** motivo distinto de `None`, asi que "ya estabas en la fila" (item 2) gana
+sobre "tu reserva ya se dio por muerta" (item 4).
+
+> **Por que el item 4 lleva condicion.** Sin ella el mecanismo seria solo una espera cortes: un
+> proceso al que la adjudicacion ya dio por muerto escribiria igual su solicitud, con un turno
+> menor que el del ganador, y R18 seguiria abierto — solo que mas dificil de reproducir. Con
+> ella, quien pierde su reserva pierde su turno y queda un hueco, que el diseno ya acepta. El
+> umbral pasa a ser un compromiso de **espera**, no de correccion.
+
+> **Lo que este paso ya no lleva: el `ConditionCheck` sobre la convocatoria.** Se agrego en la
+> Etapa 2.1 contra la publicacion parcial y es correcto, pero apunta a un unico item que
+> comparten **todas** las solicitudes de la convocatoria, y dentro de una transaccion un
+> `ConditionCheck` retiene el item igual que una escritura. Medido con 10 solicitudes
+> simultaneas, cancelaba entre 5 y 7 por `TransactionConflict`: la garantia se pagaba rechazando
+> a quien llega puntual, en el unico instante en que todos llegan a la vez. La publicacion
+> parcial se cierra ahora en T8, ordenando la propagacion; ver ahi.
 
 > **Los turnos son unicos y estrictamente crecientes, pero pueden tener huecos.** Si el paso 1
 > tiene exito y el paso 2 falla — tipicamente porque el participante ya estaba en la fila — el
 > turno consumido no se reutiliza. `ADD` es atomico precisamente porque no se puede deshacer.
 >
 > Un hueco es inofensivo: la equidad depende del **orden relativo**, y ese orden es total y
-> verificable con o sin huecos. Intentar garantizar contiguidad exigiria un mecanismo de
-> reserva y liberacion que reintroduciria justo las carreras que este diseno elimina.
+> verificable con o sin huecos.
+>
+> **La reserva del paso 0 no cambia esto y no pretende cambiarlo.** Sirve para saber que un
+> turno esta en vuelo, no para devolverlo: cuando su solicitud no llega, la reserva se retira y
+> el turno queda consumido. Reciclarlo exigiria decidir a quien se le entrega el hueco, que es
+> justo la clase de decision que este diseno saca del codigo y le deja al contador atomico.
 >
 > Para que los huecos sean raros, la Server Action hace un `GetItem` del centinela antes del
 > paso 1 y rechaza los duplicados evidentes (doble clic). Es una **optimizacion, no una
@@ -290,21 +348,20 @@ la convocatoria y decidir despues, que es la carrera que el diseno evita.
 >
 > La prueba de concurrencia debe afirmar **unicidad y orden estricto**, no contiguidad.
 
-#### Carrera abierta entre el paso 1 y el paso 2 — riesgo R18
+#### La carrera entre el turno y su visibilidad — riesgo R18, cerrado
 
-**Este diseno todavia no es correcto y no debe implementarse tal cual.** Entre el paso 1 y el
-paso 2 existe una ventana en la que el turno ya se asigno pero la solicitud **aun no es visible**
-para la consulta de la fila (PA-07). Con adjudicacion inmediata —`proyecto.md` seccion 7 punto 7:
-"el turno 1 obtiene la adjudicacion"— esta intercalacion es posible:
+Sin el paso 0, entre el paso 1 y el paso 2 existe una ventana en la que el turno ya se asigno
+pero la solicitud **aun no es visible** para PA-07. Con adjudicacion inmediata —`proyecto.md`
+seccion 7 punto 7: "el turno 1 obtiene la adjudicacion"— esta intercalacion ocurre:
 
 1. A obtiene el turno 1 y su proceso se pausa antes del paso 2.
 2. B obtiene el turno 2, completa su paso 2 y dispara la adjudicacion.
 3. PA-07 solo ve a B. **B gana el vehiculo.**
 4. A completa su paso 2 con el turno 1, ya tarde.
 
-Viola R-08 ("el orden manda sobre el tiempo") y la invariante 4 de la seccion 7 de este mismo
-documento. La ventana es de un viaje de red, pero el momento de maxima concurrencia es
-exactamente `inicioVenta`, cuando llegan todas las solicitudes a la vez.
+Viola R-08 ("el orden manda sobre el tiempo") y la invariante 4 de la seccion 7. El prototipo
+**lo reproduce de forma determinista**, no como hipotesis: con una pausa deliberada en el paso 2
+de A, el turno 2 gana el vehiculo en todas las corridas.
 
 **Lo que NO es el problema:** que los contadores atomicos no sean idempotentes. Un reintento
 ambiguo consume un turno de mas y produce un **hueco**, que este diseno ya acepta de forma
@@ -312,17 +369,25 @@ explicita. Eso no rompe ninguna invariante.
 
 **Lo que tampoco funciona:** hacerlo todo en una sola `TransactWriteItems`.
 `TransactWriteItems` **no devuelve valores**, asi que el turno que produce un `ADD` no se puede
-usar como clave de un `Put` de la misma transaccion. La Etapa 8 de `plan-ejecucion.md` lo exigia;
-era irrealizable y ya esta corregido ahi.
+usar como clave de un `Put` de la misma transaccion.
 
-**Mecanismo candidato, a validar con el prototipo:** que el paso 1 registre la reserva del turno
-en el propio item del lote (`ADD contadorTurnos :uno SET reservas.#id = :ahora`) y que el paso 2
-la retire dentro de su transaccion. La adjudicacion se abstiene mientras haya reservas vigentes,
-y una reserva vieja se da por muerta pasado un umbral. El lote ya es el punto de serializacion
-—el paso 1 lo escribe de todos modos—, asi que no cuesta una escritura adicional.
+**Lo que se probo y se descarto:** anotar la reserva en el propio item del lote
+(`ADD contadorTurnos :uno SET reservas.#id = :ahora`), que era el mecanismo candidato. Cierra la
+carrera, pero obliga al paso 2 a escribir el item del lote, y ese item lo comparten todas las
+solicitudes simultaneas: DynamoDB no las serializa, las cancela con `TransactionConflict`. Con
+10 solicitudes a la vez se perdian entre 5 y 9. El razonamiento que lo proponia —"el lote ya es
+el punto de serializacion, asi que no cuesta una escritura adicional"— confundia dos cosas
+distintas: un `UpdateItem` suelto sobre un item caliente **espera**, y el mismo item dentro de
+una transaccion **falla**.
+
+**Lo que se adopto:** la reserva como item propio (seccion 4.4). Cierra la carrera igual y no
+introduce ningun item compartido: con 10 solicitudes simultaneas entran las 10, con turnos
+unicos, orden estricto y un solo ganador, repetido en varias rondas.
 
 **La prueba tiene que intercalar solicitud y adjudicacion.** Adjudicar solo despues de que todas
-las solicitudes terminaron no ejerce la carrera: con esa forma de prueba, el defecto pasa.
+las solicitudes terminaron no ejerce la carrera. El prototipo lo confirmo por medicion: en once
+rondas de rafaga con el diseno defectuoso, la adjudicacion la gano el turno 1 **todas las
+veces**. Una prueba con esa forma habria pasado en verde con el defecto presente.
 
 ### T2 — Adjudicar
 
@@ -346,6 +411,23 @@ Una sola `TransactWriteItems`, con bucle de candidatos por fuera.
 **Nunca se lee el lote para comprobar si esta libre.** La condicion del item 1 es la unica
 autoridad. Ante N intentos simultaneos, DynamoDB deja pasar exactamente uno.
 
+**Paso previo — abstencion por reservas vigentes (R18).** Antes del bucle se leen las reservas
+del lote con `Query` consistente sobre `begins_with(SK, "RESERVA#")`. Si queda alguna mas joven
+que el umbral, hay un turno en vuelo que la fila todavia no muestra y **la adjudicacion no
+ocurre**: se devuelve "abstenido" y la dispara quien complete su solicitud despues. Las reservas
+mas viejas que el umbral se borran ahi mismo.
+
+Esa lectura **solo puede detener**, nunca conceder: quien gana el lote lo sigue decidiendo la
+condicion del item 1. Una lectura que unicamente se abstiene no puede autorizar de mas, asi que
+no contradice la regla 6.
+
+> **Las reservas se leen antes que la fila, y el orden es parte del mecanismo.** Al reves no
+> sirve: una solicitud cuyo paso 2 se confirmara entre la lectura de la fila y la de las
+> reservas no apareceria en la primera y ya no tendria reserva en la segunda — quedaria
+> invisible por ambos lados. Leyendo las reservas primero, toda reserva ausente pertenece a una
+> solicitud que o bien ya esta escrita —y la `Query` consistente posterior la vera— o bien nunca
+> se escribira.
+
 **Bucle de candidatos:** se recorre PA-07 en orden de turno. Para cada solicitud `EN_FILA` se
 intenta la transaccion.
 
@@ -358,6 +440,12 @@ intenta la transaccion.
 `TransactionCanceledException` trae `CancellationReasons` posicional; **hay que inspeccionar el
 indice** para saber cual condicion fallo. Tratar todas las cancelaciones igual haria imposible
 distinguir "el lote ya se adjudico" de "prueba con el siguiente".
+
+Falta un tercer caso: `TransactionConflict` sobre el item del lote, cuando dos procesos intentan
+adjudicar a la vez. No dice quien gano, asi que la unica respuesta correcta es **releer y
+reintentar** con espera y jitter, no decidir. Aqui el item caliente esta solo en el camino de la
+adjudicacion —que ocurre una vez por lote— y no en el de cada solicitud, que es lo que hacia
+inviable la variante descartada de R18.
 
 ### T3 — Subir comprobante
 
@@ -432,23 +520,38 @@ y condicion `estatus = EN_VERIFICACION`.
 Actualiza la convocatoria y **propaga los atributos desnormalizados a cada lote**
 (`estatusConvocatoria`, `inicioVenta`, `finVenta`, `horasLiquidacion`, `tipoConvocatoria`).
 
-Con mas de ~95 lotes se supera el limite de `TransactWriteItems`; se procesa por tandas y la
-publicacion se marca **al final**, de modo que una interrupcion deje la convocatoria sin
-publicar en lugar de publicada a medias.
+Con mas de ~95 lotes se supera el limite de `TransactWriteItems` y se procesa por tandas, asi
+que una interrupcion siempre es posible. **La regla que la hace inofensiva es el orden de
+propagacion: el estado intermedio tiene que ser el mas restrictivo de los dos.**
 
-> **Esa intencion no bastaba por si sola.** Marcar la convocatoria al final protege a la
-> convocatoria, pero no a los lotes: los de las tandas ya procesadas quedan con
-> `estatusConvocatoria = PUBLICADA` grabado, y la condicion del paso 1 de T1 solo mira el lote.
-> Una interrupcion dejaba esos lotes comprables bajo una convocatoria sin publicar. Lo cierra el
-> `ConditionCheck` sobre la convocatoria que ahora lleva el paso 2 de T1.
+- **Al publicar** se marca **primero la convocatoria** y despues los lotes. Una interrupcion deja
+  la convocatoria publicada con lotes que todavia dicen `BORRADOR`: no se pueden comprar, que es
+  el lado seguro. Al reanudar aparecen.
+- **Al ocultar** (R-06) se marca **primero los lotes** y despues la convocatoria. Una
+  interrupcion deja lotes ya cerrados bajo una convocatoria aun visible; tambien el lado seguro.
+
+> **Este documento decia lo contrario, y la correccion tiene historia.** Marcaba la publicacion
+> al final "de modo que una interrupcion deje la convocatoria sin publicar en lugar de publicada
+> a medias". Protegia a la convocatoria y desprotegia a los lotes: los de las tandas ya
+> procesadas quedaban con `estatusConvocatoria = PUBLICADA` grabado, y como la condicion del paso
+> 1 de T1 solo mira el lote, eran comprables bajo una convocatoria sin publicar.
 >
-> Consecuencia para quien implemente el gating: **la convocatoria es el registro autoritativo**.
-> Los atributos desnormalizados del lote sirven para filtrar y para condicionar barato, nunca
-> para ser la ultima palabra. El `estatusConvocatoria` que se le pasa a `puedeEjecutar` debe
-> salir de la convocatoria, no de la copia del lote.
+> La Etapa 2.1 lo cerro con un `ConditionCheck` sobre la convocatoria en el paso 2 de T1. Era
+> correcto y resulto inviable: ese item lo comparten todas las solicitudes de la convocatoria y,
+> dentro de una transaccion, un `ConditionCheck` lo retiene igual que una escritura. Medido, de
+> 10 solicitudes simultaneas cancelaba entre 5 y 7 (desafios-implementacion.md seccion 17).
 >
-> La propagacion debe ser **idempotente y reanudable**: repetir una tanda ya aplicada no puede
-> cambiar nada.
+> Invertir el orden de propagacion consigue lo mismo sin costo en tiempo de ejecucion: el
+> atributo desnormalizado del lote puede **quedarse atras** de la convocatoria, nunca
+> adelantarse. Y "atras" siempre significa menos permisivo.
+
+Consecuencia para quien implemente el gating: **la convocatoria sigue siendo el registro
+autoritativo**. Los atributos desnormalizados del lote sirven para filtrar y para condicionar
+barato. El `estatusConvocatoria` que se le pasa a `puedeEjecutar` debe salir de la convocatoria,
+no de la copia del lote.
+
+La propagacion debe ser **idempotente y reanudable**: repetir una tanda ya aplicada no puede
+cambiar nada.
 
 ---
 
@@ -472,6 +575,15 @@ regla 16.
 9. **`adjudicacionActual` nunca es `null`.** O existe con un valor, o no existe.
 10. **Coherencia de GSI4.** Toda solicitud `ADJUDICADA` tiene claves GSI4; ninguna en otro
     estado las tiene.
+11. **Ninguna reserva sobrevive a su solicitud.** Terminado el paso 2, no queda la reserva del
+    intento; y una reserva ya depurada impide que su paso 2 se aplique.
+12. **La fila sigue abierta con el lote `ADJUDICADO`.** Quien solicita despues de la primera
+    adjudicacion obtiene turno y entra a la fila (R-17).
+
+Las invariantes 11 y 12, junto con las cuatro primeras, estan cubiertas por el prototipo de R18
+(`npm run prototipo:fila`), que corre contra el sandbox y **se omite** en la compuerta: no es una
+prueba de regresion sino el registro reproducible de la decision. La regresion permanente la
+aporta la prueba de concurrencia de la Etapa 8.
 
 ---
 

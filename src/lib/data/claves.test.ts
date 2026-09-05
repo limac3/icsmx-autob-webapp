@@ -126,6 +126,45 @@ describe("orden de la fila — la garantia de D-5", () => {
   });
 });
 
+describe("reserva de turno — el mecanismo de R18", () => {
+  it("vive en la particion del lote, junto a la fila", () => {
+    expect(clave.reservaDeTurno("L1", "r-9")).toEqual({
+      PK: "LOTE#L1",
+      SK: "RESERVA#r-9",
+    });
+    expect(clave.reservaDeTurno("L1", "r-9").PK).toBe(
+      clave.solicitud("L1", 1).PK,
+    );
+  });
+
+  it("ordena entre el centinela de fila y las solicitudes", () => {
+    // No es cosmetico. La consulta de la fila (PA-07) usa
+    // `begins_with(SK, "SOL#")`, asi que las reservas tienen que quedar fuera
+    // de ese rango; y al leer la particion entera aparecen **antes** que las
+    // solicitudes, que es el orden que la adjudicacion necesita para no
+    // perderse una solicitud que se confirma entre las dos lecturas.
+    const claves = [
+      clave.centinelaFila("L1", "P1").SK,
+      clave.reservaDeTurno("L1", "r1").SK,
+      clave.solicitud("L1", 1).SK,
+    ];
+    expect([...claves].sort()).toEqual(claves);
+  });
+
+  it("ninguna reserva se cuela en el rango de la fila", () => {
+    expect(clave.reservaDeTurno("L1", "r1").SK).not.toMatch(
+      new RegExp(`^${PREFIJO.solicitud}`),
+    );
+    expect(
+      turnoDesdeClave(clave.reservaDeTurno("L1", "r1").SK),
+    ).toBeUndefined();
+  });
+
+  it("rechaza un identificador de reserva con separador", () => {
+    expect(() => clave.reservaDeTurno("L1", "r#1")).toThrow(RangeError);
+  });
+});
+
 describe("turnoDesdeClave", () => {
   it("hace ida y vuelta con clave.solicitud", () => {
     for (const turno of [0, 1, 42, 9_999_999_999]) {

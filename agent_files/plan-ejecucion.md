@@ -4,9 +4,9 @@ Fuente de verdad del avance del proyecto. Cada etapa se marca `[x]` solo cuando 
 entregables estan hechos y su compuerta de calidad pasa en verde.
 
 > Ultima actualizacion: 2026-09-05 — **Etapas 0 a 4 completadas**, incluida la Etapa 2.1 de
-> correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora).
-> Siguiente: el **prototipo concurrente de la fila** (riesgo R18), que la secuencia acordada
-> coloca antes de la Etapa 5.
+> correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora), mas el
+> **prototipo concurrente de la fila**, que cierra el riesgo **R18** y corrige T1, T2 y T8 del
+> modelo de datos. Siguiente: **Etapa 5 — Administracion de vehiculos**.
 
 ---
 
@@ -231,7 +231,9 @@ los riesgos que dicen cubrir.
 
 - [x] Carrera FIFO documentada en T1 con causa raiz y mecanismo candidato (riesgo **R18**)
 - [x] Corregida la exigencia irrealizable de la Etapa 8 ("una sola `TransactWriteItems`")
-- [x] `ConditionCheck` sobre la convocatoria en T1, contra la publicacion parcial
+- [x] `ConditionCheck` sobre la convocatoria en T1, contra la publicacion parcial — **revertido
+      en la Etapa 4.1**: cancelaba entre 5 y 7 de cada 10 solicitudes concurrentes. La garantia
+      se conserva ordenando la propagacion de T8
 - [x] `desafios-implementacion.md` — seccion nueva con la causa raiz del modelo de roles
 
 **Verificacion:**
@@ -370,6 +372,48 @@ Capa de datos (`src/lib/data/`):
 
 ---
 
+## Etapa 4.1 — Prototipo concurrente de la fila (riesgo R18) ✅
+
+**Objetivo:** decidir con evidencia, y no con argumentos, si T1 puede implementarse; el propio
+`modelo-datos-dynamodb.md` declaraba que **no debia implementarse tal cual**.
+
+**Dependencias:** Etapa 4 (claves, transacciones, plazos) y Etapa 3 (sandbox desplegado).
+
+- [x] `src/lib/fila/prototipoDeFila.ts` con **tres variantes** contrastables: `ingenuo`,
+      `reservas_en_lote` (la candidata del documento) y `reservas_por_item`
+- [x] `src/lib/fila/prototipoDeFila.integracion.test.ts` — 20 pruebas contra el sandbox, con el
+      rol de computo SSR real
+- [x] Carrera controlada: pausa deliberada entre las escrituras, determinista
+- [x] Rafaga de 10 participantes concurrentes, cada uno adjudicando al terminar, repetida
+- [x] `clave.reservaDeTurno` en `claves.ts` mas sus pruebas de orden de clave
+- [x] `npm run prototipo:fila` y bandera `PROTOTIPO_R18`, para no cargar `verify:rapido` con
+      dos minutos de AWS
+
+**Resultados:**
+
+- **R18 es real y se reproduce siempre.** Con el diseno original, el turno 2 gana el vehiculo del
+  turno 1 en todas las corridas
+- **El mecanismo que este plan proponia no es viable.** La reserva como atributo del item del
+  lote cierra la carrera pero mete ese item en la transaccion de **toda** solicitud: de 10
+  simultaneas se perdian entre 5 y 9 por `TransactionConflict`
+- **El mecanismo adoptado si lo es.** Reserva como item propio: 10 de 10 entran, turnos unicos,
+  orden estricto, un solo ganador, en rondas repetidas
+- **Hallazgo aparte:** el `ConditionCheck` sobre la convocatoria que agrego la Etapa 2.1
+  cancelaba entre 5 y 7 de cada 10 solicitudes por la misma causa. Sustituido por el orden de
+  propagacion de T8
+- **Hallazgo aparte:** la condicion `estatus = EN_OFERTA` del paso 1 cerraba la fila en la
+  primera adjudicacion, contra R-17, R-15, `miPosicion` y `tamanoFila`
+- **Confirmada la senal de alerta del plan:** en once rondas de rafaga sin pausa deliberada, el
+  defecto **nunca** se manifesto. Una prueba con esa forma habria pasado en verde
+
+**Documentacion actualizada:** `modelo-datos-dynamodb.md` (seccion 4.4 nueva, T1, T2 y T8
+reescritos, invariantes 11 y 12), `proyecto.md` (5.3), `desafios-implementacion.md` (seccion 17).
+
+**Salida esperada:** un diseno de fila validado contra DynamoDB real antes de escribirlo.
+**Cumplida.**
+
+---
+
 ## Etapa 5 — Administracion de vehiculos
 
 **Objetivo:** que un administrador registre vehiculos con sus fotografias.
@@ -463,20 +507,37 @@ Capa de datos (`src/lib/data/`):
 
 **Dependencias:** Etapa 7.
 
-- [ ] **Prototipo concurrente primero** (riesgo R18). El diseno de dos pasos de T1 tiene una
-      carrera: entre el `ADD` que asigna el turno y el `Put` que hace visible la solicitud, un
-      turno mayor puede ganar la adjudicacion. Validar el mecanismo antes de escribir la etapa
-- [ ] `src/lib/fila/solicitarCompra.ts` — en **dos pasos**, segun T1 de `modelo-datos-dynamodb.md`:
+- [x] **Prototipo concurrente primero** (riesgo R18) — hecho antes de esta etapa.
+      `src/lib/fila/prototipoDeFila.ts` mas su prueba de integracion contra el sandbox
+      (`npm run prototipo:fila`, 20 pruebas). Reprodujo el defecto de forma determinista,
+      descarto el mecanismo que este plan proponia y valido el que lo sustituye. **T1 quedo
+      reescrito**; los tres hallazgos estan en `desafios-implementacion.md` seccion 17
+- [ ] `src/lib/fila/solicitarCompra.ts` — en **tres escrituras**, segun T1 de
+      `modelo-datos-dynamodb.md` ya corregido por el prototipo:
+  - [ ] `Put` de la reserva de turno `LOTE#<id>/RESERVA#<reservaId>` **antes** del contador.
+        El orden es la garantia: al reves queda abierta la ventana de R18
   - [ ] `ADD` atomico al contador de turnos **del lote** para obtener `turno` (regla 3).
         No puede ir en la transaccion: `TransactWriteItems` **no devuelve valores**, asi que el
         turno que produce un `ADD` no se puede usar como clave de un `Put` de la misma
         transaccion
+  - [ ] Condicion del `ADD`: `(estatus = EN_OFERTA OR estatus = ADJUDICADO)` mas la ventana de
+        venta. **No exigir `EN_OFERTA` a secas**: cerraria la fila en la primera adjudicacion y
+        haria inalcanzable R-17
   - [ ] Item de solicitud con `turno`, `solicitadoEn` informativo y estado `EN_FILA`
   - [ ] Condicion de unicidad: el participante no puede tener dos solicitudes en el mismo lote
-  - [ ] `ConditionCheck` sobre la convocatoria — contra la publicacion parcial
+  - [ ] `Delete` de la reserva dentro de la transaccion, con `attribute_exists(SK)`
+  - [ ] **Sin `ConditionCheck` sobre la convocatoria**: cancelaba entre 5 y 7 de cada 10
+        solicitudes concurrentes. La publicacion parcial se cierra en T8, por orden de
+        propagacion
   - [ ] Evento de auditoria en la misma transaccion, con `attribute_not_exists(PK)` (regla 4)
+  - [ ] Compensacion de mejor esfuerzo: si el paso 1 o el paso 2 fallan, borrar la reserva
 - [ ] `src/lib/fila/adjudicar.ts` — adjudicacion por **escritura condicional**
       `attribute_not_exists(adjudicacionActual)`, jamas leer-y-decidir (regla 6)
+  - [ ] Abstencion previa por reservas vigentes (R18), leyendo **las reservas antes que la
+        fila**. Esa lectura solo puede detener, nunca conceder
+  - [ ] Depuracion de reservas mas viejas que el umbral
+  - [ ] Reintento con jitter ante `TransactionConflict` sobre el item del lote: no dice quien
+        gano, asi que decidir seria adivinar
 - [ ] Regla de una sola adjudicacion activa por participante: item de control y condicion
       adicional en la transaccion; las demas solicitudes del ganador pasan a `CONGELADA`
 - [ ] `src/lib/fila/consultarMiLugar.ts` — DTO que expone **unicamente** `miTurno`,
@@ -497,7 +558,14 @@ Capa de datos (`src/lib/data/`):
       (probar con timestamps deliberadamente desordenados)
 - [ ] **Intercalacion (R18):** la prueba debe entrelazar solicitud y adjudicacion, no adjudicar
       despues de que todas las solicitudes terminaron. Con esa segunda forma la carrera no se
-      ejerce y el defecto pasa
+      ejerce y el defecto pasa. **Confirmado por medicion:** en once rondas de rafaga contra el
+      diseno defectuoso, la adjudicacion la gano el turno 1 todas las veces. La prueba de esta
+      etapa debe incluir una pausa deliberada entre las escrituras, como hace el prototipo
+- [ ] **Sin rechazos por contencion:** N solicitudes simultaneas entran **las N**. Un
+      participante rechazado con `conflicto_concurrencia` en `inicioVenta` es un defecto de
+      diseno, no una carrera aceptable (desafios-implementacion.md seccion 17)
+- [ ] **Fila abierta con el lote adjudicado (R-17):** quien solicita despues de la primera
+      adjudicacion obtiene turno y entra a la fila
 - [ ] **Privacidad:** test que **falla** si el DTO de fila contiene `participanteId`, correo o
       nombre de un tercero
 - [ ] **Auditoria:** cada solicitud y cada adjudicacion tiene su evento correspondiente
@@ -855,14 +923,14 @@ entorno de prueba.
 
 ---
 
-### R18 — Carrera FIFO: un turno mayor puede ganar la adjudicacion
+### R18 — Carrera FIFO: un turno mayor puede ganar la adjudicacion — **cerrado**
 
-**Probabilidad:** alta · **Impacto:** critico
+**Probabilidad:** alta · **Impacto:** critico · **Estado:** cerrado por el prototipo concurrente
 
-T1 asigna el turno con un `ADD` (paso 1) y hace visible la solicitud con un `Put` en otra
-operacion (paso 2). Entre ambos hay una ventana en la que el turno existe pero **la fila no lo
-ve**. Con adjudicacion inmediata, el turno 2 puede completar su paso 2, disparar la adjudicacion
-y ganar el vehiculo mientras el turno 1 sigue en vuelo.
+T1 asignaba el turno con un `ADD` (paso 1) y hacia visible la solicitud con un `Put` en otra
+operacion (paso 2). Entre ambos habia una ventana en la que el turno existe pero **la fila no lo
+ve**. Con adjudicacion inmediata, el turno 2 completa su paso 2, dispara la adjudicacion y gana
+el vehiculo mientras el turno 1 sigue en vuelo.
 
 Rompe R-08 —"el orden manda sobre el tiempo"— que es la regla en la que descansa la equidad de
 todo el sistema. La ventana es de un viaje de red, pero el momento de maxima concurrencia es
@@ -871,12 +939,19 @@ exactamente `inicioVenta`.
 No confundir con la no-idempotencia de los contadores atomicos: eso produce **huecos**, que el
 diseno ya acepta y que no rompen ninguna invariante.
 
-**Mitigacion:** prototipo concurrente **antes** de escribir la Etapa 8, con el mecanismo de
-reservas sobre el item del lote que propone T1. La prueba debe **intercalar** solicitud y
-adjudicacion; adjudicar despues de que todas las solicitudes terminaron no ejerce la carrera.
+**Resuelto asi:** el prototipo (`npm run prototipo:fila`) reprodujo el defecto de forma
+determinista, **descarto** el mecanismo que este plan proponia —anotar la reserva en el item del
+lote, que cancelaba entre 5 y 9 de cada 10 solicitudes concurrentes con `TransactionConflict`— y
+valido el que lo sustituye: la reserva como **item propio**, escrita antes de pedir el turno y
+borrada dentro de la transaccion del paso 2. T1 y T2 quedaron reescritos en
+`modelo-datos-dynamodb.md`.
 
-**Senal de alerta:** una prueba de concurrencia que crea las N solicitudes y solo despues llama a
-adjudicar. Pasa en verde con el defecto presente.
+**Lo que queda por hacer:** implementarlo en la Etapa 8 sobre el `solicitarCompra.ts` real, con
+la prueba de concurrencia permanente en la compuerta. El prototipo no la sustituye.
+
+**Senal de alerta, confirmada:** una prueba de concurrencia que crea las N solicitudes y solo
+despues llama a adjudicar pasa en verde con el defecto presente — ocurrio en las once rondas
+medidas. La prueba de la Etapa 8 tiene que intercalar y pausar deliberadamente.
 
 ### R19 — El contrato de EAS no esta confirmado
 
@@ -936,5 +1011,9 @@ sacar la bitacora del alcance de la aplicacion — DynamoDB Streams hacia un sum
 | 2026-09-04 | Siete permisos a granularidad de **capacidad** | Un permiso por accion (33): mas fino, pero fragmenta capacidades que en la practica se conceden juntas y multiplica el costo de configuracion en EAS |
 | 2026-09-04 | Guardas cerradas por omision: toda precondicion exige `=== true` | Contexto tipado por accion (33 tipos), que el diagnostico externo proponia: mas seguro en compilacion, pero mucho mas costoso. La invariante 8 —quitar un campo a la vez y exigir denegacion— cubre la misma clase de defecto y ademas atrapa los futuros |
 | 2026-09-04 | `attribute_not_exists(PK)` en cada `Put` de evento, mas sumidero append-only en la Etapa 11 | Confiar solo en el `Deny` de IAM, que es lo que afirmaban tres documentos: **es falso**, `PutItem` sobrescribe y no se puede denegar sin romper la regla 4 |
-| 2026-09-04 | `ConditionCheck` sobre la convocatoria dentro de la transaccion de T1 | Confiar en los atributos desnormalizados del lote: una publicacion por tandas interrumpida deja lotes comprables bajo una convocatoria sin publicar |
+| 2026-09-04 | ~~`ConditionCheck` sobre la convocatoria dentro de la transaccion de T1~~ — **revertida el 2026-09-05**, ver abajo | Confiar en los atributos desnormalizados del lote: una publicacion por tandas interrumpida deja lotes comprables bajo una convocatoria sin publicar |
 | 2026-09-04 | `style-src` y `font-src` autorizan el origen del Font Foundry | Mantener `self`: bloquea la hoja de estilo remota de `<Fonts>` de Eden y sus woff2, y ni `build` ni jsdom lo detectan porque no aplican CSP |
+| 2026-09-05 | Reserva de turno como **item propio** `LOTE#<id>/RESERVA#<id>`, escrita antes del contador | Anotarla como atributo mapa del item del lote, que era el mecanismo que este plan proponia: cierra la carrera igual, pero mete el item del lote en la transaccion de toda solicitud y DynamoDB las cancela con `TransactionConflict` — medido, entre 5 y 9 de cada 10 |
+| 2026-09-05 | Publicacion parcial cerrada por **orden de propagacion** en T8: convocatoria primero al publicar, lotes primero al ocultar | El `ConditionCheck` sobre la convocatoria en T1 (decidido el 2026-09-04): correcto, pero el item lo comparten todas las solicitudes de la convocatoria y un `ConditionCheck` lo retiene igual que una escritura — cancelaba entre 5 y 7 de cada 10 |
+| 2026-09-05 | El paso 1 admite fila con el lote `EN_OFERTA` **o** `ADJUDICADO` | Exigir `EN_OFERTA`, como decia el modelo de datos: cierra la fila en la primera adjudicacion, que ocurre a los segundos de `inicioVenta`, y vuelve inalcanzables R-17, R-15, `miPosicion` y `tamanoFila` |
+| 2026-09-05 | El prototipo se **omite** en la compuerta, tras la bandera `PROTOTIPO_R18` | Dejarlo en `verify:rapido`: son dos minutos contra AWS en cada iteracion, que deshace la decision que creo `verify:rapido`. No es prueba de regresion sino registro reproducible de una decision; la regresion permanente la aporta la Etapa 8 |

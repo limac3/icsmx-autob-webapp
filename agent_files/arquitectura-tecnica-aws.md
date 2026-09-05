@@ -177,20 +177,34 @@ Cliente → Server Action solicitarCompra(loteId)
     → getSession()  +  puedeEjecutar("solicitud:crear")
     → servicio:
         1. GetItem centinela de fila        (atajo contra doble clic, no autoridad)
-        2. UpdateItem ADD contadorTurnos    (condicion: venta abierta) → turno
-        3. TransactWriteItems: solicitud + centinela + evento
-    → si la fila estaba vacia: intentar adjudicacion (T2)
+        2. Put RESERVA#<reservaId>          (marca la ventana; va ANTES del contador)
+        3. UpdateItem ADD contadorTurnos    (condicion: venta abierta) → turno
+        4. TransactWriteItems: solicitud + centinela + evento + Delete de la reserva
+           (si 3 o 4 fallan: borrar la reserva, de mejor esfuerzo)
+    → intentar adjudicacion (T2), siempre
     → revalidateTag(`lote:<id>`)
 ```
+
+> **"Siempre", y antes decia "si la fila estaba vacia".** Con la abstencion por reservas, esa
+> optimizacion produce un bloqueo: si A (turno 1) y B (turno 2) llegan juntos, A ve la fila
+> vacia e intenta adjudicar pero se abstiene porque B esta en vuelo, y B ya no intenta porque
+> la fila no estaba vacia. Nadie adjudica hasta el barrido. Intentar siempre es barato —una
+> `Query` consistente y, si hay reservas, nada mas— y es lo unico que garantiza que el ultimo en
+> aterrizar cierre la ronda.
 
 ### 4.3 Adjudicar
 
 ```
+Leer reservas del lote (Query consistente, RESERVA#) ANTES que la fila
+  ├─ alguna vigente → abstenerse; la disparara quien termine despues
+  └─ vencidas       → borrarlas
+
 Recorrer la fila en orden de turno (Query, ScanIndexForward: true)
   Para cada solicitud EN_FILA:
       TransactWriteItems T2
         ├─ falla item 1 → el lote ya se adjudico → abortar
         ├─ falla item 3 → el candidato ya tiene adjudicacion → CONGELADA, siguiente
+        ├─ TransactionConflict → otro proceso adjudica → releer y reintentar con jitter
         └─ exito        → encolar correo en outbox
   Fila agotada → evento FILA_AGOTADA, lote queda EN_OFERTA
 ```

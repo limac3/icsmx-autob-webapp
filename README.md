@@ -3,9 +3,11 @@
 Aplicacion web para la **venta de vehiculos obsoletos de flotilla** mediante convocatorias
 de venta con fila de adjudicacion por orden de llegada (FIFO) y trazabilidad auditable.
 
-> Estado: **etapas 0 a 4 completadas**, incluida la Etapa 2.1 de correcciones. Hay identidad y
-> autorizacion por permisos, infraestructura Amplify Gen2 desplegable, y las reglas puras de
-> dominio con la capa de acceso a datos; sin pantallas de negocio todavia.
+> Estado: **etapas 0 a 4 completadas**, mas el prototipo concurrente de la fila. Hay identidad y
+> autorizacion por permisos, infraestructura Amplify Gen2 desplegable, las reglas puras de
+> dominio con la capa de acceso a datos, y el motor de fila validado contra DynamoDB real
+> —turnos unicos, orden estricto y un solo ganador bajo concurrencia—; sin pantallas de negocio
+> todavia.
 > El plan de ejecucion vive en [agent_files/plan-ejecucion.md](agent_files/plan-ejecucion.md).
 
 ---
@@ -67,6 +69,7 @@ npm run format     # aplica Prettier (ejecutar antes de verify si hubo cambios)
 npm run typecheck  # tsc --noEmit
 npm run test       # Vitest
 npm run verify:rapido  # compuerta completa sin el chequeo de desactualizados (~50 s)
+npm run prototipo:fila # prototipo concurrente de la fila contra el sandbox (R18, ~2 min)
 npm run verify     # lo anterior + chequeo de paquetes desactualizados (~2.5 min)
 npm run build      # build de produccion
 npx ampx sandbox   # backend Amplify Gen2 personal (DynamoDB + S3 + Lambdas)

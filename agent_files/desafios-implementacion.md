@@ -791,3 +791,76 @@ resultado vuelva a producir la entrada, no que no sea `NaN`.
 
 Y en la tabla de casos rechazados, incluir siempre un valor que **desborda** y no solo uno
 sintacticamente imposible: el 30 de febrero encontro el defecto, el mes 13 lo habria ocultado.
+
+---
+
+## 17) Un item compartido dentro de una transaccion no serializa: cancela
+
+### Problema
+
+El prototipo de R18 debia validar el mecanismo que este proyecto habia propuesto para cerrar la
+carrera entre el paso 1 y el paso 2 de T1: anotar la reserva del turno **en el propio item del
+lote** (`ADD contadorTurnos :uno SET reservas.#id = :ahora`) y retirarla en la transaccion del
+paso 2. El argumento escrito era: "el lote ya es el punto de serializacion —el paso 1 lo escribe
+de todos modos—, asi que no cuesta una escritura adicional".
+
+### Sintoma
+
+Con 10 solicitudes concurrentes sobre el mismo lote, **entre 5 y 9 fallaban** en el paso 2 con
+`TransactionCanceledException`, motivo `TransactionConflict`. Participantes legitimos, llegados
+en el instante correcto, rechazados.
+
+La misma rafaga con la variante ingenua —sin reservas— entraba completa. La unica diferencia era
+el item del lote dentro de la transaccion.
+
+Poco despues aparecio el mismo sintoma por una segunda causa, y ahi quedo claro que no era un
+detalle del mecanismo: el `ConditionCheck` sobre la convocatoria que la Etapa 2.1 agrego al paso
+2 contra la publicacion parcial cancelaba **entre 5 y 7 de cada 10** solicitudes, por el mismo
+motivo. Un `ConditionCheck` no escribe nada.
+
+### Causa raiz
+
+El argumento confundia dos mecanismos distintos de DynamoDB:
+
+- Un `UpdateItem` suelto sobre un item caliente **espera**. El servicio lo serializa
+  internamente y nadie falla; por eso el contador atomico del paso 1 nunca dio problemas.
+- El mismo item dentro de una `TransactWriteItems` **falla**. Las transacciones no se encolan:
+  cuando otra transaccion tiene tomado alguno de sus items, la actual se cancela entera.
+
+Y `ConditionCheck` participa de esa deteccion **igual que una escritura**: retiene el item aunque
+solo lo lea. Es contraintuitivo —un chequeo parece una lectura— y es justo lo que convierte un
+item de solo lectura, compartido por todas las solicitudes de una convocatoria, en un cuello de
+botella que rechaza en vez de encolar.
+
+El agravante es el momento: la contencion es maxima exactamente en `inicioVenta`, que es cuando
+la equidad de la fila importa mas.
+
+### Solucion aplicada
+
+**Ningun item compartido en el camino de una solicitud.** Las dos correcciones son la misma idea
+aplicada dos veces:
+
+1. La reserva pasa a ser un **item propio**, `LOTE#<loteId> / RESERVA#<reservaId>`, escrito antes
+   de pedir el turno y borrado en la transaccion del paso 2. Cada intento toca claves distintas,
+   asi que no hay dos transacciones que compartan item. Con 10 simultaneas entran las 10.
+2. La publicacion parcial se cierra **ordenando la propagacion de T8** en vez de verificando en
+   tiempo de ejecucion: al publicar se marca primero la convocatoria y despues los lotes; al
+   ocultar, al reves. El estado intermedio es siempre el mas restrictivo, asi que el atributo
+   desnormalizado del lote puede quedarse atras pero nunca adelantarse.
+
+El item del lote sigue dentro de la transaccion de **adjudicacion** (T2), y ahi esta bien: es el
+mutex que decide al ganador, ocurre una vez por lote y su conflicto se resuelve releyendo y
+reintentando con jitter. La diferencia no es el item, es cuantos caminos pasan por el.
+
+### Regla para futuro
+
+**Antes de meter un item en una `TransactWriteItems`, contar cuantas transacciones concurrentes
+lo tocaran.** Si la respuesta es "todas las de esta convocatoria" o "todas las de este lote", el
+diseno esta rechazando usuarios, no serializandolos — y da igual que la operacion sea un
+`ConditionCheck` y no una escritura.
+
+Y la regla que hizo visible todo esto: **el prototipo tiene que implementar la variante que se
+cree mala, no solo la que se cree buena.** Las tres variantes del prototipo (ingenua, reserva en
+el lote, reserva por item) son lo que permitio atribuir cada fallo a una causa y no a un
+presentimiento. Un prototipo de una sola variante habria "funcionado" y habria escondido las dos
+correcciones.

@@ -125,10 +125,17 @@ es la respuesta normal para quien todavia no ha solicitado.
 ### 4.2 Comportamiento de `solicitarCompra`
 
 1. Verifica el gating triple y que la venta este abierta.
-2. Consume un turno del contador atomico del lote.
-3. Escribe solicitud, centinela y evento en una transaccion.
-4. **Si el lote esta libre, intenta adjudicar de inmediato** (T2). El primero en llegar recibe
-   su `MiLugarDTO` ya en estado `ADJUDICADA`, sin esperar a ningun proceso.
+2. Escribe la **reserva del turno**, antes de consumirlo (R18).
+3. Consume un turno del contador atomico del lote.
+4. Escribe solicitud, centinela y evento en una transaccion, que ademas borra la reserva.
+5. **Intenta adjudicar siempre** (T2), no solo si el lote parecia libre. La adjudicacion se
+   abstiene por si sola mientras haya turnos en vuelo, y quien aterrice ultimo cierra la ronda.
+   El primero de la fila recibe su `MiLugarDTO` ya en estado `ADJUDICADA`, sin esperar a ningun
+   proceso.
+
+**Un lote `ADJUDICADO` sigue aceptando solicitudes** mientras la venta este abierta: quien se
+forma despues ocupa su lugar en la fila y recibe el vehiculo si al adjudicado se le vence el
+plazo (R-15, R-17).
 
 Errores especificos:
 
@@ -138,6 +145,7 @@ Errores especificos:
 | `lote_no_disponible` | El lote esta `VENDIDO`, `NO_VENDIDO` o `RETIRADO` |
 | `invalid_state` | La venta no ha abierto o ya cerro |
 | `not_found` | El lote no existe **o** no pasa el gating triple (R-01) |
+| `conflicto_concurrencia` | La reserva del turno se dio por muerta antes de completarse. Es reintentable: la UI vuelve a solicitar y obtiene un turno nuevo |
 
 ### 4.3 `cancelarSolicitud`
 
