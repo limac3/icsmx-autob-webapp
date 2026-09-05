@@ -194,6 +194,7 @@ EN_FILA ──adjudicar──> ADJUDICADA ──subir comprobante──> EN_VERI
 | `EN_FILA` | Cancelar | `CANCELADA_POR_PARTICIPANTE` | titular | — |
 | `EN_FILA` | El titular gana otro lote | `CONGELADA` | sistema | R-09 |
 | `CONGELADA` | El titular pierde su adjudicacion | `EN_FILA` | sistema | Conserva su turno original (R-09) |
+| `CONGELADA` | Cancelar | `CANCELADA_POR_PARTICIPANTE` | titular | — |
 | `EN_FILA`, `CONGELADA` | El lote se vende o la convocatoria concluye | `NO_ADJUDICADA` | sistema | — |
 | `ADJUDICADA` | Subir comprobante | `EN_VERIFICACION` | titular | Dentro del plazo |
 | `ADJUDICADA` | Vencer el plazo | `CANCELADA_POR_VENCIMIENTO` | sistema | `ahora > venceEn` (R-13) |
@@ -209,7 +210,14 @@ EN_FILA ──adjudicar──> ADJUDICADA ──subir comprobante──> EN_VERI
 terminales.
 
 **Una vez `EN_VERIFICACION`, el plazo deja de correr.** La demora de tesoreria nunca perjudica
-al participante.
+al participante. Por lo mismo, ese estado **no admite cancelar**: quien ya pago y espera
+dictamen no puede retirarse por su cuenta, y el arrepentimiento lo resuelve tesoreria
+rechazando el pago, con motivo y bitacora (R-16).
+
+> La fila `CONGELADA → Cancelar` se agrego al implementar la Etapa 4. R-09 ya la exigia
+> —"sus `CONGELADA` permanecen congeladas **hasta que las cancele** o el lote se resuelva"— y
+> `permission-matrix.md` ya la permitia, pero esta tabla no la traia. Sin ella, un participante
+> con un vehiculo comprado quedaba atrapado en las filas restantes.
 
 ---
 

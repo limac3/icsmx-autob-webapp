@@ -734,3 +734,60 @@ sigue vivo aunque se haya cerrado la terminal.
 al entorno. Y al medir una lentitud, medir la hipotesis contra su alternativa —aqui, con y sin
 `--cooldown`— en vez de aceptar el sospechoso obvio: habria llevado a "arreglar" una bandera que
 no tenia nada que ver.
+
+---
+
+## 16) `new Date("2026-02-30T00:00:00Z")` no es una fecha invalida: es el 2 de marzo
+
+### Problema
+
+`desdeIso` es la frontera de entrada de toda fecha del sistema: convierte lo que viene de
+DynamoDB, de un formulario o de una URL en un instante. Debia rechazar cualquier cosa que no
+fuera ISO-8601 UTC canonico, incluida una fecha de calendario que no existe.
+
+### Sintoma
+
+La prueba `desdeIso rechaza dia inexistente` fallo con:
+
+```
+AssertionError: expected 2026-03-02T00:00:00.000Z to be undefined
+```
+
+La implementacion validaba con una expresion regular y despues comprobaba
+`Number.isNaN(instante.getTime())`. `2026-02-30T00:00:00Z` pasa las dos: coincide con el patron
+y produce un `Date` perfectamente valido.
+
+### Causa raiz
+
+El parser de ISO-8601 de V8 **desborda el dia en silencio**. Febrero tiene 28 dias en 2026, asi
+que el 30 de febrero se convierte en el 2 de marzo. El comportamiento es ademas asimetrico y por
+eso engana: un mes 13 **si** produce `Invalid Date`, de modo que probar solo con meses fuera de
+rango da la falsa impresion de que el parser valida el calendario.
+
+El impacto no era teorico. `finVenta` sale de un formulario; un `2026-02-30` capturado por error
+se habria persistido como 2 de marzo y habria alargado la ventana de venta dos dias, sin ningun
+sintoma. Las tres fechas de una convocatoria y el `venceEn` de cada adjudicacion entran por esta
+misma funcion.
+
+### Solucion aplicada
+
+Verificacion de ida y vuelta en vez de confiar en `NaN`: se capturan los componentes con grupos
+de la expresion regular y se comprueba que el instante producido los reproduzca.
+
+```ts
+const [, anio, mes, dia, hora, minuto, segundo] = partes;
+const coincide =
+  instante.getUTCFullYear() === Number(anio) &&
+  instante.getUTCMonth() + 1 === Number(mes) &&
+  instante.getUTCDate() === Number(dia) &&
+  // ... hora, minuto, segundo
+```
+
+### Regla para futuro
+
+**Un parser que devuelve un valor valido no es un parser que valido.** Ante cualquier
+conversion de texto a dato —fechas, numeros, identificadores— la comprobacion es que el
+resultado vuelva a producir la entrada, no que no sea `NaN`.
+
+Y en la tabla de casos rechazados, incluir siempre un valor que **desborda** y no solo uno
+sintacticamente imposible: el 30 de febrero encontro el defecto, el mes 13 lo habria ocultado.

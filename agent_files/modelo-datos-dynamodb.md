@@ -25,6 +25,13 @@ Las reglas de negocio que justifica estan en `proyecto.md`. Los eventos que escr
 
 Tabla `AUTOB_TABLE_NAME`. Clave primaria `PK` (particion) + `SK` (ordenamiento).
 
+**Las construye `src/lib/data/claves.ts` y nadie mas.** Ningun otro archivo concatena cadenas
+para formar una clave: es el unico modo de que la forma de una clave sea una propiedad del
+sistema y no una convencion que hay que recordar en quince lugares. Ese modulo rechaza ademas
+los identificadores que contienen `#` —el separador— porque uno colado dentro de un
+identificador desplazaria el resto de la clave y permitiria fabricar el centinela de otro
+participante.
+
 ### 2.1 Items
 
 | Entidad | `PK` | `SK` | Notas |
@@ -113,6 +120,17 @@ barrido no filtra nada.
 La particion se reparte **por dia de vencimiento** (`VENCE#2026-09-04`) en lugar de una sola
 clave fija. Con una clave unica, todo el trabajo pendiente del sistema caeria en una particion
 (riesgo R12).
+
+> **El dia se calcula en hora de negocio, no en UTC** (`diaDeNegocio` de
+> `src/lib/domain/fechas.ts`). Aplica igual a `AUDIT#<yyyy-mm-dd>` en GSI2.
+>
+> Quien lee esas claves es una persona: el operador que sigue R-1 de `runbooks.md`, el auditor
+> que pide "todo lo del 4 de septiembre". Un dia UTC mandaria un vencimiento de las 18:00 de
+> Mexico a la particion del dia siguiente, y el operador concluiria que el barrido esta roto.
+>
+> La contrapartida —que la frontera del dia no coincida con la de UTC— no compromete nada,
+> porque el barrido recorre varios dias por diseno (R-1, paso 3). El dia solo reparte carga; no
+> es un punto de correccion.
 
 > Subir el comprobante elimina las claves de GSI4: es la implementacion literal de "una vez en
 > verificacion, el plazo deja de correr" (`proyecto.md`, seccion 5.4). La demora de tesoreria

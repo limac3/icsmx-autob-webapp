@@ -33,5 +33,57 @@
   "tiposConvocatoria": {
     "EMPLEADOS": "De empleados",
     "PUBLICO_GENERAL": "De publico general"
+  },
+  "errores": {
+    "unauthorized": "Necesitas iniciar sesion",
+    "forbidden": "No tienes permiso para esta accion",
+    "not_found": "No encontramos lo que buscas",
+    "validation_failed": "Revisa los datos capturados",
+    "invalid_state": "La operacion no aplica en este momento",
+    "already_in_queue": "Ya estas en la fila de este vehiculo",
+    "lote_no_disponible": "El vehiculo ya fue adjudicado",
+    "adjudicacion_activa": "Ya tienes un vehiculo adjudicado",
+    "plazo_vencido": "El plazo de pago vencio",
+    "conflicto_concurrencia": "Alguien mas actuo al mismo tiempo; intenta de nuevo",
+    "dependencia_no_disponible": "Un servicio no responde; intenta mas tarde"
+  },
+  "estatusConvocatoria": {
+    "BORRADOR": "Borrador",
+    "EN_APROBACION": "En aprobacion",
+    "APROBADA": "Aprobada",
+    "PUBLICADA": "Publicada",
+    "CONCLUIDA": "Concluida",
+    "OCULTA": "Oculta"
+  },
+  "estatusVehiculo": {
+    "DISPONIBLE": "Disponible",
+    "EN_CONVOCATORIA": "En convocatoria",
+    "RESERVADO": "Reservado",
+    "VENDIDO": "Vendido",
+    "RETIRADO": "Retirado"
+  },
+  "estatusLote": {
+    "EN_OFERTA": "En oferta",
+    "ADJUDICADO": "Adjudicado",
+    "VENDIDO": "Vendido",
+    "NO_VENDIDO": "No vendido",
+    "RETIRADO": "Retirado"
+  },
+  "estatusSolicitud": {
+    "EN_FILA": "En fila",
+    "CONGELADA": "Congelada",
+    "ADJUDICADA": "Adjudicada",
+    "EN_VERIFICACION": "En verificacion",
+    "VENDIDA": "Comprada",
+    "CANCELADA_POR_VENCIMIENTO": "Cancelada por vencimiento",
+    "RECHAZADA_POR_TESORERIA": "Rechazada por tesoreria",
+    "CANCELADA_POR_PARTICIPANTE": "Cancelada por ti",
+    "NO_ADJUDICADA": "No adjudicada"
+  },
+  "faseDeVenta": {
+    "NO_VISIBLE": "Sin publicar",
+    "PUBLICADA_SIN_ABRIR": "Proximamente",
+    "VENTA_ABIERTA": "Venta abierta",
+    "VENTA_CERRADA": "Venta cerrada"
   }
 }

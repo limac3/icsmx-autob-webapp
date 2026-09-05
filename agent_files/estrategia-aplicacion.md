@@ -97,6 +97,8 @@ type Resultado<T> =
 Con TypeScript `strict`, el compilador obliga a comprobar `ok` antes de tocar `data`. Un caso de
 error olvidado es un error de compilacion, no un fallo en produccion.
 
+Vive en `src/types/resultado.ts` desde la Etapa 4, junto a los constructores `exito` y `fallo`.
+
 ### 3.1 Codigos de error
 
 `unauthorized`, `forbidden`, `not_found`, `validation_failed`, `invalid_state`,

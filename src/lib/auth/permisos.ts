@@ -1,5 +1,10 @@
 import { TIPO_POR_PERMISO_DE_VENTA, type Permiso } from "@/types/identidad";
-import type { TipoConvocatoria } from "@/types/convocatoria";
+import type {
+  EstatusConvocatoria,
+  TipoConvocatoria,
+} from "@/types/convocatoria";
+import type { EstatusSolicitud } from "@/types/solicitud";
+import type { EstatusVehiculo } from "@/types/vehiculo";
 
 // Traduccion linea por linea de agent_files/permission-matrix.md. Si este
 // archivo y esa tabla discrepan, la tabla gana y este archivo se corrige
@@ -22,32 +27,6 @@ export type RazonDenegacion =
 
 export type DecisionPermiso =
   { permitido: true } | { permitido: false; razon: RazonDenegacion };
-
-// Proyecciones de estado usadas solo para autorizar. El tipo de dominio
-// completo de cada entidad se define en src/types/<dominio>.ts a partir de la
-// Etapa 4; aqui solo se nombran, como literales sueltos, los valores que
-// alguna guarda necesita comparar (igual que hace permission-matrix.md).
-type EstatusVehiculo =
-  "DISPONIBLE" | "EN_CONVOCATORIA" | "RESERVADO" | "VENDIDO" | "RETIRADO";
-
-type EstatusConvocatoria =
-  | "BORRADOR"
-  | "EN_APROBACION"
-  | "APROBADA"
-  | "PUBLICADA"
-  | "CONCLUIDA"
-  | "OCULTA";
-
-type EstatusSolicitud =
-  | "EN_FILA"
-  | "ADJUDICADA"
-  | "EN_VERIFICACION"
-  | "VENDIDA"
-  | "CANCELADA_POR_VENCIMIENTO"
-  | "RECHAZADA_POR_TESORERIA"
-  | "CANCELADA_POR_PARTICIPANTE"
-  | "CONGELADA"
-  | "NO_ADJUDICADA";
 
 export type Contexto = {
   // Identidad del actor. La inyecta quien invoca puedeEjecutar a partir de la
@@ -111,7 +90,14 @@ const VENTA: readonly Permiso[] = [
   "Autob_Venta_en_general",
 ];
 
-const ESTADOS_VIVOS_SOLICITUD: readonly EstatusSolicitud[] = [
+// Estados desde los que el titular puede cancelar (matriz, seccion 5).
+//
+// **No es la lista de estados vivos**, que son cuatro e incluyen
+// `EN_VERIFICACION` (`src/types/solicitud.ts`). La diferencia es intencional:
+// una vez subido el comprobante, la maquina de estados de proyecto.md 5.4 no
+// ofrece transicion a `CANCELADA_POR_PARTICIPANTE` — el caso lo resuelve
+// tesoreria rechazando el pago, con motivo y bitacora (R-16).
+const ESTADOS_CANCELABLES: readonly EstatusSolicitud[] = [
   "EN_FILA",
   "CONGELADA",
   "ADJUDICADA",
@@ -341,7 +327,7 @@ const CATALOGO_ACCIONES = {
       if (!esPropio(c)) return denegar("not_owner");
       if (
         !c.estatusSolicitud ||
-        !ESTADOS_VIVOS_SOLICITUD.includes(c.estatusSolicitud)
+        !ESTADOS_CANCELABLES.includes(c.estatusSolicitud)
       ) {
         return denegar("invalid_state");
       }

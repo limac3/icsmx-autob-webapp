@@ -3,9 +3,10 @@
 Fuente de verdad del avance del proyecto. Cada etapa se marca `[x]` solo cuando **todos** sus
 entregables estan hechos y su compuerta de calidad pasa en verde.
 
-> Ultima actualizacion: 2026-09-04 — **Etapas 0 a 3 completadas, mas la Etapa 2.1 de correcciones**
-> (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora). Siguiente: Etapa 4
-> (dominio y capa de datos), y despues el prototipo concurrente de la fila (riesgo R18).
+> Ultima actualizacion: 2026-09-05 — **Etapas 0 a 4 completadas**, incluida la Etapa 2.1 de
+> correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora).
+> Siguiente: el **prototipo concurrente de la fila** (riesgo R18), que la secuencia acordada
+> coloca antes de la Etapa 5.
 
 ---
 
@@ -303,32 +304,69 @@ Luego:
 
 **Dependencias:** Etapas 2 y 3.
 
+Tipos de dominio (`src/types/`), que la Etapa 2 dejo declarados como pendientes de esta:
+
+- [x] `convocatoria.ts`, `vehiculo.ts`, `lote.ts`, `solicitud.ts` — los cuatro conjuntos de
+      estatus, con su lista `as const` para recorrerlos. `permisos.ts` los importa en vez de
+      redeclararlos como literales sueltos
+- [x] `resultado.ts` — `Resultado<T>` y los once `CodigoError` de `estrategia-aplicacion.md` 3.1
+- [x] Etiquetas de los cuatro conjuntos y de los errores en `es.json` y `en.json`, con prueba de
+      que ningun valor del catalogo se queda sin traducir (regla 11)
+
 Dominio puro, sin I/O (`src/lib/domain/`):
 
-- [ ] `fechas.ts` — constante `America/Mexico_City`, formateo con
-      `Intl.DateTimeFormat().formatToParts`, conversion desde y hacia ISO-8601 UTC (regla 9)
-- [ ] `ventanas.ts` — esta publicada, esta abierta la venta, esta cerrada
-- [ ] `plazos.ts` — calculo de vencimiento en **horas naturales** desde la adjudicacion
-- [ ] `transiciones.ts` — transiciones validas de las cuatro maquinas de estado
-- [ ] `gating.ts` — el gating triple de convocatoria (estatus, `publicadaEn`, tipo)
-- [ ] Un `.test.ts` por cada uno, con casos limite de zona horaria y de frontera de ventana
+- [x] `fechas.ts` — constante `America/Mexico_City`, formateo con
+      `Intl.DateTimeFormat().formatToParts`, conversion desde y hacia ISO-8601 UTC (regla 9).
+      Incluye `diaDeNegocio` para las claves `VENCE#<dia>` y `AUDIT#<dia>`, e
+      `instanteDesdeHoraDeNegocio` para la direccion inversa que necesita el formulario de
+      convocatoria
+- [x] `ventanas.ts` — esta publicada, esta abierta la venta, esta cerrada
+- [x] `plazos.ts` — calculo de vencimiento en **horas naturales** desde la adjudicacion
+- [x] `transiciones.ts` — transiciones validas de las cuatro maquinas de estado
+- [x] `gating.ts` — el gating triple de convocatoria (estatus, `publicadaEn`, tipo), mas
+      `contextoDeConvocatoria`, que arma de una sola vez los campos que `puedeEjecutar` exige
+- [x] Un `.test.ts` por cada uno, con casos limite de zona horaria y de frontera de ventana
 
 Capa de datos (`src/lib/data/`):
 
-- [ ] `cliente.ts` — `DynamoDBDocumentClient` singleton diferido
-- [ ] `claves.ts` — constructores de `PK`/`SK` por entidad, con tests
-- [ ] `transacciones.ts` — helpers de `TransactWriteItems` y traduccion de
+- [x] `cliente.ts` — `DynamoDBDocumentClient` singleton diferido
+- [x] `claves.ts` — constructores de `PK`/`SK` por entidad, con tests
+- [x] `transacciones.ts` — helpers de `TransactWriteItems` y traduccion de
       `TransactionCanceledException` a errores de dominio
-- [ ] Convencion de inyeccion de dependencias `(input, deps = {})` en todos los servicios
+- [x] Convencion de inyeccion de dependencias `(input, deps = {})` en todos los servicios —
+      establecida en `ejecutarTransaccion`; la aplican los servicios desde la Etapa 5
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Los tests de dominio corren **sin red ni AWS**
-- [ ] Casos de frontera cubiertos: instante exacto de publicacion, de apertura, de cierre y de
-      vencimiento; horario de verano si aplica
+- [x] Compuerta de calidad completa en verde — `verify:rapido`, 19 archivos y 635 pruebas;
+      `typecheck` y `build` limpios
+- [x] Los tests de dominio corren **sin red ni AWS**: ningun instante sale de `Date.now()` y el
+      cliente de DynamoDB se construye sin resolver credenciales
+- [x] Casos de frontera cubiertos: instante exacto de publicacion, de apertura, de cierre y de
+      vencimiento, cada uno con su milisegundo anterior y posterior
+- [x] Horario de verano cubierto con fechas **historicas** (2021). Mexico dejo de observarlo en
+      octubre de 2022, asi que probar solo con fechas actuales no distinguiria una
+      implementacion correcta de un `-6` cableado
+- [x] Las fronteras del dominio reproducen literalmente las condiciones de DynamoDB: `ventanas`
+      contra el paso 1 de T1, `plazos` contra T3 y T5. Hay prueba de la equivalencia, para que
+      la UI no ofrezca un boton que la base de datos rechaza
+- [x] **Falsificacion**: once mutaciones deliberadas —cierre de venta inclusivo, vencimiento
+      exclusivo, `diaDeNegocio` en UTC, turno sin relleno, `#` aceptado en identificadores,
+      cancelacion posicional al reves, evento sin `attribute_not_exists`, gating sin la pata del
+      estatus, `CONGELADA` sin cancelar, estatus sin etiqueta— y las once fueron detectadas
 
-**Salida esperada:** reglas de negocio probadas de forma aislada y determinista.
+**Hallazgos de esta etapa:**
+
+- `desdeIso` aceptaba el 30 de febrero y lo convertia en 2 de marzo: el parser de V8 desborda el
+  dia en silencio. Un `finVenta` mal capturado habria alargado la venta dos dias.
+  Ver `desafios-implementacion.md` seccion 16
+- La tabla 5.4 de `proyecto.md` no traia la fila `CONGELADA → Cancelar` que R-09 y
+  `permission-matrix.md` ya exigian. Agregada
+- La constante `ESTADOS_VIVOS_SOLICITUD` de `permisos.ts` tenia tres estados y no cuatro: eran
+  en realidad los **cancelables**. Renombrada `ESTADOS_CANCELABLES` antes de que el tipo
+  compartido la volviera una trampa
+
+**Salida esperada:** reglas de negocio probadas de forma aislada y determinista. **Cumplida.**
 
 ---
 

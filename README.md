@@ -3,9 +3,9 @@
 Aplicacion web para la **venta de vehiculos obsoletos de flotilla** mediante convocatorias
 de venta con fila de adjudicacion por orden de llegada (FIFO) y trazabilidad auditable.
 
-> Estado: **etapas 0 a 3 completadas, mas la Etapa 2.1 de correcciones**. Hay identidad y
-> autorizacion por permisos, e infraestructura Amplify Gen2 desplegable; sin pantallas de negocio
-> todavia.
+> Estado: **etapas 0 a 4 completadas**, incluida la Etapa 2.1 de correcciones. Hay identidad y
+> autorizacion por permisos, infraestructura Amplify Gen2 desplegable, y las reglas puras de
+> dominio con la capa de acceso a datos; sin pantallas de negocio todavia.
 > El plan de ejecucion vive en [agent_files/plan-ejecucion.md](agent_files/plan-ejecucion.md).
 
 ---

@@ -33,5 +33,57 @@
   "tiposConvocatoria": {
     "EMPLEADOS": "Employee",
     "PUBLICO_GENERAL": "General public"
+  },
+  "errores": {
+    "unauthorized": "You need to sign in",
+    "forbidden": "You do not have permission for this action",
+    "not_found": "We could not find what you are looking for",
+    "validation_failed": "Check the information you entered",
+    "invalid_state": "This operation does not apply right now",
+    "already_in_queue": "You are already in line for this vehicle",
+    "lote_no_disponible": "The vehicle has already been awarded",
+    "adjudicacion_activa": "You already have a vehicle awarded",
+    "plazo_vencido": "The payment deadline has passed",
+    "conflicto_concurrencia": "Someone else acted at the same time; please try again",
+    "dependencia_no_disponible": "A service is not responding; please try later"
+  },
+  "estatusConvocatoria": {
+    "BORRADOR": "Draft",
+    "EN_APROBACION": "Pending approval",
+    "APROBADA": "Approved",
+    "PUBLICADA": "Published",
+    "CONCLUIDA": "Closed",
+    "OCULTA": "Hidden"
+  },
+  "estatusVehiculo": {
+    "DISPONIBLE": "Available",
+    "EN_CONVOCATORIA": "In sale event",
+    "RESERVADO": "Reserved",
+    "VENDIDO": "Sold",
+    "RETIRADO": "Withdrawn"
+  },
+  "estatusLote": {
+    "EN_OFERTA": "Offered",
+    "ADJUDICADO": "Awarded",
+    "VENDIDO": "Sold",
+    "NO_VENDIDO": "Unsold",
+    "RETIRADO": "Withdrawn"
+  },
+  "estatusSolicitud": {
+    "EN_FILA": "In line",
+    "CONGELADA": "On hold",
+    "ADJUDICADA": "Awarded",
+    "EN_VERIFICACION": "Under review",
+    "VENDIDA": "Purchased",
+    "CANCELADA_POR_VENCIMIENTO": "Cancelled, deadline passed",
+    "RECHAZADA_POR_TESORERIA": "Rejected by treasury",
+    "CANCELADA_POR_PARTICIPANTE": "Cancelled by you",
+    "NO_ADJUDICADA": "Not awarded"
+  },
+  "faseDeVenta": {
+    "NO_VISIBLE": "Unpublished",
+    "PUBLICADA_SIN_ABRIR": "Coming soon",
+    "VENTA_ABIERTA": "Sale open",
+    "VENTA_CERRADA": "Sale closed"
   }
 }
