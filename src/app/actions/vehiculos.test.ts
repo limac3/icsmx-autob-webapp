@@ -7,6 +7,7 @@ import { agregarFotografia as agregarFotografiaServicio } from "@/lib/vehiculos/
 import { crearVehiculo as crearVehiculoServicio } from "@/lib/vehiculos/crearVehiculo";
 import { editarVehiculo as editarVehiculoServicio } from "@/lib/vehiculos/editarVehiculo";
 import { eliminarFotografia as eliminarFotografiaServicio } from "@/lib/vehiculos/eliminarFotografia";
+import { marcarFotografiaPrincipal as marcarPrincipalServicio } from "@/lib/vehiculos/marcarFotografiaPrincipal";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import { reordenarFotografias as reordenarFotografiasServicio } from "@/lib/vehiculos/reordenarFotografias";
 import { retirarVehiculo as retirarVehiculoServicio } from "@/lib/vehiculos/retirarVehiculo";
@@ -34,6 +35,9 @@ vi.mock("@/lib/vehiculos/eliminarFotografia", () => ({
 vi.mock("@/lib/vehiculos/reordenarFotografias", () => ({
   reordenarFotografias: vi.fn(),
 }));
+vi.mock("@/lib/vehiculos/marcarFotografiaPrincipal", () => ({
+  marcarFotografiaPrincipal: vi.fn(),
+}));
 
 const sesionSimulada = vi.mocked(getSession);
 const lectura = vi.mocked(obtenerVehiculo);
@@ -45,6 +49,7 @@ const servicios = {
   agregar: vi.mocked(agregarFotografiaServicio),
   eliminar: vi.mocked(eliminarFotografiaServicio),
   reordenar: vi.mocked(reordenarFotografiasServicio),
+  marcarPrincipal: vi.mocked(marcarPrincipalServicio),
 };
 
 const sesion = (permisos: string[]): Sesion => ({
@@ -93,7 +98,13 @@ const archivo = new File([new Uint8Array([1, 2])], "cualquiera.png", {
   type: "image/png",
 });
 
-/** Las seis acciones del contrato, invocadas con datos validos. */
+/**
+ * **Todas** las acciones del contrato, invocadas con datos validos.
+ *
+ * Este mapa es lo que hace que las pruebas de denegacion recorran el catalogo
+ * completo. Agregar una action y no agregarla aqui la dejaria sin comprobacion
+ * de permiso, que es justo el defecto que estas pruebas existen para impedir.
+ */
 const invocar = {
   crearVehiculo: () => acciones.crearVehiculo(datos),
   editarVehiculo: () => acciones.editarVehiculo("V1", { kilometraje: 1 }),
@@ -102,6 +113,8 @@ const invocar = {
     acciones.agregarFotografia({ vehiculoId: "V1", archivo }),
   eliminarFotografia: () => acciones.eliminarFotografia("V1", "F1"),
   reordenarFotografias: () => acciones.reordenarFotografias("V1", ["F1"]),
+  marcarFotografiaPrincipal: () =>
+    acciones.marcarFotografiaPrincipal("V1", "F1"),
 } as const;
 
 const NOMBRES = Object.keys(invocar) as (keyof typeof invocar)[];
@@ -115,6 +128,30 @@ beforeEach(() => {
       data: { vehiculoId: "V1" },
     } as never);
   }
+});
+
+describe("el barrido cubre el modulo entero", () => {
+  it("invoca todas las actions exportadas", () => {
+    // Sin esta comprobacion, agregar una action y olvidarla en `invocar` la
+    // dejaria sin ninguna prueba de permiso, y las demas seguirian en verde.
+    // Paso exactamente eso al agregar `marcarFotografiaPrincipal`.
+    const exportadas = Object.entries(acciones)
+      .filter(
+        ([nombre, valor]) =>
+          typeof valor === "function" && !nombre.endsWith("DesdeFormulario"),
+      )
+      .map(([nombre]) => nombre);
+
+    expect([...NOMBRES].sort()).toEqual(exportadas.sort());
+  });
+
+  it("los adaptadores de formulario delegan en las actions ya cubiertas", () => {
+    // Se excluyen del barrido a proposito: no comprueban permisos por su
+    // cuenta, se los delegan a `crearVehiculo`, `editarVehiculo` y
+    // `retirarVehiculo`, que si estan en el barrido.
+    expect(typeof acciones.guardarVehiculoDesdeFormulario).toBe("function");
+    expect(typeof acciones.retirarVehiculoDesdeFormulario).toBe("function");
+  });
 });
 
 describe("sin sesion", () => {
