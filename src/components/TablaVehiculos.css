@@ -1,0 +1,11 @@
+/* Catalogo administrativo. Solo responsividad y densidad: la apariencia la
+   ponen los componentes de Eden (regla 10). */
+
+.tabla-vehiculos {
+  width: 100%;
+}
+
+.tabla-vehiculos__vacio {
+  margin: 2rem 0;
+  text-align: center;
+}

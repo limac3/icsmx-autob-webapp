@@ -263,6 +263,21 @@ export const gsi2 = {
     GSI2SK: `${exigirIdentificador(fecha, "fecha")}#${exigirIdentificador(id, "id")}`,
   }),
 
+  /**
+   * Solo la particion, para consultar un estatus entero (PA-03, PA-06, PA-11).
+   *
+   * Existe para que quien consulta no tenga que inventar una fecha y un
+   * identificador de relleno solo para quedarse con la `GSI2PK`. Ese atajo
+   * ademas no funciona: `porEstatus` rechaza los valores vacios, precisamente
+   * para que nadie construya una clave a medias.
+   */
+  particionDeEstatus: (
+    tipo: "VEH" | "CONV" | "SOL",
+    estatus: string,
+  ): { GSI2PK: string } => ({
+    GSI2PK: `${tipo}_ESTATUS#${exigirIdentificador(estatus, "estatus")}`,
+  }),
+
   /** PA-13 — bitacora cronologica global. `dia` viene de `diaDeNegocio`. */
   bitacoraDelDia: (
     dia: string,

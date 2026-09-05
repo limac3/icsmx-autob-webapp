@@ -3,11 +3,11 @@
 Aplicacion web para la **venta de vehiculos obsoletos de flotilla** mediante convocatorias
 de venta con fila de adjudicacion por orden de llegada (FIFO) y trazabilidad auditable.
 
-> Estado: **etapas 0 a 4 completadas**, mas el prototipo concurrente de la fila. Hay identidad y
+> Estado: **etapas 0 a 5 completadas**, mas el prototipo concurrente de la fila. Hay identidad y
 > autorizacion por permisos, infraestructura Amplify Gen2 desplegable, las reglas puras de
-> dominio con la capa de acceso a datos, y el motor de fila validado contra DynamoDB real
-> —turnos unicos, orden estricto y un solo ganador bajo concurrencia—; sin pantallas de negocio
-> todavia.
+> dominio con la capa de acceso a datos, el motor de fila validado contra DynamoDB real —turnos
+> unicos, orden estricto y un solo ganador bajo concurrencia— y el **catalogo de vehiculos
+> administrable** con su galeria de fotografias servida por CloudFront con URL firmada.
 > El plan de ejecucion vive en [agent_files/plan-ejecucion.md](agent_files/plan-ejecucion.md).
 
 ---
@@ -54,7 +54,7 @@ convocatoria posterior para publico general.
 | --- | --- |
 | Framework | Next.js 16 App Router + React 19, **TypeScript** (`strict`) |
 | UI | Eden (`@churchofjesuschrist/eden-*`), mobile-first, MCP de Eden habilitado |
-| Identidad | Okta OIDC via `@auth0/nextjs-auth0` v4 + EAS para roles |
+| Identidad | Okta OIDC via `@auth0/nextjs-auth0` v4 + EAS para **permisos** (no roles) |
 | Datos | DynamoDB (single-table design) via `@aws-sdk/lib-dynamodb` |
 | Archivos | S3 + CloudFront con URLs firmadas |
 | Correo | CES (Church Email Service, REST corporativo) con patron outbox |
@@ -83,7 +83,7 @@ cp .env.local.example .env.local
 
 Variables minimas: `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH_SECRET`,
 `APP_BASE_URL`, `AUTOB_TABLE_NAME`, `AUTOB_MEDIA_BUCKET`, `CLOUDFRONT_*`, `AWS_REGION`,
-`SES_FROM_ADDRESS`, `ENABLE_DEV_TOOLS`. El detalle esta en `.env.local.example`.
+`CES_FROM_ADDRESS`, `ENABLE_DEV_TOOLS`. El detalle esta en `.env.local.example`.
 
 El registro de npm es el Artifactory privado (`.npmrc` + `NODE_AUTH_TOKEN`).
 

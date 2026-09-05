@@ -73,6 +73,12 @@ backend.addOutput({
       bucket: almacenamiento.bucket.bucketName,
       distribucion: almacenamiento.distribucion.distributionDomainName,
       grupoDeLlavesCloudFront: almacenamiento.grupoDeLlaves.keyGroupId,
+      // El que hace falta para **firmar** es este, no el del grupo: el
+      // `keyPairId` de una URL firmada es el identificador de la llave publica.
+      // Sin exponerlo aqui, el operador tendria que buscarlo en la consola para
+      // llenar `CLOUDFRONT_KEY_PAIR_ID`, y equivocarse de identificador produce
+      // un 403 de CloudFront que no dice cual de los dos se puso.
+      llavePublicaCloudFront: almacenamiento.llavePublica.publicKeyId,
       // Se adjunta a mano en la consola de Amplify: App settings > IAM roles > Compute role.
       // Amplify Hosting no forma parte de `defineBackend`, asi que el rol se crea aqui pero
       // la asociacion es un paso de consola. Ver `runbooks.md`.

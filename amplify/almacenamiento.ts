@@ -65,6 +65,7 @@ export class AlmacenamientoAutob extends Construct {
   readonly bucket: Bucket;
   readonly distribucion: Distribution;
   readonly grupoDeLlaves: KeyGroup;
+  readonly llavePublica: PublicKey;
 
   constructor(
     scope: Construct,
@@ -89,13 +90,13 @@ export class AlmacenamientoAutob extends Construct {
 
     // La llave publica se versiona en el repositorio a proposito: rotarla invalida todas
     // las URLs firmadas vigentes, asi que debe ser estable entre despliegues.
-    const llavePublica = new PublicKey(this, "LlavePublica", {
+    this.llavePublica = new PublicKey(this, "LlavePublica", {
       encodedKey: opciones.llavePublicaPem ?? leerLlavePublica(),
       comment: "Firma de URLs de fotografias de vehiculos",
     });
 
     this.grupoDeLlaves = new KeyGroup(this, "GrupoDeLlaves", {
-      items: [llavePublica],
+      items: [this.llavePublica],
     });
 
     this.distribucion = new Distribution(this, "Distribucion", {

@@ -1,0 +1,135 @@
+import "server-only";
+
+// Firma de URLs de fotografias — regla 13 de CLAUDE.md.
+//
+// El bucket es privado y la distribucion exige URLs firmadas
+// (`arquitectura-tecnica-aws.md` 2.4), asi que sin esto no se ve ninguna
+// fotografia. Las tres reglas que gobiernan este archivo:
+//
+//  1. **Se firma en SSR, en cada peticion.** Nunca en el cliente: la llave
+//     privada no puede salir del servidor.
+//  2. **Nunca se persiste una URL firmada.** Caduca; una guardada en DynamoDB
+//     seria un enlace roto con fecha de caducidad y ademas un secreto de acceso
+//     almacenado en claro.
+//  3. **Nunca dentro de un bloque `"use cache"`.** Lo cacheado se reutiliza
+//     entre peticiones y entre usuarios: una URL firmada cacheada se sirve ya
+//     vencida a unos y todavia valida a otros que no deberian tenerla.
+
+import { getSignedUrl } from "@aws-sdk/cloudfront-signer";
+
+/**
+ * Vigencia de la firma.
+ *
+ * Corta porque una URL firmada es una credencial portatil: quien la copia entra
+ * sin sesion. Diez minutos alcanzan de sobra para que una pantalla cargue sus
+ * imagenes y no para compartir un enlace util.
+ */
+export const VIGENCIA_DE_FIRMA_MS = 10 * 60 * 1000;
+
+const PREFIJO_PEM = "-----BEGIN";
+
+type ConfiguracionDeFirma = {
+  dominio: string;
+  keyPairId: string;
+  llavePrivada: string;
+};
+
+/**
+ * Lee la configuracion del entorno.
+ *
+ * Falla con un mensaje que dice **que** falta y **de donde** sale, en vez de
+ * dejar que el SDK lance un error de criptografia diez lineas mas abajo. Es la
+ * regla 15: sin fallback silencioso.
+ */
+export const configuracionDeFirma = (): ConfiguracionDeFirma => {
+  const dominio = process.env.CLOUDFRONT_DOMAIN;
+  const keyPairId = process.env.CLOUDFRONT_KEY_PAIR_ID;
+  const crudo = process.env.CLOUDFRONT_PRIVATE_KEY;
+
+  const faltantes = [
+    dominio ? undefined : "CLOUDFRONT_DOMAIN",
+    keyPairId ? undefined : "CLOUDFRONT_KEY_PAIR_ID",
+    crudo ? undefined : "CLOUDFRONT_PRIVATE_KEY",
+  ].filter((nombre) => nombre !== undefined);
+
+  if (!dominio || !keyPairId || !crudo) {
+    throw new Error(
+      `Falta ${faltantes.join(", ")} para firmar URLs de CloudFront.` +
+        " El dominio y el identificador de llave los publica `npx ampx sandbox`" +
+        " en amplify_outputs.json (custom.autob); la llave privada es un secreto." +
+        " Ver .env.local.example.",
+    );
+  }
+
+  return { dominio, keyPairId, llavePrivada: normalizarLlave(crudo) };
+};
+
+/**
+ * Devuelve el PEM con saltos de linea reales.
+ *
+ * Una llave privada no cabe en una variable de entorno de una sola linea, asi
+ * que se guarda con los saltos escapados como `\n` —es lo que documenta
+ * `.env.local.example`— y hay que deshacerlo antes de usarla. Se acepta tambien
+ * la forma con saltos reales, porque los gestores de secretos de AWS si los
+ * conservan y obligar a escaparlos seria una trampa.
+ */
+export const normalizarLlave = (crudo: string): string => {
+  const llave = crudo.includes("\\n") ? crudo.replaceAll("\\n", "\n") : crudo;
+  if (!llave.trimStart().startsWith(PREFIJO_PEM)) {
+    throw new Error(
+      "CLOUDFRONT_PRIVATE_KEY no parece un PEM: deberia empezar con '-----BEGIN'.",
+    );
+  }
+  return llave;
+};
+
+export type DepsDeFirma = {
+  ahora?: () => Date;
+  configuracion?: ConfiguracionDeFirma;
+};
+
+/**
+ * URL firmada para una clave de S3 dentro del prefijo `vehiculos/`.
+ *
+ * La distribucion apunta al origen con `originPath: /vehiculos`, asi que la
+ * ruta publica es la clave **sin** ese prefijo. Traducirlo aqui es lo que
+ * permite que el resto del codigo maneje una sola nocion de "clave S3".
+ */
+export const firmarFotografia = (
+  claveS3: string,
+  deps: DepsDeFirma = {},
+): string => {
+  const configuracion = deps.configuracion ?? configuracionDeFirma();
+  const ahora = (deps.ahora ?? (() => new Date()))();
+
+  const ruta = rutaPublica(claveS3);
+  const vence = new Date(ahora.getTime() + VIGENCIA_DE_FIRMA_MS);
+
+  return getSignedUrl({
+    url: `https://${configuracion.dominio}/${ruta}`,
+    keyPairId: configuracion.keyPairId,
+    privateKey: configuracion.llavePrivada,
+    dateLessThan: vence.toISOString(),
+  });
+};
+
+export const PREFIJO_FOTOGRAFIAS = "vehiculos/";
+
+/**
+ * Quita el prefijo que la distribucion ya aporta.
+ *
+ * Rechaza cualquier clave fuera de `vehiculos/`. Es la ultima defensa de la
+ * separacion que hace `originPath`: los comprobantes de pago viven en
+ * `comprobantes/` y **jamas** se sirven por CloudFront — se entregan por el
+ * Route Handler de descarga, que verifica permiso y audita el acceso. Un
+ * descuido que pasara por aqui una clave de comprobante produciria una URL
+ * firmada que no resuelve, pero tambien una fuga de la ruta interna.
+ */
+export const rutaPublica = (claveS3: string): string => {
+  if (!claveS3.startsWith(PREFIJO_FOTOGRAFIAS)) {
+    throw new Error(
+      `Solo se firman claves bajo ${PREFIJO_FOTOGRAFIAS}; llego ${claveS3}`,
+    );
+  }
+  return claveS3.slice(PREFIJO_FOTOGRAFIAS.length);
+};

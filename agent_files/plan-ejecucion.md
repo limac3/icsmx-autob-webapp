@@ -6,7 +6,8 @@ entregables estan hechos y su compuerta de calidad pasa en verde.
 > Ultima actualizacion: 2026-09-05 — **Etapas 0 a 4 completadas**, incluida la Etapa 2.1 de
 > correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora), mas el
 > **prototipo concurrente de la fila**, que cierra el riesgo **R18** y corrige T1, T2 y T8 del
-> modelo de datos. Siguiente: **Etapa 5 — Administracion de vehiculos**.
+> modelo de datos, y la **Etapa 5 (administracion de vehiculos)**. Siguiente: **Etapa 6 —
+> Convocatorias**.
 
 ---
 
@@ -414,31 +415,64 @@ reescritos, invariantes 11 y 12), `proyecto.md` (5.3), `desafios-implementacion.
 
 ---
 
-## Etapa 5 — Administracion de vehiculos
+## Etapa 5 — Administracion de vehiculos ✅
 
 **Objetivo:** que un administrador registre vehiculos con sus fotografias.
 
 **Dependencias:** Etapa 4.
 
-- [ ] `src/lib/vehiculos/` — crear, editar, listar, obtener, retirar
-- [ ] `src/app/actions/vehiculos.ts` — Server Actions con guarda de sesion y permiso
-- [ ] Validacion de los atributos: marca, version, modelo (anio), nivel de equipamiento,
-      especificacion mecanica, condiciones mecanicas, detalles esteticos, kilometraje
-- [ ] `src/lib/media/` — subida a S3, normalizacion de imagenes, fotografia principal y
-      adicionales, orden de galeria
-- [ ] `src/lib/media/cloudfrontSigner.ts` — firma en SSR; **nunca** persistir la URL firmada ni
-      generarla dentro de un bloque `"use cache"` (regla 13)
-- [ ] Pantallas de alta, edicion y listado de vehiculos
-- [ ] Tests de validacion, de autorizacion y de la capa de media
+**Cimientos que faltaban y se construyeron aqui**, porque los necesita toda etapa posterior:
+
+- [x] `src/lib/data/identificadores.ts` — ULID propio, ordenable por tiempo. Sin dependencia
+      externa: son treinta lineas de una especificacion estable, y el alfabeto de Crockford
+      resuelve de paso la prohibicion de `#` de `claves.ts`
+- [x] `src/types/auditoria.ts` — catalogo completo de eventos y tipos de actor
+- [x] `src/lib/data/eventos.ts` — constructor del evento de bitacora, con las claves de GSI2 y
+      la condicion append-only ya puestas. El campo `actorRoles` del documento se renombro
+      `actorPermisos`: desde la Etapa 2.1 EAS entrega permisos y no roles
+- [x] `src/lib/auth/exigirPermiso.ts` — sesion, permiso y actor de bitacora en un solo paso
+- [x] `src/lib/cache.ts` — etiquetas de invalidacion en un solo lugar
+- [x] `gsi2.particionDeEstatus` en `claves.ts`, para consultar un estatus entero sin inventar
+      una fecha de relleno
+
+**Etapa 5 propiamente:**
+
+- [x] `src/lib/vehiculos/` — crear, editar, listar, obtener, retirar
+- [x] `src/app/actions/vehiculos.ts` — Server Actions con guarda de sesion y permiso, mas dos
+      adaptadores `(estadoPrevio, formData)` para que los formularios funcionen sin JavaScript
+- [x] Validacion de los atributos en `src/lib/domain/vehiculos.ts`, pura y devolviendo **todos**
+      los errores de una vez
+- [x] `src/lib/media/almacenamiento.ts` — subida a S3 con la clave construida **en el servidor**;
+      el nombre del archivo que manda el cliente no se usa para nada
+- [x] `src/lib/media/cloudfrontSigner.ts` — firma en SSR; **nunca** persistida ni dentro de un
+      bloque `"use cache"` (regla 13)
+- [x] Galeria: agregar, eliminar, reordenar y **marcar principal**. Esta ultima no estaba en
+      `api-contracts.md` y la pantalla 4.2 la exige; se agrego al contrato
+- [x] Pantallas `/admin/vehiculos`, `/admin/vehiculos/nuevo` y `/admin/vehiculos/[id]/editar`
+- [x] Tests de validacion, de autorizacion, de la capa de media y de accesibilidad con axe
+- [x] `llavePublicaCloudFront` expuesto en los outputs de Amplify: firmar exige el identificador
+      de la **llave publica**, y solo se publicaba el del grupo de llaves
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Un rol no administrador recibe `forbidden` en cada action
-- [ ] Ninguna URL firmada aparece persistida en la tabla
-- [ ] Alta de vehiculo con fotografias funciona de punta a punta contra el sandbox
+- [x] Compuerta de calidad completa en verde — 940 pruebas, `npm run build` exitoso
+- [x] Un usuario sin `Autob_Administrar_Vehiculos` recibe `forbidden` en **cada** una de las
+      siete actions, sin llegar a delegar en el servicio ni a invalidar cache
+- [x] Ninguna URL firmada se persiste: el item guarda `claveS3` y la firma ocurre por peticion
+- [ ] **[OPERADOR]** alta de vehiculo con fotografias de punta a punta contra el sandbox. Exige
+      `AUTOB_MEDIA_BUCKET`, `CLOUDFRONT_DOMAIN`, `CLOUDFRONT_KEY_PAIR_ID` y la llave privada en
+      `.env.local`; la privada es un secreto que el agente no tiene
 
-**Salida esperada:** catalogo de vehiculos administrable.
+**Pendiente declarado:**
+
+- [ ] Reordenamiento de galeria **por arrastre**. Se entrego con botones de mover arriba y abajo,
+      que funcionan con teclado, con lector de pantalla y con el dedo en un telefono; el arrastre
+      va encima de eso, no en su lugar
+- [ ] Etiquetas de diccionario para los tipos de evento. Ninguna pantalla de esta etapa los
+      muestra; los necesita la bitacora de la Etapa 11
+
+**Salida esperada:** catalogo de vehiculos administrable. **Cumplida**, salvo la comprobacion de
+punta a punta, que depende de credenciales del operador.
 
 ---
 

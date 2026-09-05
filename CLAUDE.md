@@ -174,6 +174,17 @@ leyendo el codigo o el historial de git — capturar solo la causa raiz, la rest
 negocio no obvia y la decision de diseno con alternativas descartadas. Si hay duda sobre la
 clasificacion, preguntar antes de escribir.
 
+### ADR espejo en el grafo de codigo
+
+`agent_files/` es la **fuente de verdad**; el ADR de `codebase-memory-mcp` es un espejo
+consultable que enlaza cada decision con el simbolo de codigo que la materializa. Si una
+edicion cambia una decision, una alternativa descartada o su razon, regenerar el ADR en la
+misma conversacion: `index_repository(mode="fast")` para refrescar los nodos `Section` y
+despues `manage_adr(mode="update")` con el documento completo, actualizando la linea
+"Sincronizado con". Los cambios de redaccion no lo tocan, y el
+avance de `plan-ejecucion.md` tampoco: el ADR no refleja progreso. El hook
+`.claude/hooks/adr-doc-sync` lo recuerda automaticamente al editar estos documentos.
+
 ### Formato para nueva seccion en `desafios-implementacion.md`
 
 ```markdown

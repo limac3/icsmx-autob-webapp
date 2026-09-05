@@ -19,7 +19,14 @@ type Resultado<T> =
 ```
 
 **Nunca lanzan.** Todas ejecutan, en este orden: `getSession()` → `puedeEjecutar()` → servicio →
-`revalidateTag()`.
+invalidacion de cache.
+
+> **La invalidacion es `updateTag`, no `revalidateTag`.** En Next.js 16 `revalidateTag` exige un
+> perfil de `cacheLife` y **programa** la expiracion; la que caduca de inmediato, con semantica de
+> leer lo que uno acaba de escribir, es `updateTag`. Con la otra, quien guarda un cambio ve sus
+> propios datos viejos al volver al listado. Ver `desafios-implementacion.md` seccion 18.
+>
+> Las etiquetas se construyen en `src/lib/cache.ts`, nunca a mano.
 
 Reglas transversales:
 
@@ -42,6 +49,7 @@ Reglas transversales:
 | `agregarFotografia` | `{ vehiculoId, archivo, esPrincipal, descripcion }` | `{ fotoId }` | `vehiculo:subir-fotografia` | `validation_failed`, `invalid_state` | `VEHICULO_FOTOGRAFIA_AGREGADA` |
 | `eliminarFotografia` | `{ vehiculoId, fotoId }` | `{ fotoId }` | `vehiculo:eliminar-fotografia` | `invalid_state` | `VEHICULO_FOTOGRAFIA_ELIMINADA` |
 | `reordenarFotografias` | `{ vehiculoId, ordenFotoIds }` | `{ vehiculoId }` | `vehiculo:subir-fotografia` | `validation_failed` | `VEHICULO_EDITADO` |
+| `marcarFotografiaPrincipal` | `{ vehiculoId, fotoId }` | `{ fotoId }` | `vehiculo:subir-fotografia` | `not_found`, `invalid_state` | `VEHICULO_EDITADO` |
 
 `DatosVehiculo`: `marca`, `version`, `modelo` (anio), `nivelEquipamiento`,
 `especificacionMecanica`, `condicionesMecanicas`, `detallesEsteticos`, `kilometraje`.
@@ -51,7 +59,32 @@ Reglas transversales:
 **nombre de archivo generado en servidor** — nunca el del cliente.
 
 `eliminarFotografia` rechaza con `invalid_state` si dejaria al vehiculo sin fotografia
-principal.
+principal. En la practica eso significa **la ultima**: al borrar la principal teniendo otras, la
+siguiente por orden hereda la condicion dentro de la misma transaccion.
+
+`marcarFotografiaPrincipal` **se agrego en la Etapa 5**. El contrato solo permitia fijar la
+principal al subirla, y la pantalla 4.2 de `ui-ux-requerimientos.md` pide marcarla sobre la
+galeria ya existente; sin esta operacion, la unica forma de cambiarla seria borrar y volver a
+subir. Exige el permiso de subida porque es gestion de galeria, igual que reordenar.
+
+`agregarFotografia` marca como principal la **primera** fotografia aunque no se pida: un vehiculo
+con galeria y sin principal no se puede representar en el listado.
+
+### 2.1 Adaptadores de formulario
+
+Ademas de las siete actions tipadas, el modulo exporta dos envolturas con la firma
+`(estadoPrevio, formData)` que exige `useActionState`:
+
+| Adaptador | Delega en |
+| --- | --- |
+| `guardarVehiculoDesdeFormulario` | `crearVehiculo` o `editarVehiculo`, segun venga `vehiculoId` |
+| `retirarVehiculoDesdeFormulario` | `retirarVehiculo` |
+
+Existen para que los formularios **funcionen sin JavaScript**. Se mantienen separados de las
+actions tipadas a proposito: un `FormData` es un saco de cadenas sin tipo, y dejarlo llegar hasta
+el servicio convertiria cada conversion en una oportunidad de equivocarse en silencio. Un campo
+numerico vacio se convierte en `NaN` y no en `0` — `Number("")` vale cero, y un kilometraje sin
+capturar se guardaria como cero kilometros, que es un dato falso y plausible.
 
 ---
 

@@ -29,10 +29,14 @@ Disponibles en la organizacion: `eden-buttons` (`Primary`, `Secondary`), `eden-f
 `eden-contextual-menu`, `eden-workforce-header`, `eden-workforce-footer`, `eden-fonts`,
 `eden-normalize`.
 
-> **`CardView` no aparece en ese inventario.** Antes de escribirlo hay que consultar el MCP de
-> Eden por un componente de tarjeta. Si no existe, se crea local
-> (`src/components/CardView.tsx` + `.css` + `.test.tsx`) y se registra la decision en
-> `desafios-implementacion.md`. Es el unico componente estructural que se preve custom.
+> **`CardView` si existe: lo exporta `eden-table`** (comprobado al implementar la Etapa 5,
+> inspeccionando `lib/es/index.d.ts` del paquete). No hay que escribir uno propio. Envuelve una
+> `<Table>` y la apila en tarjetas por debajo de 480 px, tomando los encabezados de las columnas,
+> de modo que **hay un solo arbol y no dos vistas que se desincronizan**. Es lo que cumple la
+> regla 12 sin codigo custom.
+>
+> `eden-table` trae ademas `OverflowWrapper`, `Sorting`, `ColumnHiding` y `SelfSelect`, por si una
+> pantalla posterior los necesita.
 
 ---
 
@@ -182,9 +186,15 @@ Filtros por estatus y busqueda por marca o version. Acciones por fila en
 Formulario con `eden-form-parts`, en secciones: identificacion, especificacion, condicion,
 fotografias.
 
-**Gestion de fotografias:** subida multiple, reordenamiento por arrastre, marcar principal,
-eliminar. La principal se distingue visualmente. **No se puede eliminar la ultima** — el boton
-se deshabilita con explicacion.
+**Gestion de fotografias:** subida, reordenamiento, marcar principal, eliminar. La principal se
+distingue con un `Badge`. **No se puede eliminar la ultima** — el boton se deshabilita con
+explicacion, y el servidor lo vuelve a comprobar.
+
+> **El reordenamiento se implemento con botones de mover arriba/abajo, no con arrastre.** El
+> arrastre solo funciona con raton: no es alcanzable con teclado ni con lector de pantalla, y en
+> un telefono compite con el desplazamiento de la pagina. Los botones cubren los tres casos y
+> pasan axe. El arrastre sigue siendo deseable **encima** de esto, como atajo para quien usa
+> raton, y queda pendiente en la Etapa 5 del plan.
 
 Un vehiculo `RESERVADO` o `VENDIDO` se muestra en solo lectura, con aviso del motivo.
 

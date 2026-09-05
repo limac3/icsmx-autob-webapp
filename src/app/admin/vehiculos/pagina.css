@@ -1,0 +1,28 @@
+/* Catalogo administrativo. Mobile-first: filtros apilados en el telefono, en
+   linea a partir de tableta. */
+
+.catalogo-vehiculos {
+  display: grid;
+  gap: 1.5rem;
+  padding: 1rem;
+}
+
+.catalogo-vehiculos__encabezado {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.catalogo-vehiculos__filtros {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 48rem) {
+  .catalogo-vehiculos__filtros {
+    align-items: end;
+    grid-template-columns: 2fr 1fr auto;
+  }
+}

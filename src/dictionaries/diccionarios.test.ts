@@ -6,6 +6,7 @@ import { ESTATUS_LOTE } from "@/types/lote";
 import { CODIGOS_ERROR } from "@/types/resultado";
 import { ESTATUS_SOLICITUD } from "@/types/solicitud";
 import { ESTATUS_VEHICULO } from "@/types/vehiculo";
+import { MOTIVOS_INVALIDEZ } from "@/lib/domain/vehiculos";
 import en from "./en.json";
 import es from "./es.json";
 import { idiomaPorDefecto, obtenerDiccionario } from "./index";
@@ -27,6 +28,11 @@ const CATALOGOS = {
   estatusLote: ESTATUS_LOTE,
   estatusSolicitud: ESTATUS_SOLICITUD,
 } as const;
+
+// Los motivos de invalidez tambien llegan a pantalla y tambien son claves de
+// diccionario. Se comprueban aparte porque el diccionario trae ademas los
+// motivos de fotografia, que no salen de un catalogo de tipos.
+const MOTIVOS_QUE_DEBEN_TENER_ETIQUETA = MOTIVOS_INVALIDEZ;
 
 const IDIOMAS = { es, en } as const;
 
@@ -69,6 +75,21 @@ describe.each(idiomas)("diccionario %s", (idioma) => {
       }
     }
   });
+});
+
+describe.each(idiomas)("motivos de invalidez en %s", (idioma) => {
+  const diccionario = IDIOMAS[idioma];
+
+  it.each(MOTIVOS_QUE_DEBEN_TENER_ETIQUETA)(
+    "traduce el motivo %s",
+    (motivo) => {
+      const etiqueta = (
+        diccionario.validacionVehiculo as Record<string, string>
+      )[motivo];
+      expect(etiqueta, `falta validacionVehiculo.${motivo}`).toBeTruthy();
+      expect(etiqueta).not.toBe(motivo);
+    },
+  );
 });
 
 describe("paridad entre idiomas", () => {

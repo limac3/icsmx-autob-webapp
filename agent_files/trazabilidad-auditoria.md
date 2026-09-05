@@ -28,7 +28,7 @@ al registro operativo de la aplicacion, que es otra cosa.
 ## 2. Formato del evento
 
 ```
-PK   AUDIT#<agregado>#<agregadoId>       CONV | LOTE | VEH | SOL | PART
+PK   AUDIT#<agregado>#<agregadoId>       VEHICULO | CONVOCATORIA | LOTE | SOLICITUD
 SK   <ocurridoEn>#<eventoId>             ISO-8601 UTC + ULID
 
 eventoId        ULID
@@ -36,7 +36,7 @@ tipo            del catalogo de la seccion 3
 ocurridoEn      ISO-8601 UTC
 actorTipo       USUARIO | SISTEMA
 actorId         participanteId, o SISTEMA
-actorRoles      roles vigentes al momento del acto
+actorPermisos   permisos vigentes al momento del acto
 correlacionId   ULID compartido por los eventos de una misma transaccion
 convocatoriaId, loteId, solicitudId, vehiculoId     los que apliquen
 estadoAnterior, estadoNuevo
@@ -60,11 +60,19 @@ reasignacion produce `SOLICITUD_VENCIDA` y `LOTE_ADJUDICADO` con el mismo valor.
 Sin el, el auditor veria dos hechos sueltos y tendria que inferir por cercania temporal que uno
 causo el otro. Con el, la causalidad esta registrada, no deducida.
 
-### 2.3 `actorRoles`
+### 2.3 `actorPermisos`
 
-Se guardan **los roles vigentes en ese momento**, no los actuales. Si a alguien se le revoca un
-rol despues, la bitacora sigue mostrando con que autoridad actuo. Reconstruirlo consultando EAS
-mas tarde daria una respuesta distinta y equivocada.
+Se guardan **los permisos vigentes en ese momento**, no los actuales. Si a alguien se le revoca
+un permiso despues, la bitacora sigue mostrando con que autoridad actuo. Reconstruirlo
+consultando EAS mas tarde daria una respuesta distinta y equivocada.
+
+> El campo se llamaba `actorRoles` hasta la Etapa 5. Se renombro porque desde la Etapa 2.1 EAS
+> entrega **permisos y no roles**, y la aplicacion nunca llega a ver un rol fuera del simulador
+> de desarrollo: guardar "roles" habria sido guardar algo que no existe.
+>
+> Los nombres de agregado son los cuatro de `TIPOS_DE_AGREGADO` en `src/lib/data/claves.ts`,
+> completos y no abreviados: quien lee una clave de particion es una persona. No hay agregado
+> `PART`: ningun evento del catalogo se ancla a un participante.
 
 ### 2.4 Las identidades **si** se registran
 

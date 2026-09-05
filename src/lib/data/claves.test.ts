@@ -354,6 +354,35 @@ describe("GSI2 — listados por estatus", () => {
   });
 });
 
+describe("GSI2 — particion de un estatus completo", () => {
+  it("da la misma particion que la clave completa", () => {
+    // Si divergieran, el listado consultaria una particion en la que nadie
+    // escribe y devolveria siempre vacio, sin error.
+    expect(gsi2.particionDeEstatus("VEH", "DISPONIBLE").GSI2PK).toBe(
+      gsi2.porEstatus("VEH", "DISPONIBLE", "2026-09-05T00:00:00.000Z", "V1")
+        .GSI2PK,
+    );
+  });
+
+  it.each(["VEH", "CONV", "SOL"] as const)("cubre el tipo %s", (tipo) => {
+    expect(gsi2.particionDeEstatus(tipo, "X").GSI2PK).toBe(`${tipo}_ESTATUS#X`);
+  });
+
+  it("no inventa una clave de ordenamiento", () => {
+    // Devolver un `GSI2SK` de relleno invitaria a usarlo en una condicion de
+    // rango, que es justo lo que esta consulta no hace.
+    expect(gsi2.particionDeEstatus("VEH", "DISPONIBLE")).not.toHaveProperty(
+      "GSI2SK",
+    );
+  });
+
+  it("rechaza un estatus con separador", () => {
+    expect(() => gsi2.particionDeEstatus("VEH", "DIS#PONIBLE")).toThrow(
+      RangeError,
+    );
+  });
+});
+
 describe("GSI3 — mis solicitudes", () => {
   it("agrupa por participante y ordena por fecha", () => {
     expect(

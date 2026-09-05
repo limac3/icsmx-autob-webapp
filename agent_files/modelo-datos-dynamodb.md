@@ -59,6 +59,39 @@ participante.
 
 ### 2.2 Atributos relevantes
 
+**Vehiculo:**
+
+```
+vehiculoId, marca, version, modelo (anio), kilometraje
+nivelEquipamiento, especificacionMecanica, condicionesMecanicas, detallesEsteticos  (opcionales)
+estatus                 DISPONIBLE | EN_CONVOCATORIA | RESERVADO | VENDIDO | RETIRADO
+fotografiaPrincipalId   cual fotografia lo representa en listados
+convocatoriaId          mientras esta EN_CONVOCATORIA (desnormalizado)
+motivoRetiro
+creadoEn, creadoPor, actualizadoEn, actualizadoPor
+GSI2PK/GSI2SK           VEH_ESTATUS#<estatus> / <creadoEn>#<vehiculoId>
+```
+
+La fecha de GSI2 es la de **creacion** y no la de la ultima edicion: asi el catalogo de un
+estatus conserva un orden estable y una correccion de kilometraje no reordena la pantalla. Al
+cambiar de estatus hay que reescribir **las dos** claves del indice; olvidarlas deja el vehiculo
+listado para siempre en el estatus anterior.
+
+Los opcionales en blanco se **eliminan**, no se guardan como cadena vacia: asi una lectura
+distingue "no se capturo" de "se capturo vacio".
+
+**Fotografia:**
+
+```
+fotoId, vehiculoId, orden, claveS3, contentType, bytes, descripcion
+subidaEn, subidaPor
+```
+
+`claveS3` es la ruta del objeto, **nunca una URL firmada**: esas se generan por peticion en SSR y
+caducan en minutos (regla 13). El orden va en la `SK` con relleno de ceros, igual que el turno de
+la fila, asi que la galeria se lee ordenada. La contrapartida es que reordenar no es actualizar
+sino reubicar: un `Delete` y un `Put` por fotografia que cambia de lugar, todo en una transaccion.
+
 **Lote** — el item mas cargado del modelo:
 
 ```

@@ -864,3 +864,147 @@ cree mala, no solo la que se cree buena.** Las tres variantes del prototipo (ing
 el lote, reserva por item) son lo que permitio atribuir cada fallo a una causa y no a un
 presentimiento. Un prototipo de una sola variante habria "funcionado" y habria escondido las dos
 correcciones.
+
+---
+
+## 18) `revalidateTag` de Next.js 16 no invalida: programa
+
+### Problema
+
+Las Server Actions de vehiculo tenian que invalidar la ficha y el catalogo al
+guardar. `estrategia-aplicacion.md` seccion 5.2 y el patron de la seccion 4.1
+indican `revalidateTag(...)`, que es la API que todo el mundo conoce de Next 14
+y 15.
+
+### Sintoma
+
+`tsc` fallo con `Expected 2 arguments, but got 1`.
+
+### Causa raiz
+
+Next.js 16 cambio la firma a `revalidateTag(tag, profile)`, donde `profile` es
+un perfil de `cacheLife` —`"max"`, `"default"`— o un objeto `{ expire }`. Y el
+cambio no es solo de firma: la funcion **programa** la expiracion segun ese
+perfil en vez de invalidar de inmediato. Los propios tipos del paquete lo dicen:
+
+> For immediate expiration in Server Actions, use `updateTag` instead.
+
+Pasar un perfil cualquiera para callar al compilador habria compilado y habria
+dejado a quien edita un vehiculo viendo sus propios datos viejos al volver al
+listado — un defecto que no falla, solo miente, y que ninguna prueba unitaria
+detecta porque el mock registra la llamada igual.
+
+### Solucion aplicada
+
+`updateTag(tag)` en las acciones de mutacion, que es la que tiene semantica de
+*leer lo que uno acaba de escribir*. Las etiquetas viven en `src/lib/cache.ts`
+para que quien cachea y quien invalida no puedan escribirlas distinto.
+
+`revalidateTag` sigue siendo la correcta para invalidar **desde fuera** de una
+action —un webhook, un proceso programado— donde nadie espera ver el cambio en
+la misma navegacion.
+
+### Regla para futuro
+
+En Next.js 16, dentro de una Server Action va `updateTag`; fuera de ella,
+`revalidateTag` con su perfil explicito. Y ante un cambio de firma en una API de
+framework, leer que cambio ademas de los argumentos: aqui el numero de
+parametros era la parte menos importante.
+
+---
+
+## 19) El `maxLength` de Eden y el de React no se pueden usar a la vez
+
+### Problema
+
+Los campos de texto del formulario de vehiculo debian llevar `maxLength` con las
+mismas cotas que valida el servidor (`LIMITES` de `src/lib/domain/vehiculos.ts`),
+para que el navegador dejara de aceptar teclas al llegar al limite.
+
+### Sintoma
+
+```
+error TS2322: Type '60' is not assignable to type 'undefined'.
+```
+
+Y con `String(60)`, el mismo error.
+
+### Causa raiz
+
+`Input` de `@churchofjesuschrist/eden-form-parts` se declara como
+`React.FC<{ ... maxLength?: string ... } & React.ComponentProps<"input">>`.
+React declara `maxLength?: number`. La interseccion de las dos propiedades es
+`string & number`, que no admite **ningun** valor: el tipo resultante es
+`undefined`. No hay valor correcto que pasar.
+
+Afecta solo a `Input`. `TextArea` declara `maxLength?: number` y funciona.
+
+### Solucion aplicada
+
+Los `Input` van sin `maxLength`. El limite lo sigue aplicando el servidor, que
+devuelve el motivo por campo (`muy_largo`) y la pantalla lo muestra traducido.
+Lo que se pierde es la contencion en el teclado, no la validacion.
+
+No se uso un `as never` ni un `@ts-expect-error`: silenciar el compilador aqui
+seria fingir que el tipo del paquete dice algo que no dice.
+
+### Regla para futuro
+
+Antes de dar por hecho que una prop nativa pasa a traves de un componente de
+Eden, comprobar su declaracion en `lib/es/types.d.ts`. Varios componentes
+redeclaran props que tambien existen en el elemento nativo, y cuando los tipos
+difieren la interseccion puede quedar inutilizable sin que nadie lo note hasta
+usarla.
+
+---
+
+## 20) jsdom no implementa `DataTransfer`, y el `FileInput` de Eden lo necesita
+
+### Problema
+
+La prueba de accesibilidad de `GaleriaVehiculo` —`genericTests` con axe— tenia
+que renderizar el formulario de subida, que usa `FileInput` de Eden.
+
+### Sintoma
+
+`ReferenceError: DataTransfer is not defined`, y al definir un doble ingenuo,
+`TypeError: Failed to set the 'files' property on 'HTMLInputElement': The
+provided value is not of type 'FileList'`.
+
+### Causa raiz
+
+`FileInput` sincroniza el valor del input nativo con su estado interno asi:
+
+```js
+const dataTransfer = new DataTransfer();
+if (innerValue) dataTransfer.items.add(innerValue);
+ref.current.files = dataTransfer.files;
+```
+
+jsdom no implementa `DataTransfer` —es API de arrastre— pero **si** valida el
+tipo al asignar `input.files`: exige un `FileList` de verdad, no un arreglo.
+
+### Solucion aplicada
+
+Un doble minimo en la prueba, cuyo `files` es un `FileList` autentico obtenido
+del unico sitio que lo entrega sin `DataTransfer`:
+
+```ts
+const listaVacia = (() => {
+  const input = document.createElement("input");
+  input.type = "file";
+  return input.files;
+})();
+```
+
+Se estabiliza el entorno de prueba, no el codigo de produccion: la regla 10 dice
+usar Eden tal cual, y una carencia de jsdom no es razon para sustituir un
+componente.
+
+### Regla para futuro
+
+Cuando un componente de Eden falle en jsdom, distinguir **defecto del
+componente** de **carencia del entorno**. Si es lo segundo, el doble va en la
+prueba y con la forma que jsdom valida —un `FileList` de verdad, no un objeto
+parecido—; un doble aproximado convierte un error claro en uno confuso dos
+capas mas abajo.
