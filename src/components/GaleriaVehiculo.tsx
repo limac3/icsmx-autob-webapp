@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type DragEvent } from "react";
 import { Badge } from "@churchofjesuschrist/eden-badge";
 import { Error as AlertaError } from "@churchofjesuschrist/eden-alert";
 import { Ghost, Secondary } from "@churchofjesuschrist/eden-buttons";
@@ -27,11 +27,13 @@ import "./GaleriaVehiculo.css";
  * lado: son credenciales con vencimiento corto (regla 13). Este componente solo
  * las pinta.
  *
- * **El reordenamiento es con botones, no con arrastre.** El documento de UI
- * pide arrastre; se entrega mover arriba/abajo porque funciona con teclado, con
- * lector de pantalla y con el dedo en un telefono, que es el caso principal de
- * este proyecto. El arrastre queda pendiente como afinacion encima de esto, no
- * en su lugar.
+ * **El reordenamiento tiene dos caminos, y los botones son el principal.**
+ * Mover arriba/abajo funciona con teclado, con lector de pantalla y con el dedo
+ * en un telefono. El arrastre va **encima** de eso, como atajo para quien usa
+ * raton: si manana dejara de funcionar, la galeria seguiria siendo reordenable
+ * por todos. Por eso no lleva semantica ARIA de arrastre —`aria-grabbed` esta
+ * obsoleto y no lo anuncia ningun lector— y los botones no se ocultan cuando
+ * hay arrastre disponible.
  */
 
 export type FotografiaEnGaleria = {
@@ -41,6 +43,37 @@ export type FotografiaEnGaleria = {
   /** URL firmada, valida por unos minutos. Nunca se persiste. */
   url: string;
   esPrincipal: boolean;
+};
+
+/** Une clases descartando las condicionales apagadas. */
+const clases = (...valores: (string | false | undefined)[]): string =>
+  valores.filter((valor) => typeof valor === "string").join(" ");
+
+/**
+ * Mueve un elemento de `desde` a `hasta`, recorriendo a los demas.
+ *
+ * Es una funcion aparte porque los dos caminos —botones y arrastre— tienen que
+ * dar **el mismo** resultado: soltar sobre la cuarta posicion debe dejar la
+ * galeria igual que pulsar "abajo" hasta llegar a ella. Con la cuenta escrita
+ * dos veces, esa igualdad seria una coincidencia.
+ *
+ * Los indices fuera de rango devuelven la lista intacta en vez de lanzar: el
+ * unico origen de un indice invalido es un evento de arrastre a medias, y
+ * quedarse quieto es la respuesta correcta.
+ */
+export const moverEnLista = <T,>(
+  lista: readonly T[],
+  desde: number,
+  hasta: number,
+): T[] => {
+  const copia = [...lista];
+  const enRango = (indice: number) => indice >= 0 && indice < copia.length;
+  if (desde === hasta || !enRango(desde) || !enRango(hasta)) return copia;
+
+  const [movido] = copia.splice(desde, 1);
+  if (movido === undefined) return [...lista];
+  copia.splice(hasta, 0, movido);
+  return copia;
 };
 
 export type GaleriaVehiculoProps = {
@@ -59,6 +92,10 @@ const GaleriaVehiculo = ({
 }: GaleriaVehiculoProps) => {
   const [enProceso, iniciar] = useTransition();
   const [error, setError] = useState<CodigoError | undefined>(undefined);
+  // Indice que se arrastra y indice sobre el que esta parado. El segundo es
+  // solo para pintar donde va a caer: sin esa senal, arrastrar es adivinar.
+  const [origen, setOrigen] = useState<number | undefined>(undefined);
+  const [destino, setDestino] = useState<number | undefined>(undefined);
   const etiquetas = diccionario.vehiculos.fotografias;
 
   const ejecutar = (accion: () => Promise<{ ok: boolean; error?: string }>) => {
@@ -77,16 +114,60 @@ const GaleriaVehiculo = ({
     ejecutar(() => agregarFotografia({ vehiculoId, archivo, descripcion }));
   };
 
-  const mover = (indice: number, direccion: -1 | 1) => {
-    const destino = indice + direccion;
-    if (destino < 0 || destino >= fotografias.length) return;
-
+  const reordenar = (desde: number, hasta: number) => {
+    if (desde === hasta) return;
     const ids = fotografias.map((foto) => foto.fotoId);
-    const [movida] = ids.splice(indice, 1);
-    if (movida === undefined) return;
-    ids.splice(destino, 0, movida);
+    const nuevoOrden = moverEnLista(ids, desde, hasta);
+    // `moverEnLista` devuelve la lista intacta si algun indice no aplica; sin
+    // esta comprobacion se mandaria al servidor una transaccion vacia.
+    if (nuevoOrden.every((id, indice) => id === ids[indice])) return;
 
-    ejecutar(() => reordenarFotografias(vehiculoId, ids));
+    ejecutar(() => reordenarFotografias(vehiculoId, nuevoOrden));
+  };
+
+  const mover = (indice: number, direccion: -1 | 1) => {
+    reordenar(indice, indice + direccion);
+  };
+
+  // Con una sola fotografia no hay nada que reordenar, y un item arrastrable
+  // que no lleva a ningun lado es ruido.
+  const sePuedeArrastrar = puedeEditar && !enProceso && fotografias.length > 1;
+
+  const olvidarArrastre = () => {
+    setOrigen(undefined);
+    setDestino(undefined);
+  };
+
+  const iniciarArrastre = (
+    evento: DragEvent<HTMLLIElement>,
+    indice: number,
+    fotoId: string,
+  ) => {
+    setOrigen(indice);
+    setDestino(indice);
+    // Firefox no arranca el arrastre si nadie escribe en `dataTransfer`. El
+    // indice de verdad viaja por estado y no por aqui: durante `dragover` el
+    // navegador **no deja leer** los datos, solo escribirlos.
+    evento.dataTransfer.effectAllowed = "move";
+    evento.dataTransfer.setData("text/plain", fotoId);
+  };
+
+  const arrastrarSobre = (evento: DragEvent<HTMLLIElement>, indice: number) => {
+    // Sin `preventDefault` el navegador rechaza el soltar. Se llama solo
+    // cuando el arrastre nacio en esta galeria: asi, un archivo traido del
+    // escritorio cae en el formulario de subida y no aqui.
+    if (origen === undefined) return;
+    evento.preventDefault();
+    evento.dataTransfer.dropEffect = "move";
+    setDestino(indice);
+  };
+
+  const soltar = (evento: DragEvent<HTMLLIElement>, indice: number) => {
+    if (origen === undefined) return;
+    evento.preventDefault();
+    const desde = origen;
+    olvidarArrastre();
+    reordenar(desde, indice);
   };
 
   return (
@@ -102,7 +183,36 @@ const GaleriaVehiculo = ({
       ) : (
         <ul className="galeria-vehiculo__lista">
           {fotografias.map((foto, indice) => (
-            <li key={foto.fotoId} className="galeria-vehiculo__item">
+            <li
+              key={foto.fotoId}
+              className={clases(
+                "galeria-vehiculo__item",
+                sePuedeArrastrar && "galeria-vehiculo__item--movible",
+                origen === indice && "galeria-vehiculo__item--arrastrando",
+                origen !== undefined &&
+                  destino === indice &&
+                  origen !== indice &&
+                  "galeria-vehiculo__item--destino",
+              )}
+              // El titulo aparece al posar el raton, que es justo el unico
+              // contexto donde el arrastre existe. En un telefono no estorba
+              // porque no hay hover, y en un lector de pantalla no compite con
+              // los botones, que ya dicen lo mismo con `aria-label`.
+              title={
+                sePuedeArrastrar ? etiquetas.arrastrarParaReordenar : undefined
+              }
+              draggable={sePuedeArrastrar}
+              onDragStart={(evento) => {
+                iniciarArrastre(evento, indice, foto.fotoId);
+              }}
+              onDragOver={(evento) => {
+                arrastrarSobre(evento, indice);
+              }}
+              onDrop={(evento) => {
+                soltar(evento, indice);
+              }}
+              onDragEnd={olvidarArrastre}
+            >
               {/* `next/image` no se usa aqui: optimizar exigiria que el
                   optimizador alcance una URL firmada que caduca en minutos, y
                   la fotografia ya llega por CloudFront. */}

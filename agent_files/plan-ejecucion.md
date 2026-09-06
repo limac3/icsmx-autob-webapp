@@ -463,13 +463,23 @@ reescritos, invariantes 11 y 12), `proyecto.md` (5.3), `desafios-implementacion.
       `AUTOB_MEDIA_BUCKET`, `CLOUDFRONT_DOMAIN`, `CLOUDFRONT_KEY_PAIR_ID` y la llave privada en
       `.env.local`; la privada es un secreto que el agente no tiene
 
-**Pendiente declarado:**
+**Pendiente declarado, ya cerrado:**
 
-- [ ] Reordenamiento de galeria **por arrastre**. Se entrego con botones de mover arriba y abajo,
-      que funcionan con teclado, con lector de pantalla y con el dedo en un telefono; el arrastre
-      va encima de eso, no en su lugar
-- [ ] Etiquetas de diccionario para los tipos de evento. Ninguna pantalla de esta etapa los
-      muestra; los necesita la bitacora de la Etapa 11
+- [x] Reordenamiento de galeria **por arrastre**, encima de los botones de mover arriba y abajo,
+      que siguen siendo el camino principal porque funcionan con teclado, con lector de pantalla
+      y con el dedo. Los dos caminos comparten `moverEnLista`, asi que soltar en una posicion da
+      el mismo resultado que llegar a ella con los botones — y hay prueba de esa igualdad
+- [x] Etiquetas de diccionario para los tipos de evento y de actor, con la invariante que ata el
+      catalogo a los dos idiomas. Ninguna pantalla de esta etapa los muestra; se agregan aqui
+      porque el catalogo ya esta completo, y esperar a la Etapa 11 dejaria sin traduccion cada
+      evento escrito entre tanto
+
+**Sigue abierto:**
+
+- [ ] El reordenamiento con teclado es de un paso a la vez: cada pulsacion es una transaccion.
+      Con `MAXIMO_FOTOGRAFIAS = 20`, el peor caso —llevar la ultima al primer lugar— son 19.
+      Quien usa raton ya tiene el arrastre; a quien no, le falta un campo de posicion o un
+      "mover al principio". No bloquea la etapa, pero es la brecha real entre los dos caminos
 
 **Salida esperada:** catalogo de vehiculos administrable. **Cumplida**, salvo la comprobacion de
 punta a punta, que depende de credenciales del operador.

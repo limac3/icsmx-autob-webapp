@@ -86,6 +86,45 @@
     "VENTA_ABIERTA": "Venta abierta",
     "VENTA_CERRADA": "Venta cerrada"
   },
+  "tiposDeEvento": {
+    "VEHICULO_REGISTRADO": "Vehiculo registrado",
+    "VEHICULO_EDITADO": "Vehiculo editado",
+    "VEHICULO_FOTOGRAFIA_AGREGADA": "Fotografia agregada",
+    "VEHICULO_FOTOGRAFIA_ELIMINADA": "Fotografia eliminada",
+    "VEHICULO_RETIRADO": "Vehiculo retirado del catalogo",
+    "CONVOCATORIA_CREADA": "Convocatoria creada",
+    "CONVOCATORIA_EDITADA": "Convocatoria editada",
+    "VEHICULO_INCLUIDO": "Vehiculo incluido en la convocatoria",
+    "VEHICULO_RETIRADO_DE_CONVOCATORIA": "Vehiculo retirado de la convocatoria",
+    "CONVOCATORIA_ENVIADA_A_APROBACION": "Convocatoria enviada a aprobacion",
+    "CONVOCATORIA_APROBADA": "Convocatoria aprobada",
+    "CONVOCATORIA_RECHAZADA": "Convocatoria rechazada",
+    "CONVOCATORIA_PUBLICADA": "Convocatoria publicada",
+    "CONVOCATORIA_OCULTA": "Convocatoria oculta",
+    "CONVOCATORIA_REACTIVADA": "Convocatoria reactivada",
+    "CONVOCATORIA_CONCLUIDA": "Convocatoria concluida",
+    "SOLICITUD_CREADA": "Solicitud de compra registrada",
+    "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Solicitud cancelada por el participante",
+    "LOTE_ADJUDICADO": "Vehiculo adjudicado",
+    "SOLICITUD_CONGELADA": "Solicitud congelada",
+    "SOLICITUD_DESCONGELADA": "Solicitud descongelada",
+    "SOLICITUD_OMITIDA": "Solicitud omitida",
+    "SOLICITUD_VENCIDA": "Solicitud vencida por plazo",
+    "SOLICITUD_NO_ADJUDICADA": "Solicitud no adjudicada",
+    "FILA_AGOTADA": "Fila agotada",
+    "COMPROBANTE_CARGADO": "Comprobante de pago cargado",
+    "PAGO_AVALADO": "Pago avalado",
+    "PAGO_RECHAZADO": "Pago rechazado",
+    "COMPROBANTE_DESCARGADO": "Comprobante descargado",
+    "CORREO_ENCOLADO": "Correo encolado",
+    "CORREO_ENVIADO": "Correo enviado",
+    "CORREO_FALLIDO": "Correo fallido",
+    "BITACORA_EXPORTADA": "Bitacora exportada"
+  },
+  "tiposDeActor": {
+    "USUARIO": "Persona",
+    "SISTEMA": "Proceso automatico"
+  },
   "vehiculos": {
     "titulo": "Vehiculos",
     "descripcion": "Catalogo de vehiculos de flotilla.",
@@ -135,7 +174,8 @@
       "subirArchivo": "Elegir archivo",
       "formatosAdmitidos": "JPG, PNG o WEBP, hasta 10 MB.",
       "moverArriba": "Mover arriba",
-      "moverAbajo": "Mover abajo"
+      "moverAbajo": "Mover abajo",
+      "arrastrarParaReordenar": "Arrastrar para reordenar"
     }
   },
   "validacionVehiculo": {

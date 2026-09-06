@@ -190,11 +190,16 @@ fotografias.
 distingue con un `Badge`. **No se puede eliminar la ultima** — el boton se deshabilita con
 explicacion, y el servidor lo vuelve a comprobar.
 
-> **El reordenamiento se implemento con botones de mover arriba/abajo, no con arrastre.** El
-> arrastre solo funciona con raton: no es alcanzable con teclado ni con lector de pantalla, y en
-> un telefono compite con el desplazamiento de la pagina. Los botones cubren los tres casos y
-> pasan axe. El arrastre sigue siendo deseable **encima** de esto, como atajo para quien usa
-> raton, y queda pendiente en la Etapa 5 del plan.
+> **El reordenamiento tiene dos caminos, y el principal son los botones de mover arriba/abajo.**
+> El arrastre solo funciona con raton: no es alcanzable con teclado ni con lector de pantalla, y
+> en un telefono compite con el desplazamiento de la pagina. Los botones cubren los tres casos y
+> pasan axe; el arrastre se implemento **encima** de ellos, como atajo para quien usa raton, y
+> por eso los botones no se ocultan cuando hay arrastre disponible.
+>
+> El arrastre no lleva semantica ARIA —`aria-grabbed` esta obsoleto y ningun lector lo anuncia—,
+> asi que solo aporta senal visual: opacidad en el que se mueve y contorno en el destino. Los dos
+> caminos calculan el nuevo orden con la **misma** funcion, para que soltar en la cuarta posicion
+> deje la galeria igual que pulsar "abajo" hasta llegar a ella.
 
 Un vehiculo `RESERVADO` o `VENDIDO` se muestra en solo lectura, con aviso del motivo.
 

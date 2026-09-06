@@ -958,12 +958,15 @@ usarla.
 
 ---
 
-## 20) jsdom no implementa `DataTransfer`, y el `FileInput` de Eden lo necesita
+## 20) jsdom no implementa `DataTransfer`, y hacen falta dos cosas que lo usan
 
 ### Problema
 
 La prueba de accesibilidad de `GaleriaVehiculo` —`genericTests` con axe— tenia
-que renderizar el formulario de subida, que usa `FileInput` de Eden.
+que renderizar el formulario de subida, que usa `FileInput` de Eden. Despues, al
+agregar el arrastre a la galeria, las pruebas del reordenamiento necesitaron
+`dataTransfer` en los eventos que despachan: el mismo hueco de jsdom, por dos
+caminos distintos.
 
 ### Sintoma
 
@@ -996,6 +999,11 @@ const listaVacia = (() => {
   return input.files;
 })();
 ```
+
+El mismo doble crecio despues con `setData`, `effectAllowed` y `dropEffect` —lo
+que escribe el arrastre— y se adjunta al evento con `Object.defineProperty`,
+porque `new Event("dragstart")` no trae `dataTransfer` y React lo copia del
+evento nativo por acceso directo, no por enumeracion.
 
 Se estabiliza el entorno de prueba, no el codigo de produccion: la regla 10 dice
 usar Eden tal cual, y una carencia de jsdom no es razon para sustituir un

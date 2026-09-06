@@ -86,6 +86,45 @@
     "VENTA_ABIERTA": "Sale open",
     "VENTA_CERRADA": "Sale closed"
   },
+  "tiposDeEvento": {
+    "VEHICULO_REGISTRADO": "Vehicle registered",
+    "VEHICULO_EDITADO": "Vehicle edited",
+    "VEHICULO_FOTOGRAFIA_AGREGADA": "Photograph added",
+    "VEHICULO_FOTOGRAFIA_ELIMINADA": "Photograph deleted",
+    "VEHICULO_RETIRADO": "Vehicle removed from the catalog",
+    "CONVOCATORIA_CREADA": "Sale announcement created",
+    "CONVOCATORIA_EDITADA": "Sale announcement edited",
+    "VEHICULO_INCLUIDO": "Vehicle added to the sale announcement",
+    "VEHICULO_RETIRADO_DE_CONVOCATORIA": "Vehicle removed from the sale announcement",
+    "CONVOCATORIA_ENVIADA_A_APROBACION": "Sale announcement sent for approval",
+    "CONVOCATORIA_APROBADA": "Sale announcement approved",
+    "CONVOCATORIA_RECHAZADA": "Sale announcement rejected",
+    "CONVOCATORIA_PUBLICADA": "Sale announcement published",
+    "CONVOCATORIA_OCULTA": "Sale announcement hidden",
+    "CONVOCATORIA_REACTIVADA": "Sale announcement reactivated",
+    "CONVOCATORIA_CONCLUIDA": "Sale announcement closed",
+    "SOLICITUD_CREADA": "Purchase request placed",
+    "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Request cancelled by the participant",
+    "LOTE_ADJUDICADO": "Vehicle awarded",
+    "SOLICITUD_CONGELADA": "Request frozen",
+    "SOLICITUD_DESCONGELADA": "Request unfrozen",
+    "SOLICITUD_OMITIDA": "Request skipped",
+    "SOLICITUD_VENCIDA": "Request expired past the deadline",
+    "SOLICITUD_NO_ADJUDICADA": "Request not awarded",
+    "FILA_AGOTADA": "Queue exhausted",
+    "COMPROBANTE_CARGADO": "Payment receipt uploaded",
+    "PAGO_AVALADO": "Payment approved",
+    "PAGO_RECHAZADO": "Payment rejected",
+    "COMPROBANTE_DESCARGADO": "Receipt downloaded",
+    "CORREO_ENCOLADO": "Email queued",
+    "CORREO_ENVIADO": "Email sent",
+    "CORREO_FALLIDO": "Email failed",
+    "BITACORA_EXPORTADA": "Audit log exported"
+  },
+  "tiposDeActor": {
+    "USUARIO": "Person",
+    "SISTEMA": "Automated process"
+  },
   "vehiculos": {
     "titulo": "Vehicles",
     "descripcion": "Fleet vehicle catalog.",
@@ -135,7 +174,8 @@
       "subirArchivo": "Choose file",
       "formatosAdmitidos": "JPG, PNG or WEBP, up to 10 MB.",
       "moverArriba": "Move up",
-      "moverAbajo": "Move down"
+      "moverAbajo": "Move down",
+      "arrastrarParaReordenar": "Drag to reorder"
     }
   },
   "validacionVehiculo": {

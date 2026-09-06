@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import { TIPOS_DE_ACTOR, TIPOS_DE_EVENTO } from "@/types/auditoria";
 import { ESTATUS_CONVOCATORIA, TIPOS_CONVOCATORIA } from "@/types/convocatoria";
 import { PERMISOS } from "@/types/identidad";
 import { ESTATUS_LOTE } from "@/types/lote";
@@ -27,6 +28,12 @@ const CATALOGOS = {
   estatusVehiculo: ESTATUS_VEHICULO,
   estatusLote: ESTATUS_LOTE,
   estatusSolicitud: ESTATUS_SOLICITUD,
+  // La bitacora de la Etapa 11 muestra el tipo de evento y quien actuo. Las
+  // etiquetas se agregan aqui y no alla porque el catalogo de eventos ya esta
+  // completo desde la Etapa 5: si esperaran a la pantalla, cada evento escrito
+  // entre tanto quedaria sin traduccion y nadie se enteraria hasta verlo.
+  tiposDeEvento: TIPOS_DE_EVENTO,
+  tiposDeActor: TIPOS_DE_ACTOR,
 } as const;
 
 // Los motivos de invalidez tambien llegan a pantalla y tambien son claves de

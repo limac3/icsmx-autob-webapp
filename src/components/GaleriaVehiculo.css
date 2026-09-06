@@ -21,6 +21,26 @@
   justify-items: start;
 }
 
+/* Arrastre: atajo de raton encima de los botones de mover, nunca en su lugar.
+   Solo hay senal visual porque el arrastre no tiene semantica accesible que
+   dar; quien no usa raton reordena con los botones. */
+
+.galeria-vehiculo__item--movible {
+  cursor: grab;
+}
+
+.galeria-vehiculo__item--arrastrando {
+  cursor: grabbing;
+  opacity: 0.4;
+}
+
+/* `outline` y no `border`: no ocupa espacio, asi que la rejilla no salta
+   mientras se pasa por encima de cada destino posible. */
+.galeria-vehiculo__item--destino {
+  outline: 2px dashed currentcolor;
+  outline-offset: 3px;
+}
+
 .galeria-vehiculo__imagen {
   aspect-ratio: 4 / 3;
   border-radius: 0.25rem;
