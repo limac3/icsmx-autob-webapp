@@ -37,6 +37,32 @@ Lee estos archivos al inicio de cada tarea. Estan en `agent_files/`:
 Los documentos se crean en la **Etapa 0**. Si un documento aun no existe, no lo inventes:
 avisa y proponlo.
 
+## Grafo de Codigo — Consulta, No Evidencia
+
+`codebase-memory-mcp` es una **herramienta de consulta para acelerar la localizacion**:
+responde donde esta algo, quien lo llama, que se rompe si cambia. No es una fuente de verdad.
+El protocolo global que instala el MCP dice "usar el grafo primero"; en este proyecto eso se
+lee como **primero para buscar, nunca para concluir**.
+
+**El codigo gana siempre.** El grafo es un derivado con fecha de corte: se congela en el ultimo
+`index_repository` y no ve ninguna edicion posterior. Ademas parte de sus aristas son inferidas
+—`USAGE`, `SEMANTICALLY_RELATED`, `SIMILAR_TO`, los clusters— y no tienen el mismo peso que un
+`CALLS` o un `IMPORTS`.
+
+Regla de trabajo:
+
+1. **Localizar con el grafo**: `search_graph`, `trace_path`, `query_graph`, `get_architecture`.
+   Es lo que ahorra el barrido a ciegas.
+2. **Verificar en el codigo antes de afirmar o de editar**: `get_code_snippet` para el simbolo
+   exacto, o leer el archivo. Ninguna afirmacion sobre el comportamiento del codigo —"esta
+   funcion no se usa", "la validacion ocurre aqui", "nadie llama a esto"— se sostiene solo con
+   el grafo.
+3. **Ante discrepancia, gana el archivo** y el grafo esta obsoleto: reindexar y decirlo.
+
+Aplica con mas fuerza a lo que decide seguridad o correccion: permisos, transiciones de estado,
+condiciones de escritura y el motor de fila se leen del archivo, sin excepcion. Un ancla del
+ADR o un resultado del grafo es una pista de donde mirar, no la prueba de que algo se cumple.
+
 ## Comandos Clave
 
 ```bash
@@ -177,13 +203,19 @@ clasificacion, preguntar antes de escribir.
 ### ADR espejo en el grafo de codigo
 
 `agent_files/` es la **fuente de verdad**; el ADR de `codebase-memory-mcp` es un espejo
-consultable que enlaza cada decision con el simbolo de codigo que la materializa. Si una
-edicion cambia una decision, una alternativa descartada o su razon, regenerar el ADR en la
-misma conversacion: `index_repository(mode="fast")` para refrescar los nodos `Section` y
-despues `manage_adr(mode="update")` con el documento completo, actualizando la linea
-"Sincronizado con". Los cambios de redaccion no lo tocan, y el
-avance de `plan-ejecucion.md` tampoco: el ADR no refleja progreso. El hook
-`.claude/hooks/adr-doc-sync` lo recuerda automaticamente al editar estos documentos.
+consultable que enlaza cada decision con el simbolo de codigo que la materializa. Su copia
+versionada es `.claude/adr.md`. Si una edicion cambia una decision, una alternativa descartada
+o su razon, regenerar el ADR en la misma conversacion, **en este orden**:
+
+1. Editar `.claude/adr.md`.
+2. `index_repository(repo_path, mode="full")` — refresca los nodos `Section` de los documentos.
+3. `manage_adr(project, mode="update", content=<contenido de .claude/adr.md>)`.
+
+El orden importa: **`index_repository` borra el ADR del grafo**, asi que despues de cualquier
+reindexado hay que repetir el paso 3 aunque no haya cambiado la documentacion. Verificar con
+`manage_adr(mode="sections")`; si devuelve `[]`, se perdio. Los cambios de redaccion no tocan
+el ADR, y el avance de `plan-ejecucion.md` tampoco: el ADR registra decisiones, no progreso. El
+hook `.claude/hooks/adr-doc-sync` avisa automaticamente al editar estos documentos.
 
 ### Formato para nueva seccion en `desafios-implementacion.md`
 

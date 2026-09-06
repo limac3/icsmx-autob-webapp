@@ -1008,3 +1008,36 @@ componente** de **carencia del entorno**. Si es lo segundo, el doble va en la
 prueba y con la forma que jsdom valida —un `FileList` de verdad, no un objeto
 parecido—; un doble aproximado convierte un error claro en uno confuso dos
 capas mas abajo.
+
+---
+
+## 21) `index_repository` borra el ADR del grafo de codigo
+
+### Problema
+Se creo un ADR espejo de `agent_files/` con `manage_adr` de `codebase-memory-mcp`, para tener
+las decisiones enlazadas a los simbolos de codigo y consultables desde el grafo.
+
+### Sintoma
+Tras editar `CLAUDE.md` y reindexar el proyecto, `manage_adr(mode="sections")` devolvio `[]`.
+El ADR completo habia desaparecido sin ningun error: el reindexado reporto `status: indexed` y
+`adr_present: false`, que se lee como una sugerencia de crear uno, no como un aviso de borrado.
+
+### Causa raiz
+`index_repository` **reconstruye** la base del grafo en vez de actualizarla, y el ADR se
+almacena dentro de esa misma base. Cualquier reindexado lo destruye, aunque el cambio que lo
+motivo haya sido de codigo y no tenga relacion con la documentacion.
+
+### Solucion aplicada
+La copia versionada del ADR vive en `.claude/adr.md`; el grafo es solo el indice consultable.
+El procedimiento quedo fijado en `CLAUDE.md` y recordado por el hook
+`.claude/hooks/adr-doc-sync`: editar `.claude/adr.md`, luego `index_repository(mode="full")`,
+y **al final** `manage_adr(mode="update")`. Invertir los dos ultimos pasos pierde el trabajo.
+
+Segundo hallazgo del mismo episodio: `mode="fast"` no es un `full` mas rapido. Excluye
+`scripts/` y `src/lib/media/` y omite las aristas de similitud —2879 aristas contra 2901—, asi
+que el grafo queda mas pobre. Para este repositorio se usa siempre `full`; tarda segundos.
+
+### Regla para futuro
+Ningun dato que importe se deja unicamente dentro del grafo de `codebase-memory-mcp`: el grafo
+es derivable y se reconstruye, el ADR no. Despues de cualquier `index_repository`, verificar
+con `manage_adr(mode="sections")` y recargar si devuelve `[]`.

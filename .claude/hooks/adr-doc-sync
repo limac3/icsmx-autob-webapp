@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# PostToolUse: detecta cambios en la documentacion del proyecto y pide
+# regenerar el ADR espejo del grafo (codebase-memory-mcp).
+#
+# El ADR es un espejo de agent_files/: si un documento cambia y el ADR no,
+# el espejo miente. Este hook cierra ese hueco en la misma conversacion.
+# Nunca bloquea nada: cualquier fallo sale en silencio con exit 0.
+
+payload=$(cat 2>/dev/null) || exit 0
+[ -n "$payload" ] || exit 0
+
+# La ruta llega escapada al estilo JSON: en Windows, "c:\\apps\\node\\...".
+ruta=$(printf '%s' "$payload" \
+  | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' \
+  | head -1 \
+  | sed 's/.*:[[:space:]]*"//; s/"$//')
+[ -n "$ruta" ] || exit 0
+
+# Separadores de Windows -> POSIX. Se construye la barra invertida con printf
+# octal para no depender de como el shell que invoque trate los escapes.
+barra=$(printf '\134')
+norm=${ruta//"$barra"//}
+norm=$(printf '%s' "$norm" | tr -s '/')
+
+case "$norm" in
+  */agent_files/plan-ejecucion.md)
+    aviso="Cambio en plan-ejecucion.md. Si solo moviste un checkbox, ignora este aviso: el ADR no refleja avance. Actualizalo solo si cambio el estado de un riesgo que el ADR cita (R1, R6, R9, R18, R19) o si se registro una decision nueva."
+    ;;
+  */agent_files/*.md|*/CLAUDE.md|*/AGENTS.md)
+    aviso="Cambio en documentacion espejada por el ADR. Si solo fue redaccion, ignora este aviso. Si cambio una decision, una alternativa descartada o su razon, antes de cerrar la iteracion: 1) edita .claude/adr.md; 2) index_repository(mode=full) para refrescar los nodos Section; 3) manage_adr(mode=update) con el contenido completo de .claude/adr.md. Ese orden es obligatorio: index_repository borra el ADR del grafo."
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+documento=${norm##*/}
+
+printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"[adr-doc-sync] %s Documento: %s"}}\n' \
+  "$aviso" "$documento"
+exit 0
