@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -134,6 +134,20 @@ describe("normalizarLlave", () => {
 
   it("acepta una llave con saltos reales, como la entrega un gestor de secretos", () => {
     expect(normalizarLlave(llavePrivada)).toBe(llavePrivada);
+  });
+
+  it("sobrevive un PEM generado en Windows, con CRLF", () => {
+    // `openssl` en Windows escribe CRLF. Al escapar solo los saltos de linea
+    // quedan los retornos de carro **dentro** de la llave, y el decodificador
+    // la rechaza con ERR_OSSL_UNSUPPORTED — un error que no menciona ni la
+    // variable ni el salto de linea. Paso de verdad al armar un .env.local.
+    const conCrlf = llavePrivada.replaceAll("\n", "\r\n");
+    const escapada = conCrlf.replaceAll("\n", "\\n");
+
+    const normalizada = normalizarLlave(escapada);
+
+    expect(normalizada).not.toContain("\r");
+    expect(() => createPrivateKey(normalizada)).not.toThrow();
   });
 
   it("rechaza algo que no es un PEM", () => {

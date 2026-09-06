@@ -1049,3 +1049,59 @@ que el grafo queda mas pobre. Para este repositorio se usa siempre `full`; tarda
 Ningun dato que importe se deja unicamente dentro del grafo de `codebase-memory-mcp`: el grafo
 es derivable y se reconstruye, el ADR no. Despues de cualquier `index_repository`, verificar
 con `manage_adr(mode="sections")` y recargar si devuelve `[]`.
+
+---
+
+## 22) La llave privada de CloudFront generada en Windows llega con CRLF
+
+### Problema
+
+Armar `.env.local` para poder abrir las pantallas de la Etapa 5 en el navegador.
+`CLOUDFRONT_PRIVATE_KEY` se guarda con los saltos escapados como `\n`, tal como
+lo documenta `.env.local.example`, a partir del PEM que produjo `openssl`.
+
+### Sintoma
+
+`Error: error:1E08010C:DECODER routines::unsupported` al construir la llave. El
+mensaje no menciona la variable, ni el archivo, ni el salto de linea: solo dice
+que el decodificador no soporta lo que recibio.
+
+### Causa raiz
+
+`openssl` en Windows escribe el PEM con **CRLF**. Al escapar unicamente los
+saltos de linea, cada linea queda terminada en un retorno de carro real seguido
+de la secuencia `\n`:
+
+```
+-----BEGIN PRIVATE KEY-----\r\nMIIEvQ...
+```
+
+`normalizarLlave` deshacia solo `\n`, asi que los CR sobrevivian **dentro** del
+PEM. Un PEM con CR intercalados no lo acepta el decodificador de OpenSSL.
+
+No era un problema del archivo de origen: el mismo PEM leido directo de disco
+carga sin objecion. Se rompe al pasar por el escapado, que es el unico camino
+por el que la llave entra en produccion.
+
+### Solucion aplicada
+
+`normalizarLlave` quita los retornos de carro despues de deshacer el escapado:
+
+```ts
+const conSaltos = crudo.includes("\n") ? crudo.replaceAll("\n", "\n") : crudo;
+const llave = conSaltos.replaceAll("\r", "");
+```
+
+Un PEM no lleva CR en ningun caso legitimo, asi que quitarlos no pierde nada. La
+prueba arma el caso completo —PEM con CRLF, escapado, normalizado— y comprueba
+que `createPrivateKey` lo acepta; falsificada quitando el `replaceAll`.
+
+### Regla para futuro
+
+Todo secreto multilinea que viaje por una variable de entorno se normaliza a LF
+al leerlo, no al escribirlo: quien lo escribe puede ser un gestor de secretos,
+una consola de AWS o un `openssl` de otro sistema operativo, y ninguno de los
+tres esta bajo control de la aplicacion. Y toda normalizacion de material
+criptografico se prueba llegando hasta la funcion que lo consume —aqui
+`createPrivateKey`—, porque comparar cadenas no distingue un PEM valido de uno
+que solo se le parece.

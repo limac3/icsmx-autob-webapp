@@ -72,9 +72,18 @@ export const configuracionDeFirma = (): ConfiguracionDeFirma => {
  * `.env.local.example`— y hay que deshacerlo antes de usarla. Se acepta tambien
  * la forma con saltos reales, porque los gestores de secretos de AWS si los
  * conservan y obligar a escaparlos seria una trampa.
+ *
+ * Los retornos de carro se quitan. `openssl` en Windows escribe el PEM con
+ * CRLF, y al escapar solo los `\n` quedan CR sueltos **dentro** de la llave:
+ * el decodificador la rechaza con `ERR_OSSL_UNSUPPORTED`, un error que no
+ * menciona ni la variable ni el salto de linea. Un PEM no lleva CR en ningun
+ * caso legitimo, asi que quitarlos no pierde nada.
  */
 export const normalizarLlave = (crudo: string): string => {
-  const llave = crudo.includes("\\n") ? crudo.replaceAll("\\n", "\n") : crudo;
+  const conSaltos = crudo.includes("\\n")
+    ? crudo.replaceAll("\\n", "\n")
+    : crudo;
+  const llave = conSaltos.replaceAll("\r", "");
   if (!llave.trimStart().startsWith(PREFIJO_PEM)) {
     throw new Error(
       "CLOUDFRONT_PRIVATE_KEY no parece un PEM: deberia empezar con '-----BEGIN'.",
