@@ -8,8 +8,9 @@ import FormularioVehiculo from "./FormularioVehiculo";
 // navegador no existe. En produccion el bundler de Next las sustituye por una
 // referencia; aqui no hay tal transformacion. Lo que esta prueba comprueba es
 // el componente, no la action: esa tiene la suya en `src/app/actions`.
+// El estado inicial no se simula: vive en `@/types/formularioVehiculo`, que es
+// un modulo sin I/O. Solo se simula lo que arrastra el grafo del servidor.
 vi.mock("@/app/actions/vehiculos", () => ({
-  ESTADO_FORMULARIO_INICIAL: { estado: "inicial" },
   guardarVehiculoDesdeFormulario: vi.fn(),
   retirarVehiculoDesdeFormulario: vi.fn(),
 }));

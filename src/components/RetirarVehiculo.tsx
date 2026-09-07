@@ -5,12 +5,12 @@ import { Error as AlertaError, Warn } from "@churchofjesuschrist/eden-alert";
 import { Danger } from "@churchofjesuschrist/eden-buttons";
 import { FormField, Input } from "@churchofjesuschrist/eden-form-parts";
 import { Text2 } from "@churchofjesuschrist/eden-text";
+import { retirarVehiculoDesdeFormulario } from "@/app/actions/vehiculos";
+import type { Diccionario } from "@/dictionaries";
 import {
   ESTADO_FORMULARIO_INICIAL,
-  retirarVehiculoDesdeFormulario,
   type EstadoFormularioVehiculo,
-} from "@/app/actions/vehiculos";
-import type { Diccionario } from "@/dictionaries";
+} from "@/types/formularioVehiculo";
 import "./RetirarVehiculo.css";
 
 /**

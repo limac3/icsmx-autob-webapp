@@ -11,13 +11,13 @@ import {
   TextArea,
 } from "@churchofjesuschrist/eden-form-parts";
 import { Text2 } from "@churchofjesuschrist/eden-text";
-import {
-  ESTADO_FORMULARIO_INICIAL,
-  guardarVehiculoDesdeFormulario,
-  type EstadoFormularioVehiculo,
-} from "@/app/actions/vehiculos";
+import { guardarVehiculoDesdeFormulario } from "@/app/actions/vehiculos";
 import type { Diccionario } from "@/dictionaries";
 import { LIMITES } from "@/lib/domain/vehiculos";
+import {
+  ESTADO_FORMULARIO_INICIAL,
+  type EstadoFormularioVehiculo,
+} from "@/types/formularioVehiculo";
 import type { DatosVehiculo } from "@/types/vehiculo";
 import "./FormularioVehiculo.css";
 

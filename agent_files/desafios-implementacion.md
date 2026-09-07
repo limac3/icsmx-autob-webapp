@@ -1188,3 +1188,65 @@ cruzan— o el archivo entero se marca `"use client"`.
 Y la senal general: **una prueba en jsdom no distingue un Server Component de
 uno cliente.** Todo defecto que solo exista en la frontera de RSC hay que
 buscarlo leyendo el codigo del paquete, o abriendo la pantalla.
+
+---
+
+## 24) Un modulo `"use server"` no puede exportar nada que no sea funcion async
+
+### Problema
+
+`/admin/vehiculos/nuevo` monta el formulario de alta. El adaptador
+`(estadoPrevio, formData)` vive en `src/app/actions/vehiculos.ts` junto al resto
+de las Server Actions, y `useActionState` necesita un estado inicial, que estaba
+exportado del mismo archivo.
+
+### Sintoma
+
+La pagina responde `200`, pero al enviar el formulario:
+
+```
+Error: A "use server" file can only export async functions, found object.
+> export {ESTADO_FORMULARIO_INICIAL as '7f41204b...'} from 'ACTIONS_MODULE0'
+```
+
+`POST /admin/vehiculos/nuevo 500`.
+
+### Causa raiz
+
+Todo lo que exporta un modulo `"use server"` se convierte en un **endpoint**:
+el bundler le asigna un identificador y lo publica para que el cliente lo
+invoque por la red. Un objeto no es invocable, asi que la evaluacion del modulo
+falla completa — se cae el modulo entero, no solo esa exportacion.
+
+`ESTADO_FORMULARIO_INICIAL` es un objeto de tres campos que solo usa el cliente
+para inicializar `useActionState`. Estaba ahi por cercania: es el estado que
+devuelven los adaptadores del mismo archivo.
+
+**Ni `tsc` ni `next build` lo detectan.** El tipo es correcto y la compilacion
+pasa; el fallo aparece al servir la pagina. El `export type` de al lado no
+molesta porque los tipos se borran al compilar.
+
+### Solucion aplicada
+
+El tipo y la constante se movieron a `src/types/formularioVehiculo.ts`, que no
+lleva directiva. Los componentes cliente importan el valor de ahi y la action de
+`@/app/actions/vehiculos`; el modulo de actions importa el tipo.
+
+Se movieron **los dos**, aunque el tipo podia quedarse: separarlos dejaria la
+mitad de la respuesta en cada archivo.
+
+La invariante vive en `src/components/fronteraRsc.test.ts`, junto a la de la
+seccion 23: recorre el codigo fuente, encuentra los modulos con `"use server"` y
+exige que toda exportacion de valor sea `async`. Falsificada volviendo a
+exportar la constante.
+
+### Regla para futuro
+
+En un modulo `"use server"`, cada exportacion es una puerta abierta a la red.
+Antes de agregar una, preguntar si tiene sentido que el cliente la **invoque**;
+si no lo tiene, no pertenece a ese archivo. Constantes, tipos con valor,
+esquemas y tablas de configuracion van a `src/types/` o a `src/lib/`.
+
+Y la senal general, la misma que la seccion 23: **la compuerta verde no cubre la
+frontera servidor/cliente.** `tsc` mira tipos y `next build` compila; ninguno de
+los dos ejecuta el modulo como lo ejecuta el servidor al atender una peticion.

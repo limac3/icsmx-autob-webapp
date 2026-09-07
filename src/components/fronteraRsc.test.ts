@@ -49,7 +49,8 @@ const archivosFuente = (directorio: string): string[] =>
   readdirSync(directorio, { withFileTypes: true }).flatMap((entrada) => {
     const ruta = join(directorio, entrada.name);
     if (entrada.isDirectory()) return archivosFuente(ruta);
-    if (!entrada.name.endsWith(".tsx")) return [];
+    if (!entrada.name.endsWith(".tsx") && !entrada.name.endsWith(".ts"))
+      return [];
     // Las pruebas quedan fuera a proposito: montan en jsdom, del lado del
     // cliente, donde esta frontera no existe.
     if (entrada.name.includes(".test.")) return [];
@@ -101,4 +102,67 @@ describe("componentes de Eden que inspeccionan a sus hijos por identidad", () =>
       expect(infractores, porque).toEqual([]);
     },
   );
+});
+
+// --- "use server": solo funciones async ------------------------------------
+//
+// Un modulo `"use server"` no puede exportar nada que no sea una funcion async.
+// Exportar un objeto, aunque solo lo use el cliente para inicializar
+// `useActionState`, hace fallar la evaluacion del modulo:
+//
+//   A "use server" file can only export async functions, found object
+//
+// No lo detecta `tsc` —el tipo es correcto— ni `next build`: la compilacion
+// pasa y la pagina revienta al servirse. Ver desafios-implementacion.md 24.
+
+const esServidor = (contenido: string): boolean =>
+  /^\s*["']use server["']/.test(contenido);
+
+const exportacionesNoAsync = (contenido: string): string[] => {
+  const valores = [
+    ...contenido.matchAll(
+      /^export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)[^=\n]*=\s*/gm,
+    ),
+  ]
+    .filter((coincidencia) => {
+      const resto = contenido.slice(
+        (coincidencia.index ?? 0) + coincidencia[0].length,
+      );
+      return !resto.startsWith("async");
+    })
+    .map((coincidencia) => coincidencia[1] ?? "");
+
+  const funciones = [
+    ...contenido.matchAll(
+      /^export\s+(async\s+)?function\s+([A-Za-z_$][\w$]*)/gm,
+    ),
+  ]
+    .filter((coincidencia) => coincidencia[1] === undefined)
+    .map((coincidencia) => coincidencia[2] ?? "");
+
+  return [...valores, ...funciones];
+};
+
+describe('modulos "use server"', () => {
+  const servidores = archivosFuente(SRC)
+    .map((ruta) => ({ ruta, contenido: readFileSync(ruta, "utf8") }))
+    .filter(({ contenido }) => esServidor(contenido));
+
+  it("hay al menos un modulo de Server Actions que revisar", () => {
+    expect(servidores.length).toBeGreaterThan(0);
+  });
+
+  it("solo exportan funciones async", () => {
+    const infractores = servidores.flatMap(({ ruta, contenido }) =>
+      exportacionesNoAsync(contenido).map(
+        (nombre) =>
+          `${ruta.slice(SRC.length + 1).replaceAll("\\", "/")}: ${nombre}`,
+      ),
+    );
+
+    expect(
+      infractores,
+      'un modulo "use server" solo puede exportar funciones async; mover el valor a src/types/',
+    ).toEqual([]);
+  });
 });

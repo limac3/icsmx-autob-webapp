@@ -23,7 +23,8 @@ import { marcarFotografiaPrincipal as marcarFotografiaPrincipalServicio } from "
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import { reordenarFotografias as reordenarFotografiasServicio } from "@/lib/vehiculos/reordenarFotografias";
 import { retirarVehiculo as retirarVehiculoServicio } from "@/lib/vehiculos/retirarVehiculo";
-import { fallo, type CodigoError, type Resultado } from "@/types/resultado";
+import type { EstadoFormularioVehiculo } from "@/types/formularioVehiculo";
+import { fallo, type Resultado } from "@/types/resultado";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { DatosVehiculo, VehiculoConFotografias } from "@/types/vehiculo";
 
@@ -216,18 +217,9 @@ export const reordenarFotografias = async (
 // servicio convertiria cada conversion en una oportunidad de equivocarse en
 // silencio.
 
-export type EstadoFormularioVehiculo =
-  | { estado: "inicial" }
-  | { estado: "guardado"; vehiculoId: string }
-  | {
-      estado: "error";
-      error: CodigoError;
-      detalles?: Record<string, string>;
-    };
-
-export const ESTADO_FORMULARIO_INICIAL: EstadoFormularioVehiculo = {
-  estado: "inicial",
-};
+// `EstadoFormularioVehiculo` y `ESTADO_FORMULARIO_INICIAL` viven en
+// `@/types/formularioVehiculo`: este modulo es `"use server"` y solo puede
+// exportar funciones async.
 
 const texto = (formData: FormData, campo: string): string =>
   String(formData.get(campo) ?? "");
