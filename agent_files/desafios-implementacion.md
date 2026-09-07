@@ -1250,3 +1250,73 @@ esquemas y tablas de configuracion van a `src/types/` o a `src/lib/`.
 Y la senal general, la misma que la seccion 23: **la compuerta verde no cubre la
 frontera servidor/cliente.** `tsc` mira tipos y `next build` compila; ninguno de
 los dos ejecuta el modulo como lo ejecuta el servidor al atender una peticion.
+
+---
+
+## 25) El `FieldSet` de Eden es para agrupar `Radio` y `Checkbox`, no para seccionar un formulario
+
+### Problema
+
+El formulario de alta y edicion de vehiculo se divide en tres secciones
+—identificacion, especificacion, condicion— como pide `ui-ux-requerimientos.md`
+4.2. Se uso el `FieldSet` de Eden con un `Legend` por seccion.
+
+### Sintoma
+
+Ninguno visible en las pruebas: la compuerta estaba en verde, incluida la de
+accesibilidad. Al revisar el codigo del paquete aparecieron dos efectos, los dos
+medidos despues montando el formulario y llamando `checkValidity()`:
+
+- **Seis mensajes de error para cuatro campos obligatorios.** Cuatro dentro de
+  los `FormField` y **dos colgando directamente del `<fieldset>`**, repitiendo el
+  error del primer campo invalido de cada seccion.
+- Los `FormField` no se apilan: quedan en una fila que envuelve.
+
+### Causa raiz
+
+El tipo del paquete lo dice sin ambiguedad:
+
+> The `FieldSet` is used to group `Radio` and `Checkbox` components (...)
+> children: Should contain `Radio` or `Checkbox` form controls each with their `Label`.
+
+De ahi salen las dos consecuencias:
+
+1. Su CSS estira a ancho completo solo a los hijos que espera:
+   `> :is(legend,label,input) { flex: 0 1 100% }`. Un `FormField` renderiza un
+   `div`, que no encaja en ese selector, asi que se queda con `flex: 0 1 auto`
+   dentro de un contenedor `display:flex; align-items:center`.
+2. `useValidation` trata al `<fieldset>` como un control de grupo: le redefine
+   `validationMessage` para que devuelva el del primer elemento invalido y
+   escucha `invalid` **en fase de captura**, de modo que recoge los eventos de
+   sus descendientes. Para un grupo de radios eso es correcto —el grupo es una
+   sola respuesta—; para una seccion de campos independientes, duplica.
+
+### Solucion aplicada
+
+Las secciones pasan a `<fieldset>` **nativo** con una clase propia, conservando
+el `Legend` de Eden, que solo aporta tipografia (`Text4` sobre un `<legend>`) y
+no trae comportamiento.
+
+No es saltarse la regla 10: Eden no ofrece un componente para seccionar un
+formulario, y `<fieldset>`/`<legend>` es el HTML correcto para agrupar controles
+relacionados —el lector de pantalla anuncia la leyenda como contexto de cada
+campo—. Lo que se descarta es el componente, no el elemento.
+
+El CSS propio se limita a apilar y a quitar el marco del navegador. Lleva
+`min-inline-size: 0` porque el `<fieldset>` impone `min-width: min-content` y sin
+eso un campo largo desborda la columna en vez de encogerse.
+
+La prueba de regresion cuenta los mensajes y exige que ninguno cuelgue del
+`<fieldset>`; falsificada devolviendo una sola seccion al `FieldSet` de Eden, con
+lo que pasa a cinco mensajes y uno al pie.
+
+### Regla para futuro
+
+Antes de usar un componente de Eden fuera del caso para el que esta escrito,
+leer su tipo en `lib/es/types.d.ts` —lleva la descripcion de proposito y de que
+espera como hijos— y su CSS. Un componente puede renderizar sin fallar y aun asi
+estar aplicando reglas de disposicion y de validacion pensadas para otra cosa.
+
+Y de nuevo la senal de las secciones 23 y 24: **la compuerta verde no cubre el
+comportamiento visual ni el de validacion nativa.** Aqui hizo falta montar el
+componente y disparar `checkValidity()` a proposito para verlo.

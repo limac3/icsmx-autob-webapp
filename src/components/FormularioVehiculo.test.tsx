@@ -1,4 +1,5 @@
-import { vi } from "vitest";
+import { act } from "react";
+import { describe, expect, it, vi } from "vitest";
 import { obtenerDiccionario } from "@/dictionaries";
 import { genericTests, getTestContext } from "@/utils/testHelpers";
 import FormularioVehiculo from "./FormularioVehiculo";
@@ -27,4 +28,48 @@ genericTests(context, FormularioVehiculo, {
     modelo: 2019,
     kilometraje: 148_320,
   },
+});
+
+describe("secciones del formulario", () => {
+  const pintarVacio = async () => {
+    await act(async () => {
+      context.root.render(
+        <FormularioVehiculo
+          diccionario={obtenerDiccionario("es")}
+          modeloMaximo={2027}
+        />,
+      );
+    });
+    // Dispara la validacion nativa: cada campo obligatorio vacio emite
+    // `invalid`, que es lo que `useValidation` de Eden escucha.
+    await act(async () => {
+      context.container.querySelector("form")?.checkValidity();
+    });
+  };
+
+  const hints = () => [
+    ...context.container.querySelectorAll(".eden-form-part-hint"),
+  ];
+
+  it("cada campo invalido explica su error una sola vez", async () => {
+    await pintarVacio();
+
+    const obligatorios = context.container.querySelectorAll("[required]");
+    expect(obligatorios.length).toBeGreaterThan(0);
+    expect(hints()).toHaveLength(obligatorios.length);
+  });
+
+  it("la seccion no repite el error de su primer campo invalido", async () => {
+    // El `FieldSet` de Eden esta hecho para agrupar `Radio` y `Checkbox`:
+    // escucha `invalid` en fase de captura y publica al pie del grupo el
+    // mensaje del primer elemento invalido. Con secciones de campos de texto
+    // eso duplica cada error. Por eso la seccion es un `<fieldset>` nativo.
+    await pintarVacio();
+
+    const alPieDeLaSeccion = context.container.querySelectorAll(
+      "fieldset > .eden-form-part-hint",
+    );
+
+    expect([...alPieDeLaSeccion].map((nodo) => nodo.textContent)).toEqual([]);
+  });
 });

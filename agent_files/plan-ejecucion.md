@@ -480,6 +480,16 @@ reescritos, invariantes 11 y 12), `proyecto.md` (5.3), `desafios-implementacion.
       Con `MAXIMO_FOTOGRAFIAS = 20`, el peor caso —llevar la ultima al primer lugar— son 19.
       Quien usa raton ya tiene el arrastre; a quien no, le falta un campo de posicion o un
       "mover al principio". No bloquea la etapa, pero es la brecha real entre los dos caminos
+- [ ] **Los errores del servidor viajan por el `description` de `FormField`**, que Eden
+      documenta como texto de ayuda. El mensaje se muestra y queda asociado por
+      `aria-describedby`, pero el campo no se marca invalido: sin borde rojo, sin icono y sin
+      `aria-invalid`, porque el `validityState` de Eden solo lo mueve `validationMessage`. El
+      camino del paquete es `onValidate` + `setCustomValidity`, mas un evento `validate` para
+      que el mensaje aparezca al volver del servidor y no hasta que el usuario teclee
+- [ ] **El formulario es un `<form>` crudo y no el `<Form>` de Eden**, que pone `noValidate` y
+      conduce la validacion el mismo. Con el crudo salen las dos cosas: el globo nativo del
+      navegador y el hint de Eden. Decidido asi para no tocar el envio sin JavaScript sin
+      haberlo probado en el navegador antes
 
 **Salida esperada:** catalogo de vehiculos administrable. **Cumplida**, salvo la comprobacion de
 punta a punta, que depende de credenciales del operador.

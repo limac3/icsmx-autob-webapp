@@ -4,7 +4,6 @@ import { useActionState } from "react";
 import { Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
 import { Error as AlertaError, Success } from "@churchofjesuschrist/eden-alert";
 import {
-  FieldSet,
   FormField,
   Input,
   Legend,
@@ -32,6 +31,14 @@ import "./FormularioVehiculo.css";
  * Las validaciones nativas (`required`, `min`, `max`) son cortesia para quien
  * captura. La comprobacion de verdad la hace el servidor, con las mismas cotas
  * de `LIMITES` — importadas de ahi para que no puedan divergir.
+ *
+ * **Las secciones son `<fieldset>` nativo, no el `FieldSet` de Eden.** Ese
+ * componente esta documentado para agrupar `Radio` y `Checkbox`: su CSS solo
+ * estira a hijos `legend`, `label` e `input` —los `FormField` quedaban en fila en
+ * vez de apilados— y su validacion de grupo repite al pie de cada seccion el
+ * error del primer campo invalido. Medido: seis mensajes para cuatro campos. El
+ * `<legend>` sigue siendo el de Eden, que solo aporta tipografia. Ver
+ * desafios-implementacion.md seccion 25.
  *
  * **Los `Input` no llevan `maxLength`.** El tipo de Eden lo declara `string` y
  * el de React `number`; la interseccion de ambos no admite ningun valor. Se
@@ -102,7 +109,7 @@ const FormularioVehiculo = ({
         </AlertaError>
       ) : null}
 
-      <FieldSet>
+      <fieldset className="formulario-vehiculo__seccion">
         <Legend>{etiquetas.seccionIdentificacion}</Legend>
 
         <FormField label={campos.marca} description={detalle("marca")}>
@@ -135,9 +142,9 @@ const FormularioVehiculo = ({
             disabled={soloLectura}
           />
         </FormField>
-      </FieldSet>
+      </fieldset>
 
-      <FieldSet>
+      <fieldset className="formulario-vehiculo__seccion">
         <Legend>{etiquetas.seccionEspecificacion}</Legend>
 
         <FormField
@@ -178,9 +185,9 @@ const FormularioVehiculo = ({
             disabled={soloLectura}
           />
         </FormField>
-      </FieldSet>
+      </fieldset>
 
-      <FieldSet>
+      <fieldset className="formulario-vehiculo__seccion">
         <Legend>{etiquetas.seccionCondicion}</Legend>
 
         <FormField
@@ -206,7 +213,7 @@ const FormularioVehiculo = ({
             disabled={soloLectura}
           />
         </FormField>
-      </FieldSet>
+      </fieldset>
 
       <div className="formulario-vehiculo__acciones">
         <Primary type="submit" disabled={soloLectura || enProceso}>
