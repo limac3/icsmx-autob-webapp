@@ -73,6 +73,14 @@ src/
 **El dominio se nombra en espanol** (`solicitarCompra`, `EN_FILA`, `convocatoria:aprobar`); las
 APIs de framework y librerias siguen en ingles.
 
+**Los acentos: en los diccionarios si, en el codigo no.** Identificadores, comentarios, mensajes
+de commit y los documentos de `agent_files/` van sin acentos, para que ninguna herramienta tenga
+que adivinar la codificacion. Los **valores** de `src/dictionaries/*.json` son la excepcion: son
+el texto que lee el usuario y se escriben con la ortografia correcta del idioma. Sus **claves**
+siguen siendo identificadores y van sin acento. El riesgo real no es teclear mal, es copiar una
+frase de un documento a una etiqueta; hay una prueba en `diccionarios.test.ts` que vigila las
+palabras del dominio en las que eso ya paso.
+
 ---
 
 ## Importaciones

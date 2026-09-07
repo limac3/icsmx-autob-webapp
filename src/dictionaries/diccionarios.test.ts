@@ -139,3 +139,94 @@ describe("obtenerDiccionario", () => {
     expect(obtenerDiccionario("en")).toBe(en);
   });
 });
+
+// Los documentos de `agent_files/` y los comentarios del codigo se escriben sin
+// acentos; los diccionarios **no**, porque son el texto que lee el usuario. El
+// riesgo concreto no es teclear mal: es copiar una frase de un documento a una
+// etiqueta y arrastrar la convencion equivocada. Estas son las palabras del
+// dominio en las que eso ya paso una vez.
+const SIN_ACENTO_PROHIBIDAS = [
+  // Las terminadas en -cion y -sion llevan limite al final: su **plural** se
+  // escribe sin acento y es correcto ("condicion" mal, "condiciones" bien).
+  ["anio", "año"],
+  ["vehiculo", "vehículo"],
+  [String.raw`aplicacion\b`, "aplicación"],
+  [String.raw`sesion\b`, "sesión"],
+  [String.raw`accion\b`, "acción"],
+  [String.raw`operacion\b`, "operación"],
+  ["catalogo", "catálogo"],
+  ["busqueda", "búsqueda"],
+  ["fotografia", "fotografía"],
+  [String.raw`version\b`, "versión"],
+  [String.raw`condicion\b`, "condición"],
+  [String.raw`identificacion\b`, "identificación"],
+  [String.raw`especificacion\b`, "especificación"],
+  ["mecanica", "mecánica"],
+  ["estetico", "estético"],
+  ["bitacora", "bitácora"],
+  ["publico", "público"],
+  ["tesoreria", "tesorería"],
+  ["numero", "número"],
+  ["maximo", "máximo"],
+  ["minimo", "mínimo"],
+  ["galeria", "galería"],
+  [String.raw`aprobacion\b`, "aprobación"],
+  [String.raw`verificacion\b`, "verificación"],
+  [String.raw`adjudicacion\b`, "adjudicación"],
+  ["proximamente", "próximamente"],
+  ["automatico", "automático"],
+  ["imagenes", "imágenes"],
+  ["unica", "única"],
+  ["todavia", "todavía"],
+  ["vacio", "vacío"],
+  // Con limite al final: "ninguna" es correcto sin acento, "ningun" no.
+  [String.raw`ningun\b`, "ningún"],
+] as const;
+
+/** Solo los valores: las claves son identificadores y van sin acento. */
+const valoresDe = (nodo: unknown): string[] =>
+  typeof nodo === "string"
+    ? [nodo]
+    : Object.values(nodo as Record<string, unknown>).flatMap(valoresDe);
+
+describe("ortografia del diccionario en espanol", () => {
+  it.each(SIN_ACENTO_PROHIBIDAS)("no deja %s sin acentuar", (mal, correcta) => {
+    // `String.raw` y no una plantilla normal: en una plantilla `\b` es el
+    // caracter de retroceso, no el limite de palabra, y el patron nunca
+    // coincidiria con nada.
+    const patron = new RegExp(String.raw`\b` + mal, "i");
+    const culpables = valoresDe(es).filter((texto) => patron.test(texto));
+
+    expect(culpables, `deberia escribirse "${correcta}"`).toEqual([]);
+  });
+
+  it("ninguna etiqueta se quedo sin traducir del ingles", () => {
+    // Un valor identico en los dos idiomas suele ser una etiqueta que se copio
+    // y nunca se tradujo. Se listan las coincidencias legitimas —nombres
+    // propios y palabras iguales en ambos idiomas— para que una nueva salte.
+    const IGUALES_A_PROPOSITO = new Set([
+      "Cargando…",
+      "Subiendo…",
+      "Estatus",
+      "Principal",
+      "Borrador",
+      "JPG, PNG o WEBP, hasta 10 MB.",
+    ]);
+
+    const aplanar = (nodo: unknown, prefijo = ""): [string, string][] =>
+      typeof nodo === "string"
+        ? [[prefijo, nodo]]
+        : Object.entries(nodo as Record<string, unknown>).flatMap(
+            ([clave, valor]) =>
+              aplanar(valor, prefijo ? `${prefijo}.${clave}` : clave),
+          );
+
+    const enIngles = new Map(aplanar(en));
+    const sospechosas = aplanar(es)
+      .filter(([ruta, valor]) => enIngles.get(ruta) === valor)
+      .filter(([, valor]) => !IGUALES_A_PROPOSITO.has(valor))
+      .map(([ruta, valor]) => `${ruta}: ${valor}`);
+
+    expect(sospechosas).toEqual([]);
+  });
+});

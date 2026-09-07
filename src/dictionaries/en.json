@@ -75,9 +75,9 @@
     "ADJUDICADA": "Awarded",
     "EN_VERIFICACION": "Under review",
     "VENDIDA": "Purchased",
-    "CANCELADA_POR_VENCIMIENTO": "Cancelled, deadline passed",
+    "CANCELADA_POR_VENCIMIENTO": "Canceled, deadline passed",
     "RECHAZADA_POR_TESORERIA": "Rejected by treasury",
-    "CANCELADA_POR_PARTICIPANTE": "Cancelled by you",
+    "CANCELADA_POR_PARTICIPANTE": "Canceled by you",
     "NO_ADJUDICADA": "Not awarded"
   },
   "faseDeVenta": {
@@ -104,7 +104,7 @@
     "CONVOCATORIA_REACTIVADA": "Sale announcement reactivated",
     "CONVOCATORIA_CONCLUIDA": "Sale announcement closed",
     "SOLICITUD_CREADA": "Purchase request placed",
-    "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Request cancelled by the participant",
+    "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Request canceled by the participant",
     "LOTE_ADJUDICADO": "Vehicle awarded",
     "SOLICITUD_CONGELADA": "Request frozen",
     "SOLICITUD_DESCONGELADA": "Request unfrozen",
