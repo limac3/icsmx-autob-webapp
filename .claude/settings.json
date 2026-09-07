@@ -1,4 +1,5 @@
 {
+  "enabledMcpjsonServers": ["eden-mcp"],
   "hooks": {
     "PostToolUse": [
       {
