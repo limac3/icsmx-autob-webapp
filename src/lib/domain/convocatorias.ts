@@ -5,11 +5,16 @@
 // Fuente: agent_files/proyecto.md secciones 4.2 y 5.1, y R-14.
 
 import { desdeIso } from "./fechas";
+import { revisarHtmlDeDescripcion } from "./htmlDeDescripcion";
 import type { DatosConvocatoria } from "@/types/convocatoria";
 import { TIPOS_CONVOCATORIA } from "@/types/convocatoria";
 
 export const LIMITES_CONVOCATORIA = {
-  descripcionParticipacion: 2000,
+  /**
+   * La descripcion es HTML del editor enriquecido, asi que el marcado cuenta:
+   * 2000 caracteres bastaban para texto plano pero son poco texto con etiquetas.
+   */
+  descripcionParticipacion: 8000,
   /**
    * Horas de liquidacion. El minimo es 1: con cero, `venceEn` coincidiria con
    * `adjudicadoEn` y la solicitud naceria vencida (R-13). El maximo son 30
@@ -28,6 +33,8 @@ export const MOTIVOS_INVALIDEZ_CONVOCATORIA = [
   "fecha_invalida",
   "orden_de_fechas",
   "sin_lotes",
+  "etiqueta_no_admitida",
+  "enlace_no_admitido",
 ] as const;
 
 export type MotivoInvalidezConvocatoria =
@@ -62,6 +69,13 @@ export const revisarDatosConvocatoria = (
     descripcion.length > LIMITES_CONVOCATORIA.descripcionParticipacion
   ) {
     errores.descripcionParticipacion = "muy_largo";
+  } else {
+    // La descripcion viene de un editor enriquecido y la ve todo participante:
+    // es el objetivo de XSS almacenado mas valioso de la aplicacion. El editor
+    // solo restringe al usuario honesto; la barrera esta aqui. Ver
+    // `htmlDeDescripcion.ts` y desafios-implementacion.md seccion 27.
+    const motivo = revisarHtmlDeDescripcion(descripcion);
+    if (motivo) errores.descripcionParticipacion = motivo;
   }
 
   // Las tres fechas se parsean antes de compararlas: `desdeIso` rechaza el 30

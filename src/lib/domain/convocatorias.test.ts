@@ -248,3 +248,26 @@ describe("revisarEnvioAAprobacion", () => {
     });
   });
 });
+
+describe("la descripcion pasa por la revision de HTML", () => {
+  it("rechaza marcado que no se admite", () => {
+    // La revision vive en `htmlDeDescripcion.ts` y tiene sus propias pruebas.
+    // Esta comprueba el **cableado**: sin ella, desconectar la llamada dejaria
+    // pasar un script al almacenamiento y ninguna prueba se quejaria.
+    const errores = revisarDatosConvocatoria(
+      con({ descripcionParticipacion: "<p>hola</p><script>alert(1)</script>" }),
+    );
+    expect(errores.descripcionParticipacion).toBe("etiqueta_no_admitida");
+  });
+
+  it("acepta el marcado que produce el editor", () => {
+    expect(
+      revisarDatosConvocatoria(
+        con({
+          descripcionParticipacion:
+            "<p>Abierta al <strong>personal</strong>.</p>",
+        }),
+      ),
+    ).toEqual({});
+  });
+});

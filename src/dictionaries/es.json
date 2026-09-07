@@ -223,6 +223,8 @@
     "fuera_de_rango": "El valor está fuera del rango permitido",
     "fecha_invalida": "La fecha no es válida",
     "orden_de_fechas": "Las fechas deben ir en orden: publicación, inicio y fin de venta",
-    "sin_lotes": "Agrega al menos un vehículo antes de enviarla a aprobación"
+    "sin_lotes": "Agrega al menos un vehículo antes de enviarla a aprobación",
+    "etiqueta_no_admitida": "El formato del texto tiene elementos que no se admiten",
+    "enlace_no_admitido": "Un enlace apunta a una dirección que no se admite"
   }
 }

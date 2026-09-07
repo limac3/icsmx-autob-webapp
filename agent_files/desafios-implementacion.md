@@ -1457,3 +1457,85 @@ Y al integrar validacion propia con un componente de terceros, mirar **como se
 entera**: si escucha eventos del DOM, un cambio de estado de React no le llega y
 hay que provocar el evento. La prueba tiene que esperar al
 `requestAnimationFrame`, o pasa y falla segun lo que tarde el entorno.
+
+---
+
+## 27) `HtmlFragment` no sanea: React para casi todo, pero no un `<script>`
+
+### Problema
+
+`descripcionParticipacion` pasa a capturarse con el editor enriquecido de Eden
+para que la convocatoria publicada se lea mejor. Eden empareja
+`eden-rich-text-editor` con `eden-html-fragment` y describe esa relacion como
+**display-companion-requerido**: "RichTextEditor produce HTML; HtmlFragment lo
+renderiza de forma segura. Evita `dangerouslySetInnerHTML`".
+
+Esa descripcion se leyo como una garantia de seguridad. No lo es.
+
+### Sintoma
+
+Ninguno todavia: se midio **antes** de escribir la pantalla. `HtmlFragment` usa
+`html-react-parser`, que convierte HTML en elementos React y **no sanea nada**.
+Lo que protege, si algo protege, es React. Se monto el componente con cinco
+cargas hostiles:
+
+| Carga | Resultado |
+| --- | --- |
+| `<img src=x onerror="...">` | React lo rechaza: *Invalid event handler property* |
+| `<div onclick="...">` | Igual |
+| `<a href="javascript:...">` | React lo sustituye por `javascript:throw new Error('React has blocked a javascript: URL...')` |
+| `<iframe src="javascript:...">` | Igual |
+| **`<script>...</script>`** | **Se renderiza al DOM tal cual** |
+
+En jsdom no llego a ejecutarse, pero jsdom no corre scripts por defecto. En un
+navegador, un `script` creado con `createElement` al que se le pone texto antes
+de insertarlo **si se ejecuta**.
+
+### Causa raiz
+
+React neutraliza dos superficies —atributos de evento en cadena y URLs
+`javascript:`— y ninguna de las dos es la unica. `HtmlFragment` no anade ninguna
+lista de permitidos: mapea elementos a componentes y deja pasar los que no
+conoce. "Sin `dangerouslySetInnerHTML`" describe **como** renderiza, no que
+filtre.
+
+Y hay una razon estructural para no depender de eso: el editor solo restringe al
+usuario honesto. La Server Action recibe una cadena, y un `POST` fabricado con
+`curl` manda la que sea. Cualquier garantia tiene que estar en el servidor.
+
+### Solucion aplicada
+
+`src/lib/domain/htmlDeDescripcion.ts`: una lista de **permitidos** que se aplica
+al guardar, dentro de `revisarDatosConvocatoria`. Sobreviven dieciseis etiquetas
+—las que el editor puede producir con sus controles restringidos— y un solo
+atributo, el `href` de un enlace, limitado a `http`, `https` y rutas internas.
+
+**Rechaza en vez de limpiar, y eso es lo importante.** Limpiar exige entender
+toda la entrada para decidir que quitar, y ahi es donde se rompen los
+saneadores: basta una forma que el limpiador interprete distinto que el
+navegador. El clasico es `<scr<script>ipt>`, que al quitar el interior deja un
+`<script>` intacto. Rechazar solo exige reconocer lo permitido; **todo lo que no
+se reconoce se rechaza**, y esa asimetria es la que hace la diferencia. Hay
+prueba de ese caso concreto.
+
+Dos expectativas de las pruebas resultaron equivocadas, y las dos en la misma
+direccion: el validador era **mas** estricto de lo que yo esperaba. Rechaza un
+`<` sin escapar —el editor emite `&lt;`, asi que no ocurre en la practica— y
+clasifica un `data:` con marcado dentro como etiqueta invalida en vez de enlace
+invalido. Se corrigieron las pruebas, no el codigo: ante una cadena que no es
+HTML bien formado, no sabemos como la interpretara el navegador, y adivinar es
+justamente lo que se quiere evitar.
+
+El limite de la descripcion subio de 2000 a 8000 caracteres: ahora el marcado
+cuenta.
+
+### Regla para futuro
+
+**"Renderiza seguro" en la documentacion de un componente no es una lista de
+permitidos.** Antes de confiar en una pieza de terceros para contener entrada de
+usuario, medirla con cargas hostiles; toma diez minutos y aqui cambio el diseno.
+
+Y la regla que no depende de ningun componente: **lo que decide si un dato es
+admisible se ejecuta en el servidor**, porque es lo unico que el cliente no
+puede saltarse. Un editor que restringe la interfaz es comodidad para quien
+captura, nunca un control de seguridad.

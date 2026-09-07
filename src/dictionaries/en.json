@@ -223,6 +223,8 @@
     "fuera_de_rango": "The value is outside the allowed range",
     "fecha_invalida": "The date is not valid",
     "orden_de_fechas": "The dates must run in order: publication, sale start, sale end",
-    "sin_lotes": "Add at least one vehicle before sending it for approval"
+    "sin_lotes": "Add at least one vehicle before sending it for approval",
+    "etiqueta_no_admitida": "The text formatting contains elements that are not allowed",
+    "enlace_no_admitido": "A link points to an address that is not allowed"
   }
 }
