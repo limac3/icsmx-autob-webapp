@@ -226,5 +226,31 @@
     "sin_lotes": "Agrega al menos un vehículo antes de enviarla a aprobación",
     "etiqueta_no_admitida": "El formato del texto tiene elementos que no se admiten",
     "enlace_no_admitido": "Un enlace apunta a una dirección que no se admite"
+  },
+  "acciones": {
+    "sinAcciones": "No hay acciones disponibles en este estatus.",
+    "motivo": "Motivo",
+    "motivoAyuda": "Queda registrado en la bitácora. Es obligatorio.",
+    "evento_ENVIAR_A_APROBACION": "Enviar a aprobación",
+    "evento_APROBAR": "Aprobar",
+    "evento_RECHAZAR": "Rechazar",
+    "evento_PUBLICAR": "Publicar",
+    "evento_OCULTAR": "Ocultar",
+    "evento_REACTIVAR": "Reactivar",
+    "evento_CONCLUIR": "Concluir",
+    "confirmar_ENVIAR_A_APROBACION": "Al enviarla a aprobación dejará de ser editable hasta que alguien la dictamine. ¿Continuar?",
+    "confirmar_APROBAR": "¿Aprobar esta convocatoria? Quedará lista para publicarse.",
+    "confirmar_PUBLICAR": "Al publicarla quedará visible para los participantes en cuanto llegue su fecha de publicación. ¿Continuar?",
+    "confirmar_CONCLUIR": "Concluir es definitivo: los vehículos sin vender vuelven al catálogo y no hay vuelta atrás. ¿Continuar?",
+    "hecho_ENVIAR_A_APROBACION": "Enviada a aprobación.",
+    "hecho_APROBAR": "Convocatoria aprobada.",
+    "hecho_RECHAZAR": "Convocatoria rechazada; volvió a borrador.",
+    "hecho_PUBLICAR": "Convocatoria publicada.",
+    "hecho_OCULTAR": "Convocatoria oculta.",
+    "hecho_REACTIVAR": "Convocatoria reactivada; volvió a borrador.",
+    "hecho_CONCLUIR": "Convocatoria concluida.",
+    "continuar": "Continuar",
+    "cancelar": "Cancelar",
+    "titulo": "Acciones"
   }
 }

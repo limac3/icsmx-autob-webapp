@@ -9,6 +9,15 @@ vi.mock("@/app/actions/convocatorias", () => ({
   guardarConvocatoriaDesdeFormulario: vi.fn(),
 }));
 
+// La barra del editor usa `Fade`, y `Fade` mide el desbordamiento con un
+// `setTimeout` de 50 ms que aterriza fuera del `act` de la prueba. Es la misma
+// utilidad hoja que ya se simula en `TablaConvocatorias`: lo que aqui se
+// comprueba es el marcado del formulario y su accesibilidad, no la deteccion de
+// desbordamiento de Eden.
+vi.mock("@churchofjesuschrist/eden-has-overflow", () => ({
+  useHasOverflow: () => [{ current: null }, { hasX: false }],
+}));
+
 const context = getTestContext();
 
 genericTests(context, FormularioConvocatoria, {

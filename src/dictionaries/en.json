@@ -226,5 +226,31 @@
     "sin_lotes": "Add at least one vehicle before sending it for approval",
     "etiqueta_no_admitida": "The text formatting contains elements that are not allowed",
     "enlace_no_admitido": "A link points to an address that is not allowed"
+  },
+  "acciones": {
+    "sinAcciones": "There are no actions available in this status.",
+    "motivo": "Reason",
+    "motivoAyuda": "It is recorded in the audit log. It is required.",
+    "evento_ENVIAR_A_APROBACION": "Send for approval",
+    "evento_APROBAR": "Approve",
+    "evento_RECHAZAR": "Reject",
+    "evento_PUBLICAR": "Publish",
+    "evento_OCULTAR": "Hide",
+    "evento_REACTIVAR": "Reactivate",
+    "evento_CONCLUIR": "Close",
+    "confirmar_ENVIAR_A_APROBACION": "Once sent for approval it can no longer be edited until someone rules on it. Continue?",
+    "confirmar_APROBAR": "Approve this sale announcement? It will be ready to publish.",
+    "confirmar_PUBLICAR": "Once published it becomes visible to participants as soon as its publication date arrives. Continue?",
+    "confirmar_CONCLUIR": "Closing is final: unsold vehicles return to the catalog and there is no way back. Continue?",
+    "hecho_ENVIAR_A_APROBACION": "Sent for approval.",
+    "hecho_APROBAR": "Sale announcement approved.",
+    "hecho_RECHAZAR": "Sale announcement rejected; it went back to draft.",
+    "hecho_PUBLICAR": "Sale announcement published.",
+    "hecho_OCULTAR": "Sale announcement hidden.",
+    "hecho_REACTIVAR": "Sale announcement reactivated; it went back to draft.",
+    "hecho_CONCLUIR": "Sale announcement closed.",
+    "continuar": "Continue",
+    "cancelar": "Cancel",
+    "titulo": "Actions"
   }
 }

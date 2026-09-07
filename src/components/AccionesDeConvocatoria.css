@@ -1,0 +1,13 @@
+/* Acciones del ciclo de la convocatoria. Solo layout (regla 10). */
+
+.acciones-convocatoria {
+  display: grid;
+  gap: 1rem;
+}
+
+.acciones-convocatoria__accion {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
