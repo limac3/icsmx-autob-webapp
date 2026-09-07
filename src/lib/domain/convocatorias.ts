@@ -146,6 +146,23 @@ export const validarDatosConvocatoria = (
 };
 
 /**
+ * Precio de un lote. Entero de pesos, sin centavos: el importe se acuerda en
+ * cifras cerradas y guardar decimales invitaria a compararlos con `===`.
+ *
+ * El maximo no es una regla de negocio sino un tope de cordura —un cero de mas
+ * al teclear— que ademas mantiene el valor lejos de `Number.MAX_SAFE_INTEGER`.
+ */
+export const PRECIO_MAXIMO_LOTE = 99_999_999;
+
+export const revisarPrecio = (
+  precio: number,
+): MotivoInvalidezConvocatoria | undefined => {
+  if (!Number.isInteger(precio)) return "no_es_entero";
+  if (precio <= 0 || precio > PRECIO_MAXIMO_LOTE) return "fuera_de_rango";
+  return undefined;
+};
+
+/**
  * Precondiciones para mandar una convocatoria a aprobacion (proyecto.md 5.1).
  *
  * Es una comprobacion **aparte** de la de edicion porque exige algo que los
