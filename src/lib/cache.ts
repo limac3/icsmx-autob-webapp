@@ -16,6 +16,17 @@ export const etiqueta = {
   convocatoria: (convocatoriaId: string): string =>
     `convocatoria:${convocatoriaId}`,
 
+  /** Listados de convocatorias: la bandeja del administrador y la del aprobador. */
+  catalogoConvocatorias: "convocatorias",
+
+  /**
+   * Lo que ve un participante. Se separa del listado administrativo porque
+   * cambia por razones distintas: publicar y concluir la mueven, pero editar un
+   * borrador no, y no tendria sentido tirar la cache de quien compra cada vez
+   * que alguien corrige una descripcion.
+   */
+  convocatoriasVisibles: "convocatorias:visibles",
+
   /** Lote y su fila. */
   lote: (loteId: string): string => `lote:${loteId}`,
 } as const;
