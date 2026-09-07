@@ -37,6 +37,8 @@ export type EntradaDeTransicion = {
   extras?: Record<string, unknown>;
   /** Atributos a eliminar del item. */
   eliminar?: readonly string[];
+  /** Datos adicionales para el evento de bitacora, no para el item. */
+  datos?: Record<string, unknown>;
 };
 
 export const aplicarTransicion = async (
@@ -128,6 +130,7 @@ export const aplicarTransicion = async (
       estadoAnterior: actual.estatus,
       estadoNuevo: destino,
       ...(entrada.motivo ? { motivo: entrada.motivo } : {}),
+      ...(entrada.datos ? { datos: entrada.datos } : {}),
     }),
   ];
 

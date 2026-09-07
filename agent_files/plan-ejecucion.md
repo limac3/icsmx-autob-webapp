@@ -575,6 +575,14 @@ punta a punta, que depende de credenciales del operador.
       (`npm run prototipo:fila`, 20 pruebas). Reprodujo el defecto de forma determinista,
       descarto el mecanismo que este plan proponia y valido el que lo sustituye. **T1 quedo
       reescrito**; los tres hallazgos estan en `desafios-implementacion.md` seccion 17
+- [ ] **Cerrar las filas al concluir (R-18)** — lo que la Etapa 6 dejo declarado.
+      `concluirConvocatoria` ya cierra los lotes, libera los centinelas y devuelve los vehiculos
+      a `DISPONIBLE`, pero **no toca las solicitudes**: en la Etapa 6 no existen todavia, asi que
+      ese codigo no habria tenido ninguna prueba que lo ejercitara. Falta que las `EN_FILA` y
+      `CONGELADA` pasen a `NO_ADJUDICADA`, y que una adjudicacion `ADJUDICADA` o
+      `EN_VERIFICACION` **sobreviva con su plazo intacto** — quien gano antes del cierre tiene
+      derecho a terminar de pagar. Sin esto, concluir deja participantes en una fila que ya no
+      va a avanzar
 - [ ] `src/lib/fila/solicitarCompra.ts` — en **tres escrituras**, segun T1 de
       `modelo-datos-dynamodb.md` ya corregido por el prototipo:
   - [ ] `Put` de la reserva de turno `LOTE#<id>/RESERVA#<reservaId>` **antes** del contador.
