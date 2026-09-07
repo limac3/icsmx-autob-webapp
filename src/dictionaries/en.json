@@ -191,6 +191,18 @@
     "no_es_permutacion": "The received order does not match the gallery",
     "demasiados_cambios": "Too many order changes at once"
   },
+  "convocatorias": {
+    "titulo": "Sale announcements",
+    "descripcion": "Groups of vehicles offered for sale.",
+    "nueva": "Create sale announcement",
+    "sinResultados": "There are no sale announcements with this status.",
+    "columnaPeriodo": "Sale period",
+    "columnaEstatus": "Status",
+    "columnaTipo": "Type",
+    "verDetalle": "View",
+    "horaDeNegocio": "Central Mexico time",
+    "pestanas": "Sale announcements by status"
+  },
   "validacionConvocatoria": {
     "requerido": "This field is required",
     "muy_largo": "The text is too long",

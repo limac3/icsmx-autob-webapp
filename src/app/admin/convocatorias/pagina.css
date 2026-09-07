@@ -1,0 +1,16 @@
+/* Listado de convocatorias. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.convocatorias {
+  display: grid;
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.convocatorias__encabezado {
+  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}

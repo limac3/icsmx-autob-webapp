@@ -191,6 +191,18 @@
     "no_es_permutacion": "El orden recibido no corresponde a la galería",
     "demasiados_cambios": "Demasiados cambios de orden a la vez"
   },
+  "convocatorias": {
+    "titulo": "Convocatorias",
+    "descripcion": "Agrupaciones de vehículos para su venta.",
+    "nueva": "Crear convocatoria",
+    "sinResultados": "No hay convocatorias en este estatus.",
+    "columnaPeriodo": "Periodo de venta",
+    "columnaEstatus": "Estatus",
+    "columnaTipo": "Tipo",
+    "verDetalle": "Ver",
+    "horaDeNegocio": "Horario del centro de México",
+    "pestanas": "Convocatorias por estatus"
+  },
   "validacionConvocatoria": {
     "requerido": "Este dato es obligatorio",
     "muy_largo": "El texto es demasiado largo",

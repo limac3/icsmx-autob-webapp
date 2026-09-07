@@ -1,0 +1,6 @@
+/* Listado de convocatorias. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.tabla-convocatorias {
+  width: 100%;
+}

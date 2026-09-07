@@ -222,10 +222,22 @@ Un vehiculo `RESERVADO` o `VENDIDO` se muestra en solo lectura, con aviso del mo
 ### 4.3 `/admin/convocatorias`
 
 Listado con `eden-tabs` por estatus: Borrador · En aprobacion · Aprobadas · Publicadas ·
-Concluidas · Ocultas.
+Concluidas · Ocultas. Encaja con lo que Eden dice de `Tabs` —"vistas alternables en la misma
+pantalla"—, con la consecuencia de que es componente cliente: la pagina lee en el servidor y le
+pasa los seis grupos ya resueltos.
 
-`eden-progress-stepper` para el avance del ciclo: Borrador → En aprobacion → Aprobada →
-Publicada → Concluida.
+> **El avance del ciclo NO usa `eden-progress-stepper`.** Este documento lo pedia, y consultado
+> el MCP resulto ser otra cosa: un **asistente** por pasos secuenciales, con un panel de
+> contenido por paso y un hook `useProgressStepper` para avanzar y retroceder. Sirve para que
+> alguien complete un formulario largo, no para indicar en que estado esta una entidad.
+> `eden-progress-list` tampoco: sus pasos son **tareas** que el usuario completa en paginas
+> distintas, cada una un enlace con su propio avance parcial.
+>
+> Eden no tiene un componente para "en que punto de su ciclo esta esto", asi que el estatus se
+> muestra con el **`Badge`** que ya usa el catalogo de vehiculos. Es lo que `eden-badge`
+> describe: "indicador compacto junto a un contenido para destacar cantidad, **estado** o
+> categoria". Si mas adelante se quiere una linea de tiempo visual, seria un componente propio y
+> habria que justificar por que vale su mantenimiento.
 
 ### 4.4 `/admin/convocatorias/nueva` y `/[id]/editar`
 
