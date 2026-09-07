@@ -39,3 +39,42 @@ export const ESTATUS_CONVOCATORIA = [
   "CONCLUIDA",
   "OCULTA",
 ] as const satisfies readonly EstatusConvocatoria[];
+
+/**
+ * Lo que captura quien crea o edita una convocatoria (proyecto.md 4.2).
+ *
+ * Las tres fechas son **cadenas ISO-8601 UTC**, no `Date` (R-04). Persistir y
+ * transportar el instante ya serializado evita que una capa lo reinterprete en
+ * la zona del servidor; la conversion a `America/Mexico_City` ocurre solo al
+ * presentar (regla 9).
+ */
+export type DatosConvocatoria = {
+  tipo: TipoConvocatoria;
+  descripcionParticipacion: string;
+  publicadaEn: string;
+  inicioVenta: string;
+  finVenta: string;
+  horasLiquidacion: number;
+};
+
+/** Los campos capturables, para recorrerlos sin escribirlos dos veces. */
+export const CAMPOS_CONVOCATORIA = [
+  "tipo",
+  "descripcionParticipacion",
+  "publicadaEn",
+  "inicioVenta",
+  "finVenta",
+  "horasLiquidacion",
+] as const satisfies readonly (keyof DatosConvocatoria)[];
+
+/** El registro completo, tal como vive en `CONV#<id> / META`. */
+export type Convocatoria = DatosConvocatoria & {
+  convocatoriaId: string;
+  estatus: EstatusConvocatoria;
+  creadoEn: string;
+  creadoPor: string;
+  actualizadoEn?: string;
+  actualizadoPor?: string;
+  /** Presente solo si esta `OCULTA`; el motivo es obligatorio al ocultar. */
+  motivoOcultamiento?: string;
+};

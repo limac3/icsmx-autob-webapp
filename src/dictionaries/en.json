@@ -190,5 +190,14 @@
     "es_la_ultima": "The only photograph cannot be deleted",
     "no_es_permutacion": "The received order does not match the gallery",
     "demasiados_cambios": "Too many order changes at once"
+  },
+  "validacionConvocatoria": {
+    "requerido": "This field is required",
+    "muy_largo": "The text is too long",
+    "no_es_entero": "It must be a whole number",
+    "fuera_de_rango": "The value is outside the allowed range",
+    "fecha_invalida": "The date is not valid",
+    "orden_de_fechas": "The dates must run in order: publication, sale start, sale end",
+    "sin_lotes": "Add at least one vehicle before sending it for approval"
   }
 }

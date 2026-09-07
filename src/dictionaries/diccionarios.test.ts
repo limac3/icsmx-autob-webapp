@@ -7,6 +7,7 @@ import { ESTATUS_LOTE } from "@/types/lote";
 import { CODIGOS_ERROR } from "@/types/resultado";
 import { ESTATUS_SOLICITUD } from "@/types/solicitud";
 import { ESTATUS_VEHICULO } from "@/types/vehiculo";
+import { MOTIVOS_INVALIDEZ_CONVOCATORIA } from "@/lib/domain/convocatorias";
 import { MOTIVOS_INVALIDEZ } from "@/lib/domain/vehiculos";
 import en from "./en.json";
 import es from "./es.json";
@@ -83,6 +84,24 @@ describe.each(idiomas)("diccionario %s", (idioma) => {
     }
   });
 });
+
+describe.each(idiomas)(
+  "motivos de invalidez de convocatoria en %s",
+  (idioma) => {
+    const diccionario = IDIOMAS[idioma];
+
+    it.each(MOTIVOS_INVALIDEZ_CONVOCATORIA)(
+      "traduce el motivo %s",
+      (motivo) => {
+        const etiqueta = (
+          diccionario.validacionConvocatoria as Record<string, string>
+        )[motivo];
+        expect(etiqueta, `falta validacionConvocatoria.${motivo}`).toBeTruthy();
+        expect(etiqueta).not.toBe(motivo);
+      },
+    );
+  },
+);
 
 describe.each(idiomas)("motivos de invalidez en %s", (idioma) => {
   const diccionario = IDIOMAS[idioma];

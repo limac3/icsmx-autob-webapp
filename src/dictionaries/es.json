@@ -190,5 +190,14 @@
     "es_la_ultima": "No se puede eliminar la única fotografía",
     "no_es_permutacion": "El orden recibido no corresponde a la galería",
     "demasiados_cambios": "Demasiados cambios de orden a la vez"
+  },
+  "validacionConvocatoria": {
+    "requerido": "Este dato es obligatorio",
+    "muy_largo": "El texto es demasiado largo",
+    "no_es_entero": "Debe ser un número entero",
+    "fuera_de_rango": "El valor está fuera del rango permitido",
+    "fecha_invalida": "La fecha no es válida",
+    "orden_de_fechas": "Las fechas deben ir en orden: publicación, inicio y fin de venta",
+    "sin_lotes": "Agrega al menos un vehículo antes de enviarla a aprobación"
   }
 }
