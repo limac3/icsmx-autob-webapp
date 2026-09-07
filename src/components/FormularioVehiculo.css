@@ -1,6 +1,10 @@
-/* Alta y edicion de vehiculo. Mobile-first: una columna en el telefono, dos a
-   partir de tableta. Solo layout; la apariencia la ponen los componentes de
-   Eden (regla 10). */
+/* Alta y edicion de vehiculo. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10).
+
+   El reparto en columnas ya no vive aqui: lo hace `Grid` de Eden con container
+   queries, que reacciona al ancho de su contenedor y no al de la ventana. Este
+   archivo solo apila lo que queda fuera de la rejilla —los avisos, la rejilla
+   misma y la fila de acciones— y ajusta el interior de cada tarjeta. */
 
 .formulario-vehiculo {
   display: grid;
@@ -31,14 +35,4 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
-}
-
-@media (min-width: 48rem) {
-  .formulario-vehiculo {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .formulario-vehiculo__acciones {
-    grid-column: 1 / -1;
-  }
 }

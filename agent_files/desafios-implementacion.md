@@ -1322,6 +1322,38 @@ que el navegador recorta sobre el borde superior. Lleva `min-inline-size: 0`
 porque el `<fieldset>` impone `min-width: min-content` y sin eso un campo largo
 desborda la columna en vez de encogerse.
 
+Consultado despues el MCP, la composicion resulto ser **la que Eden prescribe**:
+el `useWhen` de `Card` es "agrupar contenido en una superficie elevada que
+destaque del fondo", su `avoidWhen` es "solo separas elementos con espaciado,
+sin superficie: usa `eden-stack`", declara `shipsCss: no trae padding propio` y
+su ejemplo oficial es `<Card depth="raised" renderAs="section" style={{padding:
+"var(--unity-spacing16)"}}><Stack>` — el mismo token de espaciado incluido.
+
+Dos ajustes salieron de esa consulta:
+
+- **El titulo de seccion es `H4 renderAs="legend"`.** El `Legend` de
+  `eden-form-parts` renderiza `Text4`, que en la escala de Unity es tamano de
+  *descripcion* (`Text1`–`Text6` se eligen por proposito semantico), y dejaba
+  los titulos indistinguibles de las etiquetas de campo. `H4` es 1.125rem/600
+  contra el 1.25rem/700 de `H3`: suficiente para separar sin competir con el
+  `H1` de la pagina.
+- **El reparto en columnas es `Grid` de Eden**, no una media query propia. Mide
+  el **contenedor** con `@container` y no la ventana, de modo que la pantalla se
+  comporta igual si el formulario acaba dentro de un panel. Los breakpoints son
+  4/8/12/12 columnas (small/medium/large/xlarge) y `Condicion` abarca el ancho
+  completo, que antes dejaba media fila vacia.
+
+Ojo con `Item`: **el tipo enviado exige los cuatro breakpoints** aunque la
+documentacion diga que uno sin definir hereda del inmediato mayor y su tabla de
+props los marque opcionales. Van los cuatro explicitos.
+
+No existe separador de proposito general en Eden. Se reviso el catalogo
+completo: el unico `Divider` es subcomponente de `eden-vertical-tiles`, y ese
+paquete es una tarjeta de media para cuadriculas y carruseles. La otra forma
+legitima de seccionar seria `eden-accordion`, descartada porque su `useWhen` es
+"contenido secundario opcional que el usuario abre bajo demanda" y colapsar
+esconderia campos obligatorios y sus errores de validacion.
+
 Tres pruebas de regresion: los mensajes se cuentan, ninguno cuelga del
 `<fieldset>`, y cada seccion sigue siendo un `<fieldset>` con `<legend>`. La
 primera se falsifico devolviendo una seccion al `FieldSet` de Eden —cinco

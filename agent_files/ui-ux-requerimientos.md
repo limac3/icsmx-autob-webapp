@@ -189,9 +189,18 @@ fotografias.
 Cada seccion es una **tarjeta** (`Card renderAs="fieldset"` con un `Stack` dentro): el marco es
 lo que separa a la vista —con solo un titulo encima, las secciones se leen como una lista
 continua—, y el `renderAs` conserva el `<fieldset>`/`<legend>`, que es lo que hace que un lector
-de pantalla anuncie la seccion como contexto de cada campo. **No se usa el `FieldSet` de Eden**:
-esta documentado para agrupar `Radio` y `Checkbox`, y con campos de texto reparte mal el ancho y
-duplica los mensajes de error. Ver `desafios-implementacion.md` seccion 25.
+de pantalla anuncie la seccion como contexto de cada campo. El titulo va con `H4 renderAs="legend"`
+y no con el `Legend` de `eden-form-parts`, que renderiza `Text4` —tamano de descripcion— y dejaba
+los titulos indistinguibles de las etiquetas de campo.
+
+**No se usa el `FieldSet` de Eden**: esta documentado para agrupar `Radio` y `Checkbox`, y con
+campos de texto reparte mal el ancho y duplica los mensajes de error. Eden **no tiene** separador
+de proposito general: no hay `Divider` fuera de `eden-vertical-tiles`, que es una tarjeta de media
+para cuadriculas. Ver `desafios-implementacion.md` seccion 25.
+
+El reparto en columnas lo hace `Grid` de `eden-grid`, con `@container` queries sobre el ancho del
+contenedor y no de la ventana: identificacion y especificacion a media rejilla, condicion al ancho
+completo.
 
 **Gestion de fotografias:** subida, reordenamiento, marcar principal, eliminar. La principal se
 distingue con un `Badge`. **No se puede eliminar la ultima** — el boton se deshabilita con
