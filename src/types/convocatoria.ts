@@ -1,5 +1,7 @@
 // Fuente: agent_files/proyecto.md secciones 4.2 y 5.1.
 
+import type { Lote } from "./lote";
+
 /**
  * Tipo de convocatoria. Determina que permiso de venta da acceso (R-02); la
  * correspondencia vive en `TIPO_POR_PERMISO_DE_VENTA` de `identidad.ts`.
@@ -77,4 +79,16 @@ export type Convocatoria = DatosConvocatoria & {
   actualizadoPor?: string;
   /** Presente solo si esta `OCULTA`; el motivo es obligatorio al ocultar. */
   motivoOcultamiento?: string;
+};
+
+/**
+ * La convocatoria con sus lotes, tal como la devuelve PA-04: una sola `Query`
+ * sobre la particion `CONV#<id>`.
+ *
+ * Los lotes cuelgan de la convocatoria justamente para que la pantalla de
+ * detalle sea **una** lectura. Partirla en dos reintroduciria la posibilidad de
+ * mostrar una convocatoria con los lotes de otro instante.
+ */
+export type ConvocatoriaConLotes = Convocatoria & {
+  lotes: Lote[];
 };

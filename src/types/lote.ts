@@ -51,4 +51,19 @@ export type Lote = {
   creadoPor: string;
   /** Presente solo si se retiro de la convocatoria. */
   motivoRetiro?: string;
+
+  /**
+   * Adjudicacion vigente. Los escribe el motor de fila en la Etapa 8; aqui van
+   * declarados para que el tipo describa el item completo y no solo la parte
+   * que hoy se escribe.
+   *
+   * **`adjudicacionActual` se elimina con `REMOVE`, nunca se pone en `null`.**
+   * Toda la exclusion mutua depende de `attribute_not_exists(adjudicacionActual)`,
+   * y un `null` es un atributo que existe: pasaria la condicion y adjudicaria
+   * el mismo lote dos veces. De ahi que sea opcional y no `string | null`.
+   */
+  adjudicacionActual?: string;
+  adjudicadoEn?: string;
+  venceEn?: string;
+  turnoAdjudicado?: number;
 };
