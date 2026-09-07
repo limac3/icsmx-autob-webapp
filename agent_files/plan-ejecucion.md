@@ -533,6 +533,13 @@ punta a punta, que depende de credenciales del operador.
 
 ---
 
+> **Pendiente heredado de la Etapa 6:** la descripcion de participacion se guarda como HTML del
+> editor enriquecido, validado contra lista de permitidos en el servidor. Para mostrarla hace
+> falta `eden-html-fragment`, que renderiza HTML como componentes React sin
+> `dangerouslySetInnerHTML`. **No filtra** —se midio, ver `desafios-implementacion.md` 27—, pero
+> con la lista de permitidos aplicada al guardar, lo almacenado ya es seguro. Se instala aqui,
+> cuando exista la pantalla que lo use.
+
 ## Etapa 7 — Catalogo para participantes
 
 **Objetivo:** que un participante vea exactamente lo que le corresponde ver, y nada mas.

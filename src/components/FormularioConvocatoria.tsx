@@ -12,9 +12,9 @@ import {
   Input,
   Label,
   Radio,
-  TextArea,
   TimeInput,
 } from "@churchofjesuschrist/eden-form-parts";
+import { RichTextEditor } from "@churchofjesuschrist/eden-rich-text-editor";
 import { H4 } from "@churchofjesuschrist/eden-headings";
 import { Stack } from "@churchofjesuschrist/eden-stack";
 import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
@@ -64,6 +64,35 @@ export type FormularioConvocatoriaProps = {
   editable?: boolean;
   onCancelar?: string;
 };
+
+/**
+ * Controles que se le habilitan al editor.
+ *
+ * **Tiene que coincidir con `ETIQUETAS_PERMITIDAS`** de
+ * `htmlDeDescripcion.ts`: si aqui se habilita uno mas, el servidor rechazara lo
+ * que el editor acaba de producir. Quedan fuera `image` —el marcado permitido
+ * no admite `<img>`— y `heading1`, porque la pagina ya tiene su H1 y un
+ * segundo encabezado de nivel uno rompe la jerarquia del documento.
+ *
+ * Va a nivel de modulo y no en el render porque Lexical solo lo lee al montar y
+ * un arreglo nuevo en cada pintado seria trabajo tirado.
+ */
+const CONTROLES_DEL_EDITOR = [
+  "paragraph",
+  "heading2",
+  "heading3",
+  "heading4",
+  "heading5",
+  "heading6",
+  "blockquote",
+  "preformatted",
+  "bold",
+  "italic",
+  "underline",
+  "link",
+  "bulletedList",
+  "numberedList",
+] as const;
 
 /** Los tres campos que el formulario parte en fecha y hora. */
 const CAMPOS_DE_INSTANTE = ["publicadaEn", "inicioVenta", "finVenta"] as const;
@@ -191,11 +220,13 @@ const FormularioConvocatoria = ({
             label={etiquetas.campoDescripcion}
             onValidate={validarConElServidor}
           >
-            <TextArea
+            <RichTextEditor
               name="descripcionParticipacion"
+              type="html"
               required
-              maxLength={LIMITES_CONVOCATORIA.descripcionParticipacion}
-              defaultValue={valores.descripcionParticipacion ?? ""}
+              maxLength={String(LIMITES_CONVOCATORIA.descripcionParticipacion)}
+              availableControls={[...CONTROLES_DEL_EDITOR]}
+              initialContent={valores.descripcionParticipacion ?? ""}
               disabled={!editable}
             />
           </FormField>
