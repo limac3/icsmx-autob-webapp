@@ -1279,6 +1279,12 @@ El tipo del paquete lo dice sin ambiguedad:
 > The `FieldSet` is used to group `Radio` and `Checkbox` components (...)
 > children: Should contain `Radio` or `Checkbox` form controls each with their `Label`.
 
+La documentacion oficial —consultada despues por el MCP `eden-docs`— lo repite
+desde el otro lado, y de paso confirma la composicion que se adopto: el ejemplo
+de `eden-form-parts` es `Form` > `Stack` > `FormField`, y entre sus gotchas
+esta *"`FormField` es para un unico control y NO debe envolver `Radio` ni
+`Checkbox`: para esos usa `FieldSet`"*.
+
 De ahi salen las dos consecuencias:
 
 1. Su CSS estira a ancho completo solo a los hijos que espera:

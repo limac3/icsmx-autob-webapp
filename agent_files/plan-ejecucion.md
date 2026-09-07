@@ -489,7 +489,14 @@ reescritos, invariantes 11 y 12), `proyecto.md` (5.3), `desafios-implementacion.
 - [ ] **El formulario es un `<form>` crudo y no el `<Form>` de Eden**, que pone `noValidate` y
       conduce la validacion el mismo. Con el crudo salen las dos cosas: el globo nativo del
       navegador y el hint de Eden. Decidido asi para no tocar el envio sin JavaScript sin
-      haberlo probado en el navegador antes
+      haberlo probado en el navegador antes. El ejemplo oficial de `eden-form-parts` es
+      `Form` > `Stack` > `FormField`, asi que este es el unico eslabon que falta de esa receta
+- [ ] **El filtro de `/admin/vehiculos` usa `Input type="search"`**; Eden recomienda
+      `SecondarySearch` de `eden-search-box` para filtros de lista —"trae semantica y
+      comportamiento de busqueda preconfigurado"— y reserva `Input` para campos genericos. La
+      contrapartida no es menor: `SecondarySearch` es componente cliente y arrastra
+      `styled-components` como peer dependency, asi que convertiria en cliente una pantalla
+      que hoy es Server Component entera. Decidir con la pantalla delante
 
 **Salida esperada:** catalogo de vehiculos administrable. **Cumplida**, salvo la comprobacion de
 punta a punta, que depende de credenciales del operador.
