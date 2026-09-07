@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { Badge } from "@churchofjesuschrist/eden-badge";
 import {
@@ -25,8 +27,17 @@ import "./TablaVehiculos.css";
  * porque no aparecia en el inventario verificado; si existe, y usarlo tal cual
  * (regla 10) evita mantener dos arboles que se desincronizan.
  *
- * Es un Server Component: no tiene estado ni eventos. Los filtros son un
- * formulario `GET` aparte, de modo que la pantalla funciona sin JavaScript.
+ * **Es un componente cliente aunque no tenga estado ni eventos**, y no por
+ * gusto: `Table` arma la lista de columnas comparando `child.type === ColGroup`
+ * y `=== THead`, y esa identidad no sobrevive la frontera de RSC. Con los hijos
+ * creados en un Server Component la lista sale vacia, y `CardView` toma de ahi
+ * la etiqueta de cada celda (`columns[index]?.header`): las tarjetas del
+ * telefono quedarian sin etiquetas, sin error y sin aviso. Justo la vista movil
+ * que exige la regla 12. Ver desafios-implementacion.md seccion 23.
+ *
+ * No cambia como se renderiza: sigue siendo HTML servido desde el servidor. Los
+ * filtros son un formulario `GET` aparte, asi que la pantalla funciona sin
+ * JavaScript.
  */
 
 const COLOR_POR_ESTATUS: Record<

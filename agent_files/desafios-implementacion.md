@@ -1105,3 +1105,86 @@ tres esta bajo control de la aplicacion. Y toda normalizacion de material
 criptografico se prueba llegando hasta la funcion que lo consume —aqui
 `createPrivateKey`—, porque comparar cadenas no distingue un PEM valido de uno
 que solo se le parece.
+
+---
+
+## 23) Eden compara hijos por identidad, y RSC rompe esa identidad
+
+### Problema
+
+Abrir `/admin/vehiculos`. La pantalla es un Server Component: filtros con
+`<form method="get">` y tabla, sin estado de cliente.
+
+### Sintoma
+
+`500` en la peticion y en el navegador:
+
+```
+TypeError: Cannot destructure property 'handleChange' of 'useContext(...)' as it is null.
+    at CatalogoVehiculos (src/app/admin/vehiculos/page.tsx:88)
+```
+
+La linea 88 era `<Option value="">`. Ninguna prueba lo habia detectado: las 968
+estaban en verde, incluida la de accesibilidad de la propia pantalla.
+
+### Causa raiz
+
+`Select` de Eden decide si monta su desplegable propio recorriendo sus hijos y
+comparando el **tipo por identidad**:
+
+```js
+if (child?.type === Option || child?.type === OptGroup) hasCustomComponents = true;
+...
+const hasDropdown = multiple || !!searchSlot || hasCustomComponents;
+```
+
+Cuando los hijos los crea un **Server Component**, no llegan como elementos con
+`type` resuelto: llegan como referencias perezosas que React resuelve al
+renderizar. La comparacion falla, `hasDropdown` queda en `false`, y los `Option`
+se renderizan directamente dentro del `<select>` nativo — fuera del `Dropdown`,
+que es quien provee `DropdownContext`. `useContext` devuelve el valor por
+defecto, `null`, y desestructurarlo lanza.
+
+El experimento que lo separo de otras causas: el mismo `<Select><Option/></Select>`
+montado **100% en cliente**, en jsdom, funciona. La diferencia es la frontera, no
+`deepMapChildren` ni la version de Eden.
+
+Y no es un caso aislado. En los paquetes instalados hacen la misma comparacion
+`Table` (`ColGroup`, `Col`, `THead`), `FieldSet` (`Hint`, `Legend`), `FormField`
+(`Hint`, `Label`), `OptGroup` (`Option`) y `Fade` (`Scrollable`).
+
+**El caso de `Table` es peor que el de `Select`, porque no falla.** `Table` arma
+la lista de columnas con esa comparacion y `CardView` saca de ahi la etiqueta de
+cada celda (`columns[index]?.header`). Con la lista vacia, las tarjetas de la
+vista movil se renderizan **sin etiquetas**, sin error y sin aviso — justo la
+vista que exige la regla 12. `TablaVehiculos` estaba asi desde la Etapa 5.
+
+### Solucion aplicada
+
+Dos caminos distintos, segun lo que ofrezca cada componente:
+
+- **Filtros**: `<option>` nativo en vez del `Option` de Eden. `Select` admite
+  `child.type === "option"` de forma explicita, y un `type` de cadena si
+  sobrevive la serializacion. La pantalla sigue siendo Server Component y el
+  formulario GET sigue funcionando sin JavaScript, que era el objetivo.
+- **`TablaVehiculos`**: `"use client"`. Aqui no hay equivalente nativo —
+  `ColGroup`, `Col` y `THead` solo se reconocen por identidad—, asi que padre e
+  hijos tienen que vivir en el mismo grafo de cliente. No cambia el HTML que se
+  sirve; el componente no tiene estado ni eventos.
+
+La invariante vive en `src/components/fronteraRsc.test.ts`: recorre el codigo
+fuente y exige `"use client"` en todo archivo que importe uno de esos simbolos.
+Mira el **fuente** y no el render, porque en jsdom todo se monta del lado del
+cliente y la identidad siempre coincide: una prueba de componente no puede
+detectar esto.
+
+### Regla para futuro
+
+Antes de usar un componente de Eden con hijos estructurados desde un Server
+Component, revisar si el padre compara `child.type` con un componente
+importado. Si lo hace, o se usa el equivalente nativo —los `type` de cadena si
+cruzan— o el archivo entero se marca `"use client"`.
+
+Y la senal general: **una prueba en jsdom no distingue un Server Component de
+uno cliente.** Todo defecto que solo exista en la frontera de RSC hay que
+buscarlo leyendo el codigo del paquete, o abriendo la pantalla.

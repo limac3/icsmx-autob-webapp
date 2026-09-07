@@ -1,11 +1,6 @@
 import { forbidden, redirect } from "next/navigation";
 import { Primary } from "@churchofjesuschrist/eden-buttons";
-import {
-  FormField,
-  Input,
-  Option,
-  Select,
-} from "@churchofjesuschrist/eden-form-parts";
+import { FormField, Input, Select } from "@churchofjesuschrist/eden-form-parts";
 import { H1 } from "@churchofjesuschrist/eden-headings";
 import { Text2 } from "@churchofjesuschrist/eden-text";
 import TablaVehiculos from "@/components/TablaVehiculos";
@@ -84,12 +79,22 @@ const CatalogoVehiculos = async ({
           <Input name="q" type="search" defaultValue={q ?? ""} />
         </FormField>
         <FormField label={etiquetas.filtrarPorEstatus}>
+          {/* `<option>` nativo, no el `Option` de Eden. `Select` decide si
+              monta su desplegable propio comparando `child.type === Option`, y
+              esa identidad **no sobrevive la frontera de RSC**: los hijos que
+              crea un Server Component llegan como referencias perezosas, la
+              comparacion falla, y los `Option` terminan renderizados sin el
+              contexto que necesitan — 500 en la peticion. Eden admite
+              `child.type === "option"` de forma explicita, y esa rama es
+              justo la que queremos: un `<select>` nativo que funciona sin
+              JavaScript, que es el punto de este formulario GET.
+              Ver desafios-implementacion.md seccion 23. */}
           <Select name="estatus" defaultValue={estatus ?? ""}>
-            <Option value="">{etiquetas.todos}</Option>
+            <option value="">{etiquetas.todos}</option>
             {ESTATUS_VEHICULO.map((uno) => (
-              <Option key={uno} value={uno}>
+              <option key={uno} value={uno}>
                 {diccionario.estatusVehiculo[uno]}
-              </Option>
+              </option>
             ))}
           </Select>
         </FormField>
