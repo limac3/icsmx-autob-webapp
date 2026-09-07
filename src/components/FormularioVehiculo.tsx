@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
 import { Card } from "@churchofjesuschrist/eden-card";
 import { Grid, Item } from "@churchofjesuschrist/eden-grid";
@@ -8,6 +8,7 @@ import { H4 } from "@churchofjesuschrist/eden-headings";
 import { Stack } from "@churchofjesuschrist/eden-stack";
 import { Error as AlertaError, Success } from "@churchofjesuschrist/eden-alert";
 import {
+  Form,
   FormField,
   Input,
   TextArea,
@@ -20,7 +21,7 @@ import {
   ESTADO_FORMULARIO_INICIAL,
   type EstadoFormularioVehiculo,
 } from "@/types/formularioVehiculo";
-import type { DatosVehiculo } from "@/types/vehiculo";
+import { CAMPOS_VEHICULO, type DatosVehiculo } from "@/types/vehiculo";
 import "./FormularioVehiculo.css";
 
 /**
@@ -96,16 +97,87 @@ const FormularioVehiculo = ({
   const { vehiculos: etiquetas, errores, validacionVehiculo } = diccionario;
   const campos = etiquetas.campos;
 
-  const detalle = (campo: keyof DatosVehiculo): string | undefined => {
-    if (estado.estado !== "error") return undefined;
-    const motivo = estado.detalles?.[campo];
-    if (!motivo) return undefined;
-    // Nunca el codigo crudo (regla 11).
-    return validacionVehiculo[motivo as keyof typeof validacionVehiculo];
+  const formularioRef = useRef<HTMLFormElement>(null);
+
+  /**
+   * Errores que devolvio el servidor, por campo y ya traducidos.
+   *
+   * Van en un `ref` y no en estado porque Eden invoca `onValidate` desde un
+   * `requestAnimationFrame`: tiene que leer el valor de ese instante, no el que
+   * hubiera cuando se creo el closure.
+   */
+  const erroresDelServidor = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    erroresDelServidor.current =
+      estado.estado === "error" && estado.detalles
+        ? Object.fromEntries(
+            Object.entries(estado.detalles).map(([campo, motivo]) => [
+              campo,
+              // Nunca el codigo crudo (regla 11).
+              validacionVehiculo[motivo as keyof typeof validacionVehiculo] ??
+                motivo,
+            ]),
+          )
+        : {};
+
+    // Eden solo reevalua un control cuando ocurre un evento sobre el, y al
+    // volver del servidor no ocurre ninguno: sin este disparo el error se
+    // quedaria invisible hasta que el usuario tecleara. `validate` es el evento
+    // que `useValidation` escucha justamente para esto.
+    const formulario = formularioRef.current;
+    if (!formulario) return;
+    for (const campo of CAMPOS_VEHICULO) {
+      const control = formulario.elements.namedItem(campo);
+      if (control instanceof HTMLElement) {
+        control.dispatchEvent(new Event("validate", { bubbles: true }));
+      }
+    }
+  }, [estado, validacionVehiculo]);
+
+  /**
+   * Traslada el error del servidor a la validacion nativa del control.
+   *
+   * Es el camino que documenta Eden para mensajes propios. Con `description` el
+   * texto salia como ayuda: se leia, pero el campo no quedaba invalido —sin
+   * marco rojo, sin icono y sin `aria-invalid`—, porque el estado de validez de
+   * Eden solo lo mueve `validationMessage`.
+   */
+  const validarConElServidor = (control: HTMLInputElement): void => {
+    // El campo sale del propio control y no de un closure por campo: una
+    // fabrica que devuelve funciones leyendo el ref hace saltar la regla del
+    // compilador de React sobre refs en render, y ademas sobra — el control
+    // conoce su nombre.
+    //
+    // La cadena vacia es lo que limpia; cualquier otra deja el control invalido.
+    control.setCustomValidity(erroresDelServidor.current[control.name] ?? "");
+  };
+
+  /**
+   * El error del servidor deja de aplicar en cuanto el usuario toca el campo.
+   *
+   * Sin esto se quedaria pegado: `setCustomValidity` persiste hasta que se
+   * limpia, y el campo seguiria rojo con el mensaje viejo aunque ya tuviera un
+   * valor bueno. Funciona por el orden de los eventos: Eden escucha `input` en
+   * el propio control y reevalua dentro de un `requestAnimationFrame`, asi que
+   * este manejador —que corre al burbujear hasta el formulario— ya borro la
+   * entrada cuando se vuelve a llamar a `onValidate`.
+   */
+  const olvidarErrorDelServidor = (destino: EventTarget | null): void => {
+    if (!(destino instanceof HTMLElement)) return;
+    const nombre = destino.getAttribute("name");
+    if (nombre) delete erroresDelServidor.current[nombre];
   };
 
   return (
-    <form action={enviar} className="formulario-vehiculo" noValidate={false}>
+    <Form
+      action={enviar}
+      className="formulario-vehiculo"
+      ref={formularioRef}
+      onInput={(evento) => {
+        olvidarErrorDelServidor(evento.target);
+      }}
+    >
       {vehiculoId ? (
         <input type="hidden" name="vehiculoId" value={vehiculoId} />
       ) : null}
@@ -136,7 +208,7 @@ const FormularioVehiculo = ({
             <H4 renderAs="legend">{etiquetas.seccionIdentificacion}</H4>
 
             <Stack gapSize="16">
-              <FormField label={campos.marca} description={detalle("marca")}>
+              <FormField label={campos.marca} onValidate={validarConElServidor}>
                 <Input
                   name="marca"
                   required
@@ -147,7 +219,7 @@ const FormularioVehiculo = ({
 
               <FormField
                 label={campos.version}
-                description={detalle("version")}
+                onValidate={validarConElServidor}
               >
                 <Input
                   name="version"
@@ -157,7 +229,10 @@ const FormularioVehiculo = ({
                 />
               </FormField>
 
-              <FormField label={campos.modelo} description={detalle("modelo")}>
+              <FormField
+                label={campos.modelo}
+                onValidate={validarConElServidor}
+              >
                 <Input
                   name="modelo"
                   type="number"
@@ -180,7 +255,7 @@ const FormularioVehiculo = ({
             <Stack gapSize="16">
               <FormField
                 label={campos.kilometraje}
-                description={detalle("kilometraje")}
+                onValidate={validarConElServidor}
               >
                 <Input
                   name="kilometraje"
@@ -196,7 +271,7 @@ const FormularioVehiculo = ({
 
               <FormField
                 label={campos.nivelEquipamiento}
-                description={detalle("nivelEquipamiento")}
+                onValidate={validarConElServidor}
               >
                 <Input
                   name="nivelEquipamiento"
@@ -207,7 +282,7 @@ const FormularioVehiculo = ({
 
               <FormField
                 label={campos.especificacionMecanica}
-                description={detalle("especificacionMecanica")}
+                onValidate={validarConElServidor}
               >
                 <TextArea
                   name="especificacionMecanica"
@@ -227,7 +302,7 @@ const FormularioVehiculo = ({
             <Stack gapSize="16">
               <FormField
                 label={campos.condicionesMecanicas}
-                description={detalle("condicionesMecanicas")}
+                onValidate={validarConElServidor}
               >
                 <TextArea
                   name="condicionesMecanicas"
@@ -239,7 +314,7 @@ const FormularioVehiculo = ({
 
               <FormField
                 label={campos.detallesEsteticos}
-                description={detalle("detallesEsteticos")}
+                onValidate={validarConElServidor}
               >
                 <TextArea
                   name="detallesEsteticos"
@@ -261,7 +336,7 @@ const FormularioVehiculo = ({
           {etiquetas.cancelar}
         </Secondary>
       </div>
-    </form>
+    </Form>
   );
 };
 

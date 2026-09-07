@@ -1370,3 +1370,90 @@ estar aplicando reglas de disposicion y de validacion pensadas para otra cosa.
 Y de nuevo la senal de las secciones 23 y 24: **la compuerta verde no cubre el
 comportamiento visual ni el de validacion nativa.** Aqui hizo falta montar el
 componente y disparar `checkValidity()` a proposito para verlo.
+
+---
+
+## 26) Un error del servidor no llega solo a la validacion de Eden
+
+### Problema
+
+El servidor devuelve los errores por campo (`detalles: { marca: "requerido" }`) y
+la pantalla tiene que marcar **ese** campo como invalido, no solo escribir un
+texto suelto.
+
+### Sintoma
+
+El mensaje aparecia, pero el campo se veia bien: sin marco rojo, sin icono de
+error y sin `aria-invalid`. Se leia como un texto de ayuda mas entre las
+etiquetas, que es exactamente lo que era — viajaba por el `description` de
+`FormField`, documentado como *"a brief description of how to fill in the
+input"*.
+
+### Causa raiz
+
+Eden decide el estado de validez de un control con **una sola fuente**:
+
+```js
+const getValidityState = (validationMessage, warningMessage, showWhenSuccessful) => {
+  if (validationMessage) return "error";
+  ...
+};
+```
+
+`description` no entra en esa cuenta, asi que el `validityState` se quedaba en
+`unknown` y ni `SharedInput` pintaba el borde de peligro ni aparecia el icono.
+
+Y hay dos cosas mas que no son evidentes leyendo solo la API:
+
+1. **`useValidation` solo reacciona a eventos del DOM** — escucha `input`,
+   `change`, `invalid`, `resetValidity` y `validate` sobre el propio control. Al
+   volver del servidor no ocurre ninguno: el estado de React cambia, el
+   componente se repinta, y Eden no se entera. El mensaje se quedaria invisible
+   hasta que el usuario tecleara.
+2. **`setCustomValidity` persiste.** Una vez puesto, el control sigue invalido
+   aunque el usuario escriba un valor correcto, hasta que alguien lo limpia con
+   la cadena vacia.
+
+### Solucion aplicada
+
+Los errores del servidor se guardan traducidos en un `ref` y se aplican por
+`onValidate`, que es el punto de extension que documenta el paquete:
+
+```tsx
+const validarConElServidor = (control: HTMLInputElement): void => {
+  control.setCustomValidity(erroresDelServidor.current[control.name] ?? "");
+};
+```
+
+El campo sale de `control.name` y no de un closure por campo: una fabrica que
+devuelve funciones leyendo el `ref` hace saltar la regla del compilador de React
+sobre refs en render, y ademas sobra.
+
+Para los dos puntos de arriba:
+
+- Al llegar el estado nuevo, un efecto **despacha `validate`** sobre cada
+  control. Es el evento que `useValidation` escucha para justamente esto.
+- Un manejador de `input` en el formulario **borra la entrada del `ref`** en
+  cuanto el usuario toca el campo. Funciona por el orden de los eventos: Eden
+  escucha `input` en el control y reevalua dentro de un `requestAnimationFrame`,
+  asi que el borrado —que corre al burbujear hasta el formulario— ya ocurrio
+  cuando se vuelve a llamar a `onValidate`.
+
+Los tres formularios pasaron ademas al `<Form>` de Eden, que pone `noValidate`
+en el elemento y conduce la validacion el mismo. Con el `<form>` crudo salian
+las dos cosas a la vez: el globo nativo del navegador y el hint de Eden.
+
+Dos pruebas, falsificadas por separado: quitar el despacho de `validate` deja
+las dos en rojo, y quitar el olvido al teclear deja solo la segunda.
+
+### Regla para futuro
+
+Un texto en pantalla no es una validacion. Si el diseño dice "el campo queda
+invalido", hay que moverle al componente **el estado** que el usa para decidirlo
+—aqui `validationMessage` via `setCustomValidity`—, no escribir el mensaje por
+un hueco que solo lo muestra.
+
+Y al integrar validacion propia con un componente de terceros, mirar **como se
+entera**: si escucha eventos del DOM, un cambio de estado de React no le llega y
+hay que provocar el evento. La prueba tiene que esperar al
+`requestAnimationFrame`, o pasa y falla segun lo que tarde el entorno.

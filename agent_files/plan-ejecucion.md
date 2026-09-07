@@ -474,23 +474,25 @@ reescritos, invariantes 11 y 12), `proyecto.md` (5.3), `desafios-implementacion.
       porque el catalogo ya esta completo, y esperar a la Etapa 11 dejaria sin traduccion cada
       evento escrito entre tanto
 
+**Cerrado despues, con el MCP de Eden ya disponible:**
+
+- [x] **Los errores del servidor marcan el campo como invalido.** Viajaban por el `description`
+      de `FormField`, que Eden documenta como texto de ayuda: se leian, pero el control quedaba
+      valido —sin marco rojo, sin icono y sin `aria-invalid`—, porque el estado de validez de
+      Eden solo lo mueve `validationMessage`. Ahora van por `onValidate` + `setCustomValidity`,
+      que es el camino del paquete, con un evento `validate` al volver del servidor para que el
+      mensaje no espere a que el usuario teclee, y con olvido del error en cuanto lo corrige
+- [x] **Los tres formularios usan el `<Form>` de Eden**, que pone `noValidate` y conduce la
+      validacion el mismo. Con el `<form>` crudo salian las dos cosas a la vez: el globo nativo
+      del navegador y el hint de Eden. Con esto queda completa la receta oficial del paquete,
+      `Form` > `Stack` > `FormField`
+
 **Sigue abierto:**
 
 - [ ] El reordenamiento con teclado es de un paso a la vez: cada pulsacion es una transaccion.
       Con `MAXIMO_FOTOGRAFIAS = 20`, el peor caso —llevar la ultima al primer lugar— son 19.
       Quien usa raton ya tiene el arrastre; a quien no, le falta un campo de posicion o un
       "mover al principio". No bloquea la etapa, pero es la brecha real entre los dos caminos
-- [ ] **Los errores del servidor viajan por el `description` de `FormField`**, que Eden
-      documenta como texto de ayuda. El mensaje se muestra y queda asociado por
-      `aria-describedby`, pero el campo no se marca invalido: sin borde rojo, sin icono y sin
-      `aria-invalid`, porque el `validityState` de Eden solo lo mueve `validationMessage`. El
-      camino del paquete es `onValidate` + `setCustomValidity`, mas un evento `validate` para
-      que el mensaje aparezca al volver del servidor y no hasta que el usuario teclee
-- [ ] **El formulario es un `<form>` crudo y no el `<Form>` de Eden**, que pone `noValidate` y
-      conduce la validacion el mismo. Con el crudo salen las dos cosas: el globo nativo del
-      navegador y el hint de Eden. Decidido asi para no tocar el envio sin JavaScript sin
-      haberlo probado en el navegador antes. El ejemplo oficial de `eden-form-parts` es
-      `Form` > `Stack` > `FormField`, asi que este es el unico eslabon que falta de esa receta
 - [ ] **El filtro de `/admin/vehiculos` usa `Input type="search"`**; Eden recomienda
       `SecondarySearch` de `eden-search-box` para filtros de lista —"trae semantica y
       comportamiento de busqueda preconfigurado"— y reserva `Input` para campos genericos. La

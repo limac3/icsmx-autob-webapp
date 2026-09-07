@@ -6,6 +6,7 @@ import { Error as AlertaError } from "@churchofjesuschrist/eden-alert";
 import { Ghost, Secondary } from "@churchofjesuschrist/eden-buttons";
 import {
   FileInput,
+  Form,
   FormField,
   Input,
 } from "@churchofjesuschrist/eden-form-parts";
@@ -286,7 +287,7 @@ const GaleriaVehiculo = ({
       )}
 
       {puedeEditar ? (
-        <form action={subir} className="galeria-vehiculo__subida">
+        <Form action={subir} className="galeria-vehiculo__subida">
           <FormField
             label={etiquetas.subirArchivo}
             description={etiquetas.formatosAdmitidos}
@@ -303,7 +304,7 @@ const GaleriaVehiculo = ({
           <Secondary type="submit" disabled={enProceso}>
             {enProceso ? etiquetas.subiendo : etiquetas.agregar}
           </Secondary>
-        </form>
+        </Form>
       ) : null}
     </section>
   );

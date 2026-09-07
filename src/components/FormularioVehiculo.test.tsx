@@ -2,6 +2,7 @@ import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { obtenerDiccionario } from "@/dictionaries";
 import { genericTests, getTestContext } from "@/utils/testHelpers";
+import { guardarVehiculoDesdeFormulario } from "@/app/actions/vehiculos";
 import FormularioVehiculo from "./FormularioVehiculo";
 
 // Las Server Actions se simulan porque su modulo arrastra todo el grafo del
@@ -90,5 +91,96 @@ describe("secciones del formulario", () => {
     );
 
     expect([...alPieDeLaSeccion].map((nodo) => nodo.textContent)).toEqual([]);
+  });
+});
+
+describe("errores que devuelve el servidor", () => {
+  const diccionario = obtenerDiccionario("es");
+
+  const pintarLleno = async () => {
+    await act(async () => {
+      context.root.render(
+        <FormularioVehiculo
+          diccionario={diccionario}
+          modeloMaximo={2027}
+          vehiculoId="V1"
+          valores={{
+            marca: "Nissan",
+            version: "NP300",
+            modelo: 2019,
+            kilometraje: 148_320,
+          }}
+        />,
+      );
+    });
+    return context.container.querySelector("form")!;
+  };
+
+  // Eden reevalua los controles dentro de un `requestAnimationFrame`, asi que
+  // esperar al `act` no alcanza: hay que dejar pasar un cuadro. Sin esto la
+  // prueba pasa o falla segun lo que tarde el entorno.
+  const esperarUnCuadro = async () => {
+    await act(async () => {
+      await new Promise<void>((resolver) => {
+        requestAnimationFrame(() => {
+          resolver();
+        });
+      });
+    });
+  };
+
+  const control = (nombre: string) =>
+    context.container.querySelector<HTMLInputElement>(`[name="${nombre}"]`)!;
+
+  it("marca el campo como invalido, no solo muestra un texto", async () => {
+    // El defecto que cierra esta prueba: el mensaje viajaba por `description`
+    // de `FormField`, que Eden documenta como texto de ayuda. Se leia, pero el
+    // control quedaba valido —sin marco rojo y sin icono— porque el estado de
+    // validez de Eden solo lo mueve `validationMessage`.
+    vi.mocked(guardarVehiculoDesdeFormulario).mockResolvedValue({
+      estado: "error",
+      error: "validation_failed",
+      detalles: { marca: "requerido" },
+    });
+
+    const formulario = await pintarLleno();
+    expect(control("marca").validationMessage).toBe("");
+
+    await act(async () => {
+      formulario.requestSubmit();
+    });
+    await esperarUnCuadro();
+
+    expect(control("marca").validationMessage).toBe(
+      diccionario.validacionVehiculo.requerido,
+    );
+    // Y un campo que el servidor no senalo sigue limpio.
+    expect(control("version").validationMessage).toBe("");
+  });
+
+  it("olvida el error del servidor en cuanto el usuario corrige el campo", async () => {
+    // `setCustomValidity` persiste hasta que se limpia: sin el manejador de
+    // `input` el campo seguiria rojo con el mensaje viejo aunque ya tuviera un
+    // valor bueno.
+    vi.mocked(guardarVehiculoDesdeFormulario).mockResolvedValue({
+      estado: "error",
+      error: "validation_failed",
+      detalles: { marca: "requerido" },
+    });
+
+    const formulario = await pintarLleno();
+    await act(async () => {
+      formulario.requestSubmit();
+    });
+    await esperarUnCuadro();
+    expect(control("marca").validationMessage).not.toBe("");
+
+    // Solo el evento real de teclear: Eden ya escucha `input` y revalida.
+    await act(async () => {
+      control("marca").dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await esperarUnCuadro();
+
+    expect(control("marca").validationMessage).toBe("");
   });
 });
