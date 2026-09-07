@@ -27,7 +27,7 @@ import { publicarConvocatoria as publicarServicio } from "@/lib/convocatorias/pu
 import { reactivarConvocatoria as reactivarServicio } from "@/lib/convocatorias/reactivarConvocatoria";
 import { rechazarConvocatoria as rechazarServicio } from "@/lib/convocatorias/rechazarConvocatoria";
 import { retirarVehiculoDeConvocatoria as retirarVehiculoServicio } from "@/lib/convocatorias/retirarVehiculoDeConvocatoria";
-import { desdeIso } from "@/lib/domain/fechas";
+import { desdeCampoLocal, desdeIso } from "@/lib/domain/fechas";
 import { fechasCoherentes, ventaFinalizada } from "@/lib/domain/ventanas";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import type { ActorUsuario } from "@/types/auditoria";
@@ -36,6 +36,7 @@ import type {
   DatosConvocatoria,
   EstatusConvocatoria,
 } from "@/types/convocatoria";
+import type { EstadoFormularioConvocatoria } from "@/types/formularioConvocatoria";
 import { fallo, type Resultado } from "@/types/resultado";
 
 /**
@@ -375,4 +376,74 @@ export const concluirConvocatoria = async (
   });
   if (resultado.ok) invalidarTambienLoVisible(convocatoriaId);
   return resultado;
+};
+
+// --- Adaptador de formulario -------------------------------------------------
+//
+// La action de arriba es el contrato documentado y recibe datos tipados. Esta la
+// envuelve con la firma `(estadoPrevio, formData)` que pide `useActionState`,
+// que es lo que permite que el formulario **funcione sin JavaScript**.
+
+/**
+ * Une los dos controles de un instante —fecha y hora— en el ISO que se
+ * persiste.
+ *
+ * **Son dos y no uno porque Eden no tiene un campo combinado**: su propio tipo
+ * de `Input` remite a `DateInput` y `TimeInput` para estos casos.
+ *
+ * Ninguno de los dos lleva zona: entregan la hora de pared que tecleo el
+ * administrador, y esa se interpreta **en hora de negocio** (regla 9). Sin esto,
+ * capturar "08:00" desde Tijuana y desde Ciudad de Mexico guardaria dos
+ * instantes distintos para el mismo texto.
+ *
+ * Un valor que no convierte se deja pasar tal cual: la validacion del dominio lo
+ * rechaza con `fecha_invalida`, que es un motivo por campo que el formulario
+ * sabe pintar. Traducirlo aqui a un error generico perderia esa precision.
+ */
+const instanteDeCampo = (formData: FormData, campo: string): string => {
+  const fecha = String(formData.get(`${campo}Fecha`) ?? "").trim();
+  const hora = String(formData.get(`${campo}Hora`) ?? "").trim();
+  // Con uno solo de los dos no hay instante que formar. Se devuelve vacio para
+  // que el dominio lo marque `requerido` en vez de `fecha_invalida`: al usuario
+  // le falta capturar algo, no corregirlo.
+  if (fecha === "" || hora === "") return "";
+
+  const local = `${fecha}T${hora}`;
+  return desdeCampoLocal(local)?.toISOString() ?? local;
+};
+
+export const guardarConvocatoriaDesdeFormulario = async (
+  _estadoPrevio: EstadoFormularioConvocatoria,
+  formData: FormData,
+): Promise<EstadoFormularioConvocatoria> => {
+  const convocatoriaId = String(formData.get("convocatoriaId") ?? "").trim();
+  const crudoHoras = String(formData.get("horasLiquidacion") ?? "").trim();
+
+  const datos: DatosConvocatoria = {
+    tipo: String(formData.get("tipo") ?? "") as DatosConvocatoria["tipo"],
+    descripcionParticipacion: String(
+      formData.get("descripcionParticipacion") ?? "",
+    ),
+    publicadaEn: instanteDeCampo(formData, "publicadaEn"),
+    inicioVenta: instanteDeCampo(formData, "inicioVenta"),
+    finVenta: instanteDeCampo(formData, "finVenta"),
+    // Un campo numerico vacio da `NaN` y no cero: `Number("")` vale cero, y sin
+    // esto unas horas sin capturar se guardarian como cero horas —un plazo que
+    // vence al nacer— en vez de rechazarse.
+    horasLiquidacion: crudoHoras === "" ? Number.NaN : Number(crudoHoras),
+  };
+
+  const resultado = convocatoriaId
+    ? await editarConvocatoria(convocatoriaId, datos)
+    : await crearConvocatoria(datos);
+
+  if (!resultado.ok) {
+    return {
+      estado: "error",
+      error: resultado.error,
+      ...(resultado.detalles ? { detalles: resultado.detalles } : {}),
+    };
+  }
+
+  return { estado: "guardado", convocatoriaId: resultado.data.convocatoriaId };
 };

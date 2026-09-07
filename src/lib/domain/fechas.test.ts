@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  aCampoLocal,
+  desdeCampoLocal,
   aIso,
   desdeIso,
   desplazamientoEnMinutos,
@@ -322,5 +324,56 @@ describe("formateo para presentacion", () => {
   it("formatearFecha omite la hora", () => {
     const texto = formatearFecha(instante("2026-09-04T18:00:00Z"));
     expect(texto).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+});
+
+describe("campos datetime-local", () => {
+  it("interpreta la hora de pared como hora de negocio, no como UTC", () => {
+    // Septiembre: Mexico ya no observa horario de verano desde octubre de 2022,
+    // asi que el centro esta en UTC-6 todo el ano.
+    expect(desdeCampoLocal("2026-09-10T08:00")?.toISOString()).toBe(
+      "2026-09-10T14:00:00.000Z",
+    );
+  });
+
+  it("da la vuelta completa sin perder el instante", () => {
+    const original = "2026-09-10T08:00";
+    const instante = desdeCampoLocal(original);
+    expect(instante).toBeDefined();
+    expect(aCampoLocal(instante!)).toBe(original);
+  });
+
+  it("rellena el campo con la hora de negocio y no con UTC", () => {
+    // El mismo instante que arriba: si se formateara en UTC diria 14:00.
+    expect(aCampoLocal(new Date("2026-09-10T14:00:00.000Z"))).toBe(
+      "2026-09-10T08:00",
+    );
+  });
+
+  it("rechaza un texto que no tiene la forma del campo", () => {
+    expect(desdeCampoLocal("")).toBeUndefined();
+    expect(desdeCampoLocal("2026-09-10")).toBeUndefined();
+    expect(desdeCampoLocal("2026-09-10T08:00:00Z")).toBeUndefined();
+  });
+
+  it("rechaza una fecha que no existe en el calendario", () => {
+    expect(desdeCampoLocal("2026-02-30T08:00")).toBeUndefined();
+  });
+
+  it("respeta el horario de verano historico", () => {
+    // Abril de 2021, cuando Mexico todavia lo observaba: el centro estaba en
+    // UTC-5. Sin esto, un `-6` cableado pasaria las pruebas de hoy y fallaria
+    // con cualquier fecha anterior a octubre de 2022.
+    expect(desdeCampoLocal("2021-04-10T08:00")?.toISOString()).toBe(
+      "2021-04-10T13:00:00.000Z",
+    );
+  });
+});
+
+describe("campos datetime-local con segundos", () => {
+  it("acepta los segundos que anade algun navegador y los descarta", () => {
+    expect(desdeCampoLocal("2026-09-10T08:00:00")?.toISOString()).toBe(
+      "2026-09-10T14:00:00.000Z",
+    );
   });
 });

@@ -260,3 +260,52 @@ export const formatearFechaHora = (instante: Date): string =>
 
 export const formatearFecha = (instante: Date): string =>
   FORMATEADOR_FECHA.format(instante);
+
+// --- Campos `datetime-local` -----------------------------------------------
+//
+// Un `<input type="datetime-local">` no tiene zona: entrega `YYYY-MM-DDTHH:mm`
+// y el navegador lo pinta con **la hora del reloj de quien captura**. Estas dos
+// funciones son la frontera que convierte ese texto sin zona en el instante que
+// corresponde en hora de negocio, y de vuelta.
+//
+// Sin ellas, un administrador en Tijuana capturando "08:00" guardaria un
+// instante distinto que uno en Ciudad de Mexico capturando lo mismo, para un
+// dato que decide cuando abre una venta.
+
+// Los segundos son opcionales: `TimeInput` entrega `HH:mm`, pero un navegador
+// con `step` en segundos puede anadir `:ss`. Se aceptan y se descartan — una
+// ventana de venta no se decide por segundos.
+const CAMPO_LOCAL = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?$/;
+
+/**
+ * Interpreta el valor de un `datetime-local` **como hora de negocio**.
+ *
+ * Devuelve `undefined` si el texto no tiene la forma esperada o si esa hora de
+ * pared no existe —el salto de primavera se lleva una hora del calendario—, y
+ * en ese caso el formulario debe rechazarla en vez de adivinar cual quiso decir.
+ */
+export const desdeCampoLocal = (valor: string): Date | undefined => {
+  const partes = CAMPO_LOCAL.exec(valor.trim());
+  if (!partes) return undefined;
+
+  const [, anio, mes, dia, hora, minuto] = partes;
+  return instanteDesdeHoraDeNegocio({
+    anio: Number(anio),
+    mes: Number(mes),
+    dia: Number(dia),
+    hora: Number(hora),
+    minuto: Number(minuto),
+  });
+};
+
+/**
+ * El valor con el que se rellena un `datetime-local` al editar: la hora de
+ * pared **de negocio** que corresponde a ese instante.
+ */
+export const aCampoLocal = (instante: Date): string => {
+  const { anio, mes, dia, hora, minuto } = partesEnZonaDeNegocio(instante);
+  return (
+    `${conCeros(anio, 4)}-${conCeros(mes, 2)}-${conCeros(dia, 2)}` +
+    `T${conCeros(hora, 2)}:${conCeros(minuto, 2)}`
+  );
+};

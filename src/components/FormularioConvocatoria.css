@@ -1,0 +1,27 @@
+/* Alta y edicion de convocatoria. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). Misma composicion que el formulario de
+   vehiculo: ver desafios-implementacion.md seccion 25. */
+
+.formulario-convocatoria {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 48rem;
+}
+
+.formulario-convocatoria__seccion {
+  margin: 0;
+  /* Sin esto el fieldset impone min-width: min-content y un campo largo
+     desborda la columna en vez de encogerse. */
+  min-inline-size: 0;
+  padding: var(--unity-spacing16);
+}
+
+.formulario-convocatoria__seccion > legend {
+  padding-inline: var(--unity-spacing8);
+}
+
+.formulario-convocatoria__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}

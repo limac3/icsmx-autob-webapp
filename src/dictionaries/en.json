@@ -201,7 +201,20 @@
     "columnaTipo": "Type",
     "verDetalle": "View",
     "horaDeNegocio": "Central Mexico time",
-    "pestanas": "Sale announcements by status"
+    "pestanas": "Sale announcements by status",
+    "guardada": "Sale announcement saved.",
+    "soloLectura": "This sale announcement can no longer be edited in its current status.",
+    "seccionParticipacion": "Participation",
+    "seccionCalendario": "Sale schedule",
+    "campoTipo": "Who can take part?",
+    "campoDescripcion": "Participation description",
+    "campoPublicadaEn": "Publication",
+    "campoInicioVenta": "Sale start",
+    "campoFinVenta": "Sale end",
+    "campoHorasLiquidacion": "Hours to settle payment",
+    "horasLiquidacionAyuda": "Calendar hours from the award, not business days.",
+    "subcampoFecha": "Date",
+    "subcampoHora": "Time"
   },
   "validacionConvocatoria": {
     "requerido": "This field is required",

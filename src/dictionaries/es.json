@@ -201,7 +201,20 @@
     "columnaTipo": "Tipo",
     "verDetalle": "Ver",
     "horaDeNegocio": "Horario del centro de México",
-    "pestanas": "Convocatorias por estatus"
+    "pestanas": "Convocatorias por estatus",
+    "guardada": "Convocatoria guardada.",
+    "soloLectura": "Esta convocatoria ya no se puede editar en su estatus actual.",
+    "seccionParticipacion": "Participación",
+    "seccionCalendario": "Calendario de venta",
+    "campoTipo": "¿Quién puede participar?",
+    "campoDescripcion": "Descripción de la participación",
+    "campoPublicadaEn": "Publicación",
+    "campoInicioVenta": "Inicio de venta",
+    "campoFinVenta": "Fin de venta",
+    "campoHorasLiquidacion": "Horas para liquidar el pago",
+    "horasLiquidacionAyuda": "Horas naturales desde la adjudicación, no días hábiles.",
+    "subcampoFecha": "Fecha",
+    "subcampoHora": "Hora"
   },
   "validacionConvocatoria": {
     "requerido": "Este dato es obligatorio",
