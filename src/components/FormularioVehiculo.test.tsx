@@ -51,6 +51,25 @@ describe("secciones del formulario", () => {
     ...context.container.querySelectorAll(".eden-form-part-hint"),
   ];
 
+  it("cada seccion sigue siendo un fieldset con su legend", async () => {
+    // `Card` separa a la vista, pero lo que hace que un lector de pantalla
+    // anuncie "Identificacion" como contexto de cada campo es el elemento. Si
+    // alguien quita el `renderAs`, la tarjeta se ve igual y la semantica
+    // desaparece sin ruido.
+    await pintarVacio();
+
+    const secciones = context.container.querySelectorAll(
+      "fieldset.formulario-vehiculo__seccion",
+    );
+
+    expect(secciones).toHaveLength(3);
+    for (const seccion of secciones) {
+      expect(
+        seccion.querySelector(":scope > legend")?.textContent,
+      ).toBeTruthy();
+    }
+  });
+
   it("cada campo invalido explica su error una sola vez", async () => {
     await pintarVacio();
 

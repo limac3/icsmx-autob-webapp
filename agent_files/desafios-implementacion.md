@@ -1293,22 +1293,34 @@ De ahi salen las dos consecuencias:
 
 ### Solucion aplicada
 
-Las secciones pasan a `<fieldset>` **nativo** con una clase propia, conservando
-el `Legend` de Eden, que solo aporta tipografia (`Text4` sobre un `<legend>`) y
-no trae comportamiento.
+Cada seccion es `Card renderAs="fieldset"` con un `Stack` dentro, conservando el
+`Legend` de Eden, que solo aporta tipografia (`Text4` sobre un `<legend>`) y no
+trae comportamiento.
 
-No es saltarse la regla 10: Eden no ofrece un componente para seccionar un
-formulario, y `<fieldset>`/`<legend>` es el HTML correcto para agrupar controles
-relacionados —el lector de pantalla anuncia la leyenda como contexto de cada
-campo—. Lo que se descarta es el componente, no el elemento.
+El primer intento fue `<fieldset>` pelado. Resolvia los dos defectos, pero al
+verlo en pantalla no separaba nada: sin marco, las tres secciones se leian como
+una lista continua con tres titulos grises. **`renderAs` es lo que permite
+quedarse con las dos cosas**: `Card` pone borde, radio y sombra, y el elemento
+sigue siendo un `<fieldset>` con su `<legend>` —que es lo que hace que un lector
+de pantalla anuncie la seccion como contexto de cada campo—. `Stack` apila los
+campos con la separacion de la escala de Eden.
 
-El CSS propio se limita a apilar y a quitar el marco del navegador. Lleva
-`min-inline-size: 0` porque el `<fieldset>` impone `min-width: min-content` y sin
-eso un campo largo desborda la columna en vez de encogerse.
+No es saltarse la regla 10, es al reves: se usan tres componentes de Eden
+(`Card`, `Stack`, `Legend`) y se descarta solo el que estaba escrito para otra
+cosa. `Card` y `Stack` estaban instalados como dependencias transitivas; se
+declararon en `package.json` al pasar a usarse directamente.
 
-La prueba de regresion cuenta los mensajes y exige que ninguno cuelgue del
-`<fieldset>`; falsificada devolviendo una sola seccion al `FieldSet` de Eden, con
-lo que pasa a cinco mensajes y uno al pie.
+El CSS propio queda en dos reglas: el espacio interior, que `Card` no trae a
+proposito para no imponer una densidad, y un respiro lateral en el `<legend>`,
+que el navegador recorta sobre el borde superior. Lleva `min-inline-size: 0`
+porque el `<fieldset>` impone `min-width: min-content` y sin eso un campo largo
+desborda la columna en vez de encogerse.
+
+Tres pruebas de regresion: los mensajes se cuentan, ninguno cuelga del
+`<fieldset>`, y cada seccion sigue siendo un `<fieldset>` con `<legend>`. La
+primera se falsifico devolviendo una seccion al `FieldSet` de Eden —cinco
+mensajes y uno al pie—; la tercera, quitando el `renderAs`, con lo que la tarjeta
+se ve igual y la semantica desaparece sin ruido.
 
 ### Regla para futuro
 

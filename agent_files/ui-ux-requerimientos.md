@@ -186,6 +186,13 @@ Filtros por estatus y busqueda por marca o version. Acciones por fila en
 Formulario con `eden-form-parts`, en secciones: identificacion, especificacion, condicion,
 fotografias.
 
+Cada seccion es una **tarjeta** (`Card renderAs="fieldset"` con un `Stack` dentro): el marco es
+lo que separa a la vista —con solo un titulo encima, las secciones se leen como una lista
+continua—, y el `renderAs` conserva el `<fieldset>`/`<legend>`, que es lo que hace que un lector
+de pantalla anuncie la seccion como contexto de cada campo. **No se usa el `FieldSet` de Eden**:
+esta documentado para agrupar `Radio` y `Checkbox`, y con campos de texto reparte mal el ancho y
+duplica los mensajes de error. Ver `desafios-implementacion.md` seccion 25.
+
 **Gestion de fotografias:** subida, reordenamiento, marcar principal, eliminar. La principal se
 distingue con un `Badge`. **No se puede eliminar la ultima** — el boton se deshabilita con
 explicacion, y el servidor lo vuelve a comprobar.

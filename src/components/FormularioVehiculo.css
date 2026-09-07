@@ -8,26 +8,23 @@
   max-width: 60rem;
 }
 
-/* Las secciones son <fieldset> nativo. El FieldSet de Eden esta hecho para
-   agrupar Radio y Checkbox: solo estira a hijos legend/label/input, asi que los
-   FormField quedaban en fila. Aqui se apilan y se le quita el marco del
-   navegador. Ver desafios-implementacion.md seccion 25. */
+/* Cada seccion es `Card renderAs="fieldset"`: Card trae borde, radio y sombra;
+   Stack apila los campos. Lo unico que falta poner es el espacio interior, que
+   Card no trae a proposito para no imponer una densidad.
+   Ver desafios-implementacion.md seccion 25. */
 
 .formulario-vehiculo__seccion {
-  border: 0;
-  display: grid;
-  gap: 1rem;
   margin: 0;
   /* Sin esto el fieldset impone min-width: min-content y un campo largo
      desborda la columna en vez de encogerse. */
   min-inline-size: 0;
-  padding: 0;
+  padding: var(--unity-spacing16);
 }
 
-/* El navegador saca el legend de la rejilla —lo coloca en la caja del borde—,
-   asi que el `gap` no lo separa del primer campo. */
+/* El navegador recorta el legend sobre el borde superior de la tarjeta; sin
+   este respiro lateral el texto queda pegado a la esquina. */
 .formulario-vehiculo__seccion > legend {
-  margin-block-end: 0.75rem;
+  padding-inline: var(--unity-spacing8);
 }
 
 .formulario-vehiculo__acciones {

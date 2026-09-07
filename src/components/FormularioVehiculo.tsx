@@ -2,6 +2,8 @@
 
 import { useActionState } from "react";
 import { Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
+import { Card } from "@churchofjesuschrist/eden-card";
+import { Stack } from "@churchofjesuschrist/eden-stack";
 import { Error as AlertaError, Success } from "@churchofjesuschrist/eden-alert";
 import {
   FormField,
@@ -32,12 +34,18 @@ import "./FormularioVehiculo.css";
  * captura. La comprobacion de verdad la hace el servidor, con las mismas cotas
  * de `LIMITES` — importadas de ahi para que no puedan divergir.
  *
- * **Las secciones son `<fieldset>` nativo, no el `FieldSet` de Eden.** Ese
- * componente esta documentado para agrupar `Radio` y `Checkbox`: su CSS solo
- * estira a hijos `legend`, `label` e `input` —los `FormField` quedaban en fila en
- * vez de apilados— y su validacion de grupo repite al pie de cada seccion el
- * error del primer campo invalido. Medido: seis mensajes para cuatro campos. El
- * `<legend>` sigue siendo el de Eden, que solo aporta tipografia. Ver
+ * **Cada seccion es `Card renderAs="fieldset"` con un `Stack` dentro**, y no el
+ * `FieldSet` de Eden. Ese componente esta documentado para agrupar `Radio` y
+ * `Checkbox`: su CSS solo estira a hijos `legend`, `label` e `input` —los
+ * `FormField` quedaban en fila en vez de apilados— y su validacion de grupo
+ * repite al pie de cada seccion el error del primer campo invalido. Medido:
+ * seis mensajes para cuatro campos.
+ *
+ * `renderAs` es lo que permite quedarse con las dos cosas: `Card` pone el marco
+ * que separa a la vista, y el elemento sigue siendo un `<fieldset>` con su
+ * `<legend>`, que es lo que hace que un lector de pantalla anuncie la seccion
+ * como contexto de cada campo. `Stack` apila; el `<legend>` no entra en el
+ * porque el navegador lo recorta sobre el borde superior. Ver
  * desafios-implementacion.md seccion 25.
  *
  * **Los `Input` no llevan `maxLength`.** El tipo de Eden lo declara `string` y
@@ -109,111 +117,117 @@ const FormularioVehiculo = ({
         </AlertaError>
       ) : null}
 
-      <fieldset className="formulario-vehiculo__seccion">
+      <Card renderAs="fieldset" className="formulario-vehiculo__seccion">
         <Legend>{etiquetas.seccionIdentificacion}</Legend>
 
-        <FormField label={campos.marca} description={detalle("marca")}>
-          <Input
-            name="marca"
-            required
-            defaultValue={valores.marca ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
+        <Stack gapSize="16">
+          <FormField label={campos.marca} description={detalle("marca")}>
+            <Input
+              name="marca"
+              required
+              defaultValue={valores.marca ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
 
-        <FormField label={campos.version} description={detalle("version")}>
-          <Input
-            name="version"
-            required
-            defaultValue={valores.version ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
+          <FormField label={campos.version} description={detalle("version")}>
+            <Input
+              name="version"
+              required
+              defaultValue={valores.version ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
 
-        <FormField label={campos.modelo} description={detalle("modelo")}>
-          <Input
-            name="modelo"
-            type="number"
-            required
-            min={String(LIMITES.modeloMinimo)}
-            max={String(modeloMaximo)}
-            step="1"
-            defaultValue={valores.modelo?.toString() ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
-      </fieldset>
+          <FormField label={campos.modelo} description={detalle("modelo")}>
+            <Input
+              name="modelo"
+              type="number"
+              required
+              min={String(LIMITES.modeloMinimo)}
+              max={String(modeloMaximo)}
+              step="1"
+              defaultValue={valores.modelo?.toString() ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
+        </Stack>
+      </Card>
 
-      <fieldset className="formulario-vehiculo__seccion">
+      <Card renderAs="fieldset" className="formulario-vehiculo__seccion">
         <Legend>{etiquetas.seccionEspecificacion}</Legend>
 
-        <FormField
-          label={campos.kilometraje}
-          description={detalle("kilometraje")}
-        >
-          <Input
-            name="kilometraje"
-            type="number"
-            required
-            min="0"
-            max={String(LIMITES.kilometrajeMaximo)}
-            step="1"
-            defaultValue={valores.kilometraje?.toString() ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
+        <Stack gapSize="16">
+          <FormField
+            label={campos.kilometraje}
+            description={detalle("kilometraje")}
+          >
+            <Input
+              name="kilometraje"
+              type="number"
+              required
+              min="0"
+              max={String(LIMITES.kilometrajeMaximo)}
+              step="1"
+              defaultValue={valores.kilometraje?.toString() ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
 
-        <FormField
-          label={campos.nivelEquipamiento}
-          description={detalle("nivelEquipamiento")}
-        >
-          <Input
-            name="nivelEquipamiento"
-            defaultValue={valores.nivelEquipamiento ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
+          <FormField
+            label={campos.nivelEquipamiento}
+            description={detalle("nivelEquipamiento")}
+          >
+            <Input
+              name="nivelEquipamiento"
+              defaultValue={valores.nivelEquipamiento ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
 
-        <FormField
-          label={campos.especificacionMecanica}
-          description={detalle("especificacionMecanica")}
-        >
-          <TextArea
-            name="especificacionMecanica"
-            maxLength={LIMITES.especificacionMecanica}
-            defaultValue={valores.especificacionMecanica ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
-      </fieldset>
+          <FormField
+            label={campos.especificacionMecanica}
+            description={detalle("especificacionMecanica")}
+          >
+            <TextArea
+              name="especificacionMecanica"
+              maxLength={LIMITES.especificacionMecanica}
+              defaultValue={valores.especificacionMecanica ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
+        </Stack>
+      </Card>
 
-      <fieldset className="formulario-vehiculo__seccion">
+      <Card renderAs="fieldset" className="formulario-vehiculo__seccion">
         <Legend>{etiquetas.seccionCondicion}</Legend>
 
-        <FormField
-          label={campos.condicionesMecanicas}
-          description={detalle("condicionesMecanicas")}
-        >
-          <TextArea
-            name="condicionesMecanicas"
-            maxLength={LIMITES.condicionesMecanicas}
-            defaultValue={valores.condicionesMecanicas ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
+        <Stack gapSize="16">
+          <FormField
+            label={campos.condicionesMecanicas}
+            description={detalle("condicionesMecanicas")}
+          >
+            <TextArea
+              name="condicionesMecanicas"
+              maxLength={LIMITES.condicionesMecanicas}
+              defaultValue={valores.condicionesMecanicas ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
 
-        <FormField
-          label={campos.detallesEsteticos}
-          description={detalle("detallesEsteticos")}
-        >
-          <TextArea
-            name="detallesEsteticos"
-            maxLength={LIMITES.detallesEsteticos}
-            defaultValue={valores.detallesEsteticos ?? ""}
-            disabled={soloLectura}
-          />
-        </FormField>
-      </fieldset>
+          <FormField
+            label={campos.detallesEsteticos}
+            description={detalle("detallesEsteticos")}
+          >
+            <TextArea
+              name="detallesEsteticos"
+              maxLength={LIMITES.detallesEsteticos}
+              defaultValue={valores.detallesEsteticos ?? ""}
+              disabled={soloLectura}
+            />
+          </FormField>
+        </Stack>
+      </Card>
 
       <div className="formulario-vehiculo__acciones">
         <Primary type="submit" disabled={soloLectura || enProceso}>
