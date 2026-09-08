@@ -17,6 +17,28 @@
     "etiquetaPermisos": "Permisos",
     "etiquetaTiposDeConvocatoria": "Convocatorias a las que tiene acceso"
   },
+  "navegacion": {
+    "menu": "Menú de la aplicación",
+    "entrar": "Iniciar sesión",
+    "salir": "Cerrar sesión",
+    "miSesion": "Mi sesión",
+    "sinAccesos": "Sin accesos asignados",
+    "convocatorias": "Convocatorias",
+    "vehiculos": "Vehículos",
+    "convocatoriasAdmin": "Administrar convocatorias",
+    "aprobaciones": "Aprobaciones",
+    "tesoreria": "Tesorería",
+    "auditoria": "Auditoría"
+  },
+  "desarrollo": {
+    "titulo": "Identidad simulada",
+    "insignia": "Solo desarrollo",
+    "ayuda": "Elige con qué identidad recorrer la aplicación. Sustituye los permisos y la identidad de negocio; la autenticación sigue siendo la de Okta.",
+    "sinSimular": "Sin simular",
+    "volverAlEntorno": "Dejar de simular",
+    "sinPermisos": "Sin permisos",
+    "sesionRealDeOkta": "Sesión real de Okta"
+  },
   "prohibido": {
     "titulo": "Sin acceso",
     "descripcion": "Tu cuenta no tiene permisos asignados en esta aplicación. Si crees que es un error, contacta al administrador."
@@ -334,7 +356,13 @@
     "rechazadaPorTesoreria": "Tesorería rechazó el comprobante.",
     "noAdjudicada": "La convocatoria cerró sin que te alcanzara el turno.",
     "solicitada": "Ya estás en la fila.",
-    "cancelada": "Cancelamos tu solicitud."
+    "cancelada": "Cancelamos tu solicitud.",
+    "subirComprobante": "Subir comprobante",
+    "subiendoComprobante": "Subiendo…",
+    "enviarComprobante": "Enviar",
+    "campoComprobante": "Comprobante de pago",
+    "formatosComprobante": "JPG, PNG o PDF, hasta 10 MB.",
+    "avisoRevisionComprobante": "Este archivo será revisado por tesorería."
   },
   "filaAdministrativa": {
     "titulo": "Fila del vehículo",
@@ -350,5 +378,89 @@
     "venceEn": "Vence el",
     "sinAdjudicacion": "Sin adjudicación vigente",
     "volverALaConvocatoria": "Volver a la convocatoria"
+  },
+  "tesoreria": {
+    "titulo": "Verificación de pagos",
+    "descripcion": "Solicitudes con comprobante cargado, pendientes de dictamen.",
+    "sinPendientes": "No hay comprobantes pendientes de verificar.",
+    "columnaVehiculo": "Vehículo",
+    "columnaConvocatoria": "Convocatoria",
+    "columnaCorreo": "Correo del titular",
+    "columnaAdjudicadoEn": "Adjudicado el",
+    "columnaComprobante": "Comprobante cargado el",
+    "comprobante": "Comprobante de pago",
+    "abrirComprobantePdf": "Abrir comprobante (PDF)",
+    "yaResuelta": "Esta solicitud ya fue resuelta.",
+    "avalar": "Avalar pago",
+    "rechazar": "Rechazar pago",
+    "motivoRechazo": "Motivo del rechazo",
+    "motivoRechazoAyuda": "Obligatorio para rechazar. Queda registrado en la bitácora.",
+    "confirmarAvalar": "El vehículo quedará marcado como vendido y la operación no se revierte. ¿Continuar?",
+    "confirmarRechazar": "El vehículo se adjudicará automáticamente al siguiente participante de la fila. ¿Continuar?",
+    "continuarDictamen": "Sí, continuar",
+    "cancelarDictamen": "Cancelar",
+    "hechoAvalar": "Pago avalado. El vehículo quedó marcado como vendido.",
+    "hechoRechazar": "Pago rechazado. El lote se reasignó al siguiente participante de la fila."
+  },
+  "auditoria": {
+    "titulo": "Auditoría",
+    "descripcion": "Bitácora completa, de solo lectura.",
+    "campoAgregado": "Tipo de registro",
+    "tiposDeAgregado": {
+      "VEHICULO": "Vehículo",
+      "CONVOCATORIA": "Convocatoria",
+      "LOTE": "Lote",
+      "SOLICITUD": "Solicitud"
+    },
+    "campoAgregadoId": "Identificador",
+    "campoTipo": "Tipo de evento",
+    "todosLosTipos": "Todos",
+    "campoDesde": "Desde",
+    "campoHasta": "Hasta",
+    "campoParticipante": "Participante (identificador)",
+    "buscar": "Buscar",
+    "promptInicial": "Elige un tipo de registro y su identificador para ver su bitácora.",
+    "sinEventos": "No hay eventos que coincidan con estos filtros.",
+    "columnaFecha": "Fecha",
+    "columnaTipo": "Evento",
+    "columnaActor": "Actor",
+    "columnaMotivo": "Motivo",
+    "columnaCorrelacion": "Transacción",
+    "exportar": "Exportar CSV",
+    "avisoExportacion": "La exportación queda registrada en la bitácora.",
+    "verReconstruccion": "Ver reconstrucción de la fila",
+    "verVerificacion": "Ver verificación de integridad",
+    "tituloReconstruccion": "Reconstrucción de la fila",
+    "descripcionReconstruccion": "Todas las solicitudes del lote, en orden de turno. A diferencia de las pantallas administrativas, aquí sí se muestran identidades.",
+    "columnaTurno": "Turno",
+    "columnaParticipante": "Participante",
+    "sinSolicitudes": "Este lote no tiene ninguna solicitud registrada.",
+    "eventosDelLote": "Eventos del lote",
+    "tituloVerificacion": "Verificación de integridad",
+    "descripcionVerificacion": "Recalculada desde la bitácora, no desde lo que la aplicación cree que pasó.",
+    "veredictos": {
+      "cumple": "Cumple",
+      "incumple": "Incumple",
+      "informativo": "Informativo"
+    },
+    "comprobaciones": {
+      "turnosContiguos": "Turnos únicos, sin duplicados",
+      "ordenDeAdjudicacion": "Orden de adjudicación",
+      "unaAdjudicacionVigente": "Una sola adjudicación vigente",
+      "vencimientosConTiempo": "Vencimientos detectados a tiempo",
+      "transicionesConEvento": "Toda transición tiene su evento",
+      "motivosObligatorios": "Motivos obligatorios presentes"
+    },
+    "huecos": "Huecos informativos en los turnos",
+    "duplicados": "Turnos duplicados",
+    "saltoTurno": "Turno",
+    "saltoAdjudicado": "adjudicado sin justificar el turno",
+    "conflictoTurno": "Turno",
+    "conflictoNuevo": "adjudicado sin liberar el turno",
+    "turnosInconsistentes": "Turnos con fecha de vencimiento inconsistente",
+    "turnosSinExplicar": "Turnos sin evento que explique su estatus vigente",
+    "eventosSinMotivo": "Eventos sin motivo obligatorio",
+    "sinHallazgos": "Sin hallazgos.",
+    "volver": "Volver"
   }
 }

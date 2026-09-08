@@ -129,24 +129,79 @@ porque EAS no le concede permisos de venta, no porque el codigo se lo impida.
 | --- | --- |
 | `OFF` | Solo EAS real. **Unico valor admisible en produccion** |
 | `MOCK_USERS` | Permisos simulados a partir de un rol, para desarrollar sin EAS |
-| `FULL` | Pensado para simulacion e impersonacion interactiva; hoy se comporta igual que `MOCK_USERS` — la UI para elegir el rol simulado no existe todavia y se construye cuando exista una pantalla que la necesite |
+| `FULL` | `MOCK_USERS` mas el **conmutador de identidad simulada** de la seccion 4.1.1: elegir con quien se recorre la aplicacion, sin reiniciar y por navegador |
 
 La simulacion razona en **roles** porque es como piensa el equipo, y los traduce a permisos con
 la tabla de la seccion 8 de `permission-matrix.md`. `DEV_TOOLS_MOCK_ROLES` elige los roles;
 `DEV_TOOLS_MOCK_PERMISOS` se salta la tabla y fija permisos sueltos para casos borde que ningun
 rol representa.
 
-> **Ese es el unico lugar del sistema donde sobrevive el concepto de rol.** Ningun archivo fuera
-> del simulador importa el tipo `Rol`. Es una regla verificable con `grep` y forma parte de la
-> compuerta de la Etapa 2.1.
+> **El concepto de rol no sale del simulador.** Solo tres archivos lo conocen:
+> `rolesSimulados.ts` (la tabla), `personasSimuladas.ts` (el roster) y `eas.ts` (que lee
+> `DEV_TOOLS_MOCK_ROLES`). Ningun archivo del negocio importa `Rol`.
+>
+> La compuerta de la Etapa 2.1 enunciaba esto como "ningun archivo fuera de `rolesSimulados.ts`",
+> y **eso nunca fue cierto**: `eas.ts` lo importa desde el primer dia. El `grep` a mano no lo
+> delato. Lo que la invariante protege no es un archivo, es la frontera entre `src/lib/auth` y el
+> negocio, y desde la Etapa 2.2 la verifica `rolesSimulados.test.ts` recorriendo el arbol de
+> fuentes — no una revision manual.
 
 `src/lib/auth/devMode.ts` expone `exigirModoSeguro()`, que **lanza** si `NODE_ENV=production` y
 el modo no es `OFF`. Se invoca justo antes de usar el mock (en `eas.ts`), no al importar el
 modulo — importar tambien ocurre durante `next build`, y ahi no debe lanzar. Es una salvaguarda
 deliberada: el modo de desarrollo nunca debe poder activarse por accidente en produccion.
 
+#### 4.1.1 Impersonacion de identidad — modo `FULL`
+
+Simular permisos no alcanza para recorrer la aplicacion, y la razon es concreta: **hay guardas
+que no dependen de ningun permiso, sino de la identidad.**
+
+1. `convocatoria:aprobar` deniega `self_approval` cuando `creadoPor === participanteId`. Quien
+   crea una convocatoria no puede aprobarla — es la regla, no un defecto—, asi que el dictamen
+   **no se puede recorrer** con una sola identidad, por muchos permisos que se le concedan.
+2. La fila FIFO no tiene orden con un solo participante. Sin turno 2 no hay congelamiento, ni
+   reasignacion por cancelacion, ni vencimiento que reasigne a nadie.
+
+`DEV_TOOLS_MOCK_ROLES` no resuelve ninguna de las dos: cambia los permisos, no el
+`participanteId`, que sale del `sub` de Okta. De ahi el modo `FULL`.
+
+**Roster cerrado, no captura libre.** `src/lib/auth/personasSimuladas.ts` declara siete personas
+en codigo, y la cookie `autob_persona_simulada` **solo lleva el `id`**, validado contra ese
+roster: un valor desconocido se ignora. La consecuencia es la que importa — la cookie no puede
+inyectar una identidad ni un permiso arbitrarios, como maximo elige entre esas siete filas. Por
+eso no hay campos de texto en la interfaz. Para combinaciones que ningun rol representa sigue
+estando `DEV_TOOLS_MOCK_PERMISOS`.
+
+| Persona | Permisos que recibe | Para que sirve en las pruebas |
+| --- | --- | --- |
+| Ana Alcantara | administrar vehiculos y convocatorias | alta, inclusion de lotes, publicacion, conclusion |
+| Beto Berrones | aprobar convocatorias | dictaminar lo que creo Ana, sin auto-aprobacion |
+| Carla Cordero | venta a empleados y en general | primer turno de la fila |
+| Dario Duarte | venta a empleados y en general | segundo turno: congelamiento y reasignacion |
+| Elena Estrada | solo venta en general | comprobar que la tercera pata del gating **deniega** |
+| Fabio Fuentes | operar tesoreria | avalar y rechazar comprobantes |
+| Gina Gaytan | auditar | solo lectura, sin ninguna mutacion |
+
+Dos detalles del roster que no son cosmeticos: el `participanteId` lleva prefijo `dev-`, para que
+al leer un evento de la bitacora del sandbox sea evidente que el actor era simulado; y los
+correos estan en un dominio `.invalid`, reservado por el RFC 2606 para nombres que no pueden
+existir, de modo que un despacho accidental del outbox (Etapa 10) no alcance a nadie real.
+
+**La cookie es por navegador, no por servidor.** Es lo que hace util al conmutador: dos ventanas
+—o una normal y una de incognito— son dos participantes simultaneos, y con eso la fila se puede
+recorrer a mano.
+
 La impersonacion solo funciona si **ya existe una sesion real de Okta**. Nunca sustituye la
-autenticacion, solo los permisos.
+autenticacion, solo los permisos y la identidad de negocio: `getSession()` exige la sesion de
+Okta **antes** de mirar la cookie, y `oktaSub` conserva el valor real — es el unico dato que
+sigue respondiendo quien esta conduciendo la sesion. La barra lo muestra a proposito, porque
+confundir "con quien navego" con "con quien inicie sesion" es la forma mas facil de depurar la
+pantalla equivocada.
+
+Tres condiciones se exigen **las tres** para cambiar de persona (`src/app/actions/devTools.ts`):
+modo `FULL`, `NODE_ENV` distinto de `production` y sesion real de Okta. La action **no pasa por
+`puedeEjecutar`**, y no debe: no hay permiso que cubra "elegir con quien navego", y crearlo seria
+codificar en EAS una herramienta de desarrollo (regla 17).
 
 ### 4.2 Adaptador real
 

@@ -6,8 +6,12 @@ import {
   type ComandoEnviado,
 } from "@/utils/clienteDynamoFalso";
 import { consultarMiLugar, leerMiSolicitud } from "./consultarMiLugar";
+import { vencerYReasignar } from "./vencerYReasignar";
 
 vi.mock("server-only", () => ({}));
+vi.mock("./vencerYReasignar", () => ({ vencerYReasignar: vi.fn() }));
+
+const vencer = vi.mocked(vencerYReasignar);
 
 const AHORA = "2026-10-06T15:00:00.000Z";
 
@@ -58,6 +62,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.clearAllMocks();
 });
 
 describe("privacidad de la proyeccion — R-12", () => {
@@ -94,6 +99,31 @@ describe("privacidad de la proyeccion — R-12", () => {
     expect(JSON.stringify(resultado.data)).not.toContain("P1");
     expect(JSON.stringify(resultado.data)).not.toMatch(
       /participante|correo|nombre/i,
+    );
+  });
+
+  it("motivoRechazo si viaja: es la razon del propio rechazo, no un dato de tercero (R-16)", async () => {
+    const falso = crearClienteFalso({
+      responder: escenario({
+        centinela: { turno: 4 },
+        item: solicitud({
+          estatus: "RECHAZADA_POR_TESORERIA",
+          motivoRechazo: "El comprobante no coincide con el monto",
+        }),
+        tamano: 1,
+        anteriores: 0,
+      }),
+    });
+
+    const resultado = await consultarMiLugar(
+      { loteId: "L1", participanteId: "P1" },
+      { cliente: falso.cliente },
+    );
+    if (!resultado.ok || !resultado.data)
+      throw new Error("se esperaba un lugar");
+
+    expect(resultado.data.motivoRechazo).toBe(
+      "El comprobante no coincide con el monto",
     );
   });
 
@@ -282,5 +312,127 @@ describe("leerMiSolicitud", () => {
       estatus: "ADJUDICADA",
       participanteId: "P1",
     });
+  });
+});
+
+describe("verificacion perezosa (D-7, camino B)", () => {
+  const AHORA_TARDE = new Date("2026-10-08T16:00:00.000Z");
+
+  const conLoteYSolicitudReleida = (opciones: {
+    tamano?: number;
+    anteriores?: number;
+    releida?: Record<string, unknown>;
+  }) => {
+    let gets = 0;
+    return (comando: ComandoEnviado): unknown => {
+      if (comando.nombre === "GetCommand") {
+        gets += 1;
+        const key = comando.input.Key as { PK: string; SK: string };
+        if (key.PK.startsWith("CONV#")) {
+          return {
+            Item: {
+              loteId: "L1",
+              convocatoriaId: "C1",
+              vehiculoId: "V1",
+              precio: 100_000,
+              estatus: "ADJUDICADO",
+              contadorTurnos: 4,
+              inicioVenta: "2026-10-01T00:00:00.000Z",
+              finVenta: "2026-10-20T00:00:00.000Z",
+              tipoConvocatoria: "EMPLEADOS",
+              estatusConvocatoria: "PUBLICADA",
+              horasLiquidacion: 48,
+              creadoEn: "2026-09-01T00:00:00.000Z",
+              creadoPor: "P9",
+            },
+          };
+        }
+        if (key.SK === "PART#P1") return { Item: { turno: 4 } };
+        // Primera lectura de la solicitud: vencida. Segunda (tras resolver): la releida.
+        return gets <= 2
+          ? {
+              Item: solicitud({
+                estatus: "ADJUDICADA",
+                venceEn: "2026-10-08T15:00:00.000Z",
+                convocatoriaId: "C1",
+              }),
+            }
+          : { Item: opciones.releida ?? solicitud() };
+      }
+      const valores = comando.input.ExpressionAttributeValues as Record<
+        string,
+        string
+      >;
+      return valores[":hasta"] === "SOL#9999999999"
+        ? { Count: opciones.tamano ?? 0 }
+        : { Count: opciones.anteriores ?? 0 };
+    };
+  };
+
+  it("resuelve T5 antes de responder cuando la adjudicacion propia ya vencio", async () => {
+    vencer.mockResolvedValue({
+      estado: "reasignado",
+      turno: 5,
+      solicitudId: "L1-5",
+      participanteId: "P5",
+      venceEn: "x",
+    });
+    const falso = crearClienteFalso({
+      responder: conLoteYSolicitudReleida({
+        releida: solicitud({ estatus: "CANCELADA_POR_VENCIMIENTO" }),
+      }),
+    });
+
+    const resultado = await consultarMiLugar(
+      { loteId: "L1", participanteId: "P1" },
+      { cliente: falso.cliente, ahora: () => AHORA_TARDE },
+    );
+
+    expect(vencer).toHaveBeenCalledWith(
+      expect.objectContaining({ detectadoPor: "VERIFICACION_PEREZOSA" }),
+      expect.anything(),
+    );
+    if (!resultado.ok || !resultado.data)
+      throw new Error("se esperaba un lugar");
+    // El DTO refleja el estado **post-resolucion**, no el que se leyo primero.
+    expect(resultado.data.estatus).toBe("CANCELADA_POR_VENCIMIENTO");
+  });
+
+  it("no llama a T5 si la adjudicacion todavia esta en plazo", async () => {
+    const falso = crearClienteFalso({
+      responder: escenario({
+        centinela: { turno: 4 },
+        item: solicitud({
+          estatus: "ADJUDICADA",
+          venceEn: "2026-10-08T15:00:00.000Z",
+        }),
+      }),
+    });
+
+    await consultarMiLugar(
+      { loteId: "L1", participanteId: "P1" },
+      {
+        cliente: falso.cliente,
+        ahora: () => new Date("2026-10-08T14:00:00.000Z"),
+      },
+    );
+
+    expect(vencer).not.toHaveBeenCalled();
+  });
+
+  it("si T5 se abstiene, muestra la solicitud tal como se leyo, sin fallar", async () => {
+    vencer.mockResolvedValue({ estado: "abstenido", reservasVigentes: 1 });
+    const falso = crearClienteFalso({
+      responder: conLoteYSolicitudReleida({}),
+    });
+
+    const resultado = await consultarMiLugar(
+      { loteId: "L1", participanteId: "P1" },
+      { cliente: falso.cliente, ahora: () => AHORA_TARDE },
+    );
+
+    if (!resultado.ok || !resultado.data)
+      throw new Error("se esperaba un lugar");
+    expect(resultado.data.estatus).toBe("ADJUDICADA");
   });
 });

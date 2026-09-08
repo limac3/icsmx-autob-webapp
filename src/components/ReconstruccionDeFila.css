@@ -1,0 +1,18 @@
+/* Reconstruccion de fila. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.reconstruccion-fila {
+  display: flex;
+  flex-direction: column;
+  gap: var(--unity-spacing-100, 1rem);
+}
+
+.reconstruccion-fila__resumen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--unity-spacing-025, 0.25rem);
+}
+
+.reconstruccion-fila__lote {
+  margin-top: var(--unity-spacing-150, 1.5rem);
+}

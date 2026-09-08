@@ -17,6 +17,28 @@
     "etiquetaPermisos": "Permissions",
     "etiquetaTiposDeConvocatoria": "Sale announcements you can access"
   },
+  "navegacion": {
+    "menu": "Application menu",
+    "entrar": "Sign in",
+    "salir": "Sign out",
+    "miSesion": "My session",
+    "sinAccesos": "No access assigned",
+    "convocatorias": "Sale announcements",
+    "vehiculos": "Vehicles",
+    "convocatoriasAdmin": "Manage sale announcements",
+    "aprobaciones": "Approvals",
+    "tesoreria": "Treasury",
+    "auditoria": "Auditing"
+  },
+  "desarrollo": {
+    "titulo": "Simulated identity",
+    "insignia": "Development only",
+    "ayuda": "Choose which identity to browse the application with. It replaces permissions and business identity; authentication is still Okta's.",
+    "sinSimular": "Not simulating",
+    "volverAlEntorno": "Stop simulating",
+    "sinPermisos": "No permissions",
+    "sesionRealDeOkta": "Real Okta session"
+  },
   "prohibido": {
     "titulo": "No access",
     "descripcion": "Your account has no permissions in this application. If you think this is a mistake, contact the administrator."
@@ -334,7 +356,13 @@
     "rechazadaPorTesoreria": "Treasury rejected the receipt.",
     "noAdjudicada": "The sale closed before your turn came up.",
     "solicitada": "You are in line.",
-    "cancelada": "We canceled your request."
+    "cancelada": "We canceled your request.",
+    "subirComprobante": "Upload receipt",
+    "subiendoComprobante": "Uploading…",
+    "enviarComprobante": "Send",
+    "campoComprobante": "Payment receipt",
+    "formatosComprobante": "JPG, PNG or PDF, up to 10 MB.",
+    "avisoRevisionComprobante": "This file will be reviewed by treasury."
   },
   "filaAdministrativa": {
     "titulo": "Vehicle queue",
@@ -350,5 +378,89 @@
     "venceEn": "Due on",
     "sinAdjudicacion": "No current award",
     "volverALaConvocatoria": "Back to the sale announcement"
+  },
+  "tesoreria": {
+    "titulo": "Payment verification",
+    "descripcion": "Requests with an uploaded receipt, pending a decision.",
+    "sinPendientes": "There are no receipts pending verification.",
+    "columnaVehiculo": "Vehicle",
+    "columnaConvocatoria": "Sale announcement",
+    "columnaCorreo": "Titleholder's email",
+    "columnaAdjudicadoEn": "Awarded on",
+    "columnaComprobante": "Receipt uploaded on",
+    "comprobante": "Payment receipt",
+    "abrirComprobantePdf": "Open receipt (PDF)",
+    "yaResuelta": "This request has already been resolved.",
+    "avalar": "Approve payment",
+    "rechazar": "Reject payment",
+    "motivoRechazo": "Reason for rejection",
+    "motivoRechazoAyuda": "Required to reject. It is recorded in the audit log.",
+    "confirmarAvalar": "The vehicle will be marked as sold and the action cannot be undone. Continue?",
+    "confirmarRechazar": "The vehicle will be automatically awarded to the next participant in line. Continue?",
+    "continuarDictamen": "Yes, continue",
+    "cancelarDictamen": "Cancel",
+    "hechoAvalar": "Payment approved. The vehicle was marked as sold.",
+    "hechoRechazar": "Payment rejected. The lot was reassigned to the next participant in line."
+  },
+  "auditoria": {
+    "titulo": "Auditing",
+    "descripcion": "Complete, read-only audit log.",
+    "campoAgregado": "Record type",
+    "tiposDeAgregado": {
+      "VEHICULO": "Vehicle",
+      "CONVOCATORIA": "Sale announcement",
+      "LOTE": "Lot",
+      "SOLICITUD": "Request"
+    },
+    "campoAgregadoId": "Identifier",
+    "campoTipo": "Event type",
+    "todosLosTipos": "All",
+    "campoDesde": "From",
+    "campoHasta": "To",
+    "campoParticipante": "Participant (identifier)",
+    "buscar": "Search",
+    "promptInicial": "Choose a record type and its identifier to see its audit log.",
+    "sinEventos": "There are no events matching these filters.",
+    "columnaFecha": "Date",
+    "columnaTipo": "Event",
+    "columnaActor": "Actor",
+    "columnaMotivo": "Reason",
+    "columnaCorrelacion": "Transaction",
+    "exportar": "Export CSV",
+    "avisoExportacion": "The export itself is recorded in the audit log.",
+    "verReconstruccion": "View queue reconstruction",
+    "verVerificacion": "View integrity verification",
+    "tituloReconstruccion": "Queue reconstruction",
+    "descripcionReconstruccion": "Every request in the lot, in turn order. Unlike the administrative screens, identities are shown here.",
+    "columnaTurno": "Turn",
+    "columnaParticipante": "Participant",
+    "sinSolicitudes": "This lot has no request on record.",
+    "eventosDelLote": "Lot-level events",
+    "tituloVerificacion": "Integrity verification",
+    "descripcionVerificacion": "Recomputed from the audit log, not from what the application believes happened.",
+    "veredictos": {
+      "cumple": "Passes",
+      "incumple": "Fails",
+      "informativo": "Informational"
+    },
+    "comprobaciones": {
+      "turnosContiguos": "Turns are unique, no duplicates",
+      "ordenDeAdjudicacion": "Award order",
+      "unaAdjudicacionVigente": "A single current award",
+      "vencimientosConTiempo": "Expirations detected on time",
+      "transicionesConEvento": "Every transition has its event",
+      "motivosObligatorios": "Required reasons are present"
+    },
+    "huecos": "Informational gaps in turns",
+    "duplicados": "Duplicated turns",
+    "saltoTurno": "Turn",
+    "saltoAdjudicado": "awarded without justifying turn",
+    "conflictoTurno": "Turn",
+    "conflictoNuevo": "awarded without releasing turn",
+    "turnosInconsistentes": "Turns with an inconsistent expiration date",
+    "turnosSinExplicar": "Turns with no event explaining their current status",
+    "eventosSinMotivo": "Events missing a required reason",
+    "sinHallazgos": "No findings.",
+    "volver": "Back"
   }
 }

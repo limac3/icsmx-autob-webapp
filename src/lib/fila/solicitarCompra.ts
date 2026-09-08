@@ -72,6 +72,12 @@ export type EntradaSolicitarCompra = {
   lote: Lote;
   participanteId: string;
   actor: ActorUsuario;
+  /**
+   * Correo de la sesion, para que tesoreria sepa a quien pertenece un
+   * comprobante (`PendienteDTO`) sin que exista todavia un perfil de
+   * participante persistido (`desafios-implementacion.md` 8).
+   */
+  correoTitular?: string;
   /** Solicitudes vivas al momento, para el evento. Informativo. */
   tamanoFilaAlMomento?: number;
   umbralDeReservaMs?: number;
@@ -259,6 +265,9 @@ const registrarEnLaFila = async (
               // Informativo (R-08). No participa en ninguna clave: es
               // imposible ordenar la fila por tiempo aunque alguien lo intente.
               solicitadoEn,
+              ...(entrada.correoTitular
+                ? { correoTitular: entrada.correoTitular }
+                : {}),
               // GSI3 — PA-09, "mis solicitudes". Aqui `solicitadoEn` si ordena,
               // y es correcto: esa lista es una vista personal por fecha, no la
               // fila.

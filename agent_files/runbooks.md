@@ -257,14 +257,19 @@ En desarrollo o produccion la genera el operador y la privada nunca sale de su c
 sandbox personal —cuyos datos son desechables— el agente puede generarla si el operador lo
 autoriza.
 
-### Paso 2 — Credenciales de CES · **[OPERADOR]** · *no aplica todavia*
+### Paso 2 — Credenciales de CES · **[OPERADOR]**
 
 El correo transaccional sale por **CES** (Church Email Service), un servicio REST corporativo,
-no por SES. No hay nada que preparar en AWS: son `CES_URL`, `CES_USER` y `CES_PASSWORD` en
-`.env.local` o en los secretos de Amplify.
+no por SES. No hay nada que preparar en AWS: son `CES_URL`, `CES_USER`, `CES_PASSWORD` y
+`CES_FROM_ADDRESS`, en `.env.local` para el sandbox local o como secretos de Amplify
+(`ampx sandbox secret set <nombre>`) para un sandbox personal desplegado o una rama compartida.
 
-**CES aun no esta aprobado para este proyecto** (riesgo R17) y el procesador del outbox se
-construye en la Etapa 10, asi que hoy este paso se omite: el backend despliega sin el.
+**CES aun no esta aprobado para este proyecto** (riesgo R17). El backend ya declara las
+**referencias** a estos cuatro secretos desde la Etapa 10 (`amplify/backend.ts`) y despliega
+igual sin que existan sus valores — declarar la referencia no exige que el valor ya este puesto.
+Lo que si exige un valor es **ejecutar** el procesador del outbox: sin el, cada intento de envio
+falla con "Falta configuracion de CES" (sin fallback silencioso, regla 15) y los mensajes se
+acumulan `PENDIENTE`, sin afectar la fila ni la adjudicacion (D-6).
 
 ### Paso 3 — Desplegar el backend · **[AGENTE]**
 
@@ -294,6 +299,44 @@ Sin este paso la aplicacion desplegada no puede leer la tabla; con el, hereda ta
 
 Solo aplica a una app de Amplify Hosting ya creada — **un sandbox local no lo necesita**,
 porque ahi la aplicacion corre con las credenciales del operador.
+
+---
+
+## R-12 — Recorrer el flujo completo en local · **[AGENTE]** o **[OPERADOR]**
+
+Para probar el ciclo entero hacen falta **varias identidades**, no varios permisos: quien crea
+una convocatoria no puede aprobarla (`self_approval`) y una fila de un participante no tiene
+orden. Eso lo da el conmutador de identidad simulada (`identidad-autorizacion.md` 4.1.1).
+
+**Preparacion.** En `.env.local`, `ENABLE_DEV_TOOLS=FULL`. Reiniciar `npm run dev` — las
+variables de entorno se leen al arrancar, no por peticion. Iniciar sesion con Okta una vez: la
+impersonacion no sustituye la autenticacion. Aparece una barra abajo a la derecha; se despliega
+y se elige la persona.
+
+| Paso | Persona | Que hacer | Que comprobar |
+| --- | --- | --- | --- |
+| 1 | Ana (admin) | Alta de vehiculo con fotografia | Queda `DISPONIBLE` |
+| 2 | Ana | Crear convocatoria, incluir el lote, enviar a aprobacion | `horasLiquidacion` **en 1** si se va a probar el vencimiento; con 48 hay que esperar dos dias |
+| 3 | Beto (aprobador) | Aprobar desde `/aprobaciones` | Ana no puede aprobarla: es la guarda, no un defecto |
+| 4 | Ana | Publicar | Con `inicioVenta` ya pasado, si se quiere comprar de inmediato |
+| 5 | Elena (solo publico) | Abrir el catalogo | Una convocatoria de tipo `EMPLEADOS` **no aparece** — tercera pata del gating (R-01) |
+| 6 | Carla (empleada) | Entrar a la fila | Turno 1, y queda `ADJUDICADA` sin esperar ningun proceso de fondo |
+| 7 | Dario (empleado) | Entrar a la misma fila | Turno 2, `EN_FILA` |
+| 8 | Carla | Subir comprobante | Pasa a `EN_VERIFICACION` |
+| 9 | Fabio (tesoreria) | Avalar o rechazar | Al avalar, el lote se vende y la fila restante se cierra; al rechazar, se reasigna a Dario |
+| 10 | Gina (auditora) | Revisar la bitacora del lote | Todas las transiciones con su actor `dev-*` |
+
+**Dos participantes a la vez.** La eleccion vive en una cookie, no en el servidor: una ventana
+normal y una de incognito son dos personas distintas al mismo tiempo, que es la unica forma de
+ver la fila moverse sin conmutar de ida y vuelta.
+
+**Vencimiento sin esperar.** Con `horasLiquidacion=1`, pasada la hora basta con que Carla o
+Dario abran la pantalla del lote: la verificacion perezosa de D-7 resuelve el vencimiento en esa
+misma lectura, sin depender del barrido programado.
+
+Los datos que se generen llevan `participanteId` con prefijo `dev-`, asi que se distinguen de
+cualquier dato real en la misma tabla. Los correos van a un dominio `.invalid` y no pueden
+salir.
 
 ---
 

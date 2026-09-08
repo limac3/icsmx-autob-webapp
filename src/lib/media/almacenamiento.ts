@@ -102,6 +102,43 @@ export const borrarObjeto = async (
   );
 };
 
+/**
+ * Tipos admitidos para un comprobante de pago — `api-contracts.md` seccion 5.
+ *
+ * Distinto del catalogo de fotografias: un comprobante puede ser un PDF, y una
+ * fotografia de vehiculo nunca lo es.
+ */
+export const TIPOS_DE_COMPROBANTE = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "application/pdf": "pdf",
+} as const;
+
+export type TipoDeComprobante = keyof typeof TIPOS_DE_COMPROBANTE;
+
+/** Maximo por comprobante, segun `api-contracts.md` seccion 5. */
+export const MAXIMO_BYTES_COMPROBANTE = 10 * 1024 * 1024;
+
+export const esTipoDeComprobante = (tipo: string): tipo is TipoDeComprobante =>
+  Object.hasOwn(TIPOS_DE_COMPROBANTE, tipo);
+
+/**
+ * Clave de un comprobante. **La construye el servidor**, igual que
+ * `claveDeFotografia` y por la misma razon.
+ *
+ * Vive bajo `comprobantes/`, un prefijo distinto de `vehiculos/` a proposito:
+ * la distribucion de CloudFront tiene `originPath: /vehiculos`
+ * (`cloudfrontSigner.ts`), asi que un comprobante es **estructuralmente**
+ * inalcanzable por ahi. Solo lo entrega el Route Handler de descarga, que
+ * verifica permiso y audita el acceso (`arquitectura-tecnica-aws.md` 2.3).
+ */
+export const claveDeComprobante = (
+  solicitudId: string,
+  archivoId: string,
+  tipo: TipoDeComprobante,
+): string =>
+  `comprobantes/${solicitudId}/${archivoId}.${TIPOS_DE_COMPROBANTE[tipo]}`;
+
 export const __test__ = {
   reiniciar: (): void => {
     memo = undefined;

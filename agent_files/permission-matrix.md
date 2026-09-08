@@ -201,10 +201,18 @@ En desarrollo no hay EAS. `ENABLE_DEV_TOOLS` habilita una simulacion que sigue r
 | `OPERADOR_TESORERIA` | `Autob_Operar_Tesoreria` |
 | `AUDITOR_CUMPLIMIENTO` | `Autob_Auditar` |
 
-Esta tabla es **la unica** parte del sistema donde sobrevive el concepto de rol, y es la unica
-que puede afirmar "un administrador no compra": ahi es una conveniencia de desarrollo, no una
-regla de negocio. `DEV_TOOLS_MOCK_PERMISOS` permite saltarse la tabla y fijar permisos sueltos
-para casos borde que ningun rol representa.
+Esta tabla es **la unica** parte del sistema que traduce roles a permisos, y la unica que puede
+afirmar "un administrador no compra": ahi es una conveniencia de desarrollo, no una regla de
+negocio. `DEV_TOOLS_MOCK_PERMISOS` permite saltarse la tabla y fijar permisos sueltos para casos
+borde que ningun rol representa.
+
+**Simular permisos no alcanza para probar la aplicacion.** Tres guardas de esta matriz no
+dependen de ningun permiso sino de la **identidad** —`self_approval` en `convocatoria:aprobar` y
+`convocatoria:rechazar`, y `not_owner` en todo lo que exige ser el titular—, y con una sola
+sesion de Okta son inalcanzables: nadie puede aprobar lo que creo, y una fila de un solo
+participante no tiene orden. Para eso existe el modo `FULL` y su roster cerrado de identidades
+(`src/lib/auth/personasSimuladas.ts`, seccion 4.1.1 de `identidad-autorizacion.md`), que asigna a
+cada persona de prueba un `participanteId` propio ademas de sus roles.
 
 ---
 

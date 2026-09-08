@@ -38,6 +38,7 @@ import {
 } from "@/lib/data/transacciones";
 import { diaDeNegocio } from "@/lib/domain/fechas";
 import { calcularVenceEn } from "@/lib/domain/plazos";
+import { itemsDeEncoladoAdjudicacion } from "@/lib/correo/outbox";
 import type { MotivoDeAdjudicacion } from "@/types/fila";
 import type { Lote } from "@/types/lote";
 import type { CodigoError } from "@/types/resultado";
@@ -88,7 +89,12 @@ export type EntradaDeAdjudicacion = {
   intentos?: number;
 };
 
-type Candidato = { turno: number; participanteId: string };
+export type Candidato = {
+  turno: number;
+  participanteId: string;
+  /** Para encolar el correo de adjudicacion (Etapa 10). Puede faltar en datos viejos. */
+  correoTitular?: string;
+};
 
 const dormir = (ms: number): Promise<void> =>
   new Promise((continuar) => setTimeout(continuar, ms));
@@ -204,7 +210,7 @@ const intentarRonda = async (
  * (modelo-datos 8): una lectura eventual podria no ver al turno menor y coronar
  * al siguiente.
  */
-const leerFila = async (
+export const leerFila = async (
   loteId: string,
   deps: DepsDeServicio,
 ): Promise<Candidato[]> => {
@@ -225,7 +231,13 @@ const leerFila = async (
   for (const item of salida.Items ?? []) {
     const turno = turnoDesdeClave(String(item.SK));
     if (turno === undefined || item.estatus !== "EN_FILA") continue;
-    candidatos.push({ turno, participanteId: String(item.participanteId) });
+    candidatos.push({
+      turno,
+      participanteId: String(item.participanteId),
+      ...(typeof item.correoTitular === "string"
+        ? { correoTitular: item.correoTitular }
+        : {}),
+    });
   }
   return candidatos;
 };
@@ -255,7 +267,7 @@ const intentarAdjudicar = async (
   { ok: true; venceEn: string } | { ok: false; error: CodigoError }
 > => {
   const { lote } = entrada;
-  const { ahora } = resolver(deps);
+  const { ahora, nuevoId } = resolver(deps);
   const tabla = nombreDeTabla();
 
   const vence = calcularVenceEn(ahora, lote.horasLiquidacion);
@@ -271,6 +283,7 @@ const intentarAdjudicar = async (
   const venceEn = vence.toISOString();
   const solicitudId = identificadorDeSolicitud(lote.loteId, candidato.turno);
   const claves = gsi4.vencimiento(diaDeNegocio(vence), venceEn);
+  const correlacionId = nuevaCorrelacion(ahora);
 
   const resultado = await ejecutarTransaccion(
     [
@@ -372,7 +385,7 @@ const intentarAdjudicar = async (
         agregadoId: lote.loteId,
         actor: { tipo: "SISTEMA" },
         ocurridoEn: ahora,
-        correlacionId: nuevaCorrelacion(ahora),
+        correlacionId,
         convocatoriaId: lote.convocatoriaId,
         loteId: lote.loteId,
         solicitudId,
@@ -385,6 +398,24 @@ const intentarAdjudicar = async (
           venceEn,
           motivoAdjudicacion: entrada.motivo,
         },
+      }),
+      // Outbox (D-6, riesgo R8): "exito -> encolar correo en outbox"
+      // (arquitectura-tecnica-aws.md 4.3). Vacio si el candidato no tiene
+      // `correoTitular` — un dato viejo o ausente no bloquea la adjudicacion.
+      ...itemsDeEncoladoAdjudicacion({
+        mensajeId: nuevoId(),
+        destinatario: candidato.correoTitular,
+        datos: {
+          solicitudId,
+          loteId: lote.loteId,
+          convocatoriaId: lote.convocatoriaId,
+          vehiculoId: lote.vehiculoId,
+          precio: lote.precio,
+          venceEn,
+        },
+        actor: { tipo: "SISTEMA" },
+        ahora,
+        correlacionId,
       }),
     ],
     deps,
@@ -409,7 +440,7 @@ const intentarAdjudicar = async (
  * De mejor esfuerzo: si falla, el candidato sigue `EN_FILA` y la proxima
  * adjudicacion volvera a intentarlo y a congelarlo. No adelanta a nadie.
  */
-const congelar = async (
+export const congelar = async (
   candidato: Candidato,
   lote: Lote,
   deps: DepsDeServicio,

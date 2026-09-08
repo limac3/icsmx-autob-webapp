@@ -1709,3 +1709,315 @@ no puede reutilizar identidades.** Antes de culpar al codigo por un fallo que
 solo aparece en la segunda corrida, revisar que items quedaron vivos de la
 primera: los centinelas son, por diseno, los que mas sobreviven. Vale igual
 para `VEH#<id> / ACTIVO` (R-10) y para `LOTE#<id> / PART#<id>` (R-07).
+
+---
+
+## 31) `PendienteDTO` necesita el correo del titular y no existe ningun perfil de participante
+
+### Problema
+
+`api-contracts.md` (Etapa 0) exige que `PendienteDTO` —la bandeja de tesoreria— incluya el
+correo del titular, para que quien avala o rechaza sepa a quien le pertenece un comprobante.
+
+### Sintoma
+
+No hay sintoma en ejecucion: se detecto al escribir `listarPendientesVerificacion`. La solicitud
+solo guarda `participanteId`, y no existe ningun item `PART#<id> / PERFIL` con datos de contacto
+— la Etapa 2 documento en su momento (seccion 8 de este archivo) que el *upsert* real de
+participante nunca se implemento; `participanteId` sigue siendo el `oktaSub` tal cual.
+
+### Causa raiz
+
+El modelo de datos nunca desnormalizo un correo en ningun lado alcanzable por tesoreria, y no hay
+tabla de perfiles que consultar en su lugar. `getSession()` si conoce el correo —viene del *claim*
+de Okta en cada peticion— pero esa sesion es la de quien participa, no la de quien tiene tesoreria
+delante.
+
+### Solucion aplicada
+
+`correoTitular` se copia de la sesion **al crear la solicitud** (T1,
+`src/lib/fila/solicitarCompra.ts`), como un atributo mas del item — igual que `participanteId`,
+solo que de presentacion. `src/app/actions/fila.ts` lo toma de `sesion.correo` y lo pasa al
+servicio; `aSolicitud` lo lee de vuelta como cualquier otro campo opcional.
+
+No es una fuga de R-12: la regla protege que un participante vea la identidad de **otro**, y
+`correoTitular` es el dato **propio** del titular de esa misma solicitud. Sigue habiendo una
+frontera que vigilar — ninguna proyeccion hacia otro participante (`MiLugarDTO`) debe exponerlo —,
+y por eso vive en el item crudo y no en un tipo compartido con esa proyeccion.
+
+### Regla para futuro
+
+Cuando la Etapa 4 real (*upsert* de participante) se implemente, `correoTitular` puede
+seguir copiandose igual en vez de resolverse por *join*: es mas barato, y ademas conserva el
+correo con el que se pago aunque la cuenta cambie de correo despues, que es lo que el auditor
+necesita ver.
+
+---
+
+## 32) Tesoreria necesita leer una solicitud sin conocer su lote, y GSI2 tiene que dispersarse otra vez
+
+### Problema
+
+`subirComprobante`, `avalarPago` y `rechazarPago` (`api-contracts.md` seccion 5) reciben solo
+`solicitudId`. Todo patron de acceso de `modelo-datos-dynamodb.md` seccion 5 lee una solicitud
+a partir de su `loteId` — no hay ninguno que resuelva la operacion inversa.
+
+### Sintoma
+
+No hay sintoma en ejecucion: se detecto al disenar `src/app/actions/tesoreria.ts`, antes de
+escribir la lectura.
+
+### Causa raiz
+
+`solicitudId` no es un identificador arbitrario: `identificadorDeSolicitud` (`claves.ts`) lo
+**deriva** de `loteId` y `turno` como `<loteId>-<turno>`, precisamente para no desincronizarse
+nunca de su clave. El documento nunca necesito leerlo en reversa porque, hasta la Etapa 9, todo
+lo que operaba sobre una solicitud ya tenia el lote en la mano (la pagina del participante, la
+propia fila).
+
+### Solucion aplicada
+
+`loteYTurnoDesdeIdentificador` (`claves.ts`), el inverso exacto de `identificadorDeSolicitud`:
+divide por el **ultimo** `-` —un `loteId` real es un ULID, alfabeto de Crockford, sin guion, asi
+que el separador nunca es ambiguo— y valida que el resto sean solo digitos. `leerSolicitudPorId`
+(`src/lib/fila/leerSolicitud.ts`) lo usa para armar la clave y hacer un `GetItem` consistente, sin
+inventar un indice nuevo.
+
+Aparte, `avalarPago` y `rechazarPago` tienen que **retirar** las claves de GSI2 que `subirComprobante`
+les puso: sin eso, una solicitud ya `VENDIDA` o `RECHAZADA_POR_TESORERIA` seguiria apareciendo en
+la particion `SOL_ESTATUS#EN_VERIFICACION` que lee PA-11, y la bandeja de tesoreria mostraria
+trabajo ya resuelto. Es la misma logica de dispersion que GSI4 ya documentaba para los
+vencimientos (modelo-datos-dynamodb.md seccion 3): las claves de "trabajo pendiente" solo existen
+mientras el item de verdad esta pendiente.
+
+### Regla para futuro
+
+Un identificador de negocio derivado (no generado) es reversible por diseno: antes de crear un
+indice nuevo para leerlo "al reves", comprobar si basta con deshacer la derivacion. Y cualquier
+GSI que modele "trabajo pendiente" tiene que limpiarse en **todas** las transiciones de salida,
+no solo en la que el documento menciono primero — T3 escribe las claves de PA-11, pero T4 y T6 son
+igual de responsables de retirarlas.
+
+## 33) El barrido no empaqueta: `esbuild` no conoce `server-only`
+
+### Problema
+
+Al implementar la Etapa 10, el barrido (`amplify/barrido/handler.ts`) pasa de ser un andamio sin
+efectos a reusar de verdad `src/lib/fila/barridoDeVencimientos.ts` y
+`src/lib/correo/procesarOutbox.ts` — y, transitivamente, casi toda la capa de servicios, que
+empieza cada archivo con `import "server-only";`.
+
+### Sintoma
+
+`amplify/backend.test.ts` (que empaqueta el Lambda del barrido con `esbuild` para sintetizar la
+pila) fallo con `Could not resolve "server-only"`, con la sugerencia de esbuild de marcarlo
+`external` — que solo habria trasladado el fallo al arranque real del Lambda.
+
+### Causa raiz
+
+`server-only` **no es un paquete instalado**: no aparecia en `package.json` ni en
+`node_modules`. `tsc --noEmit` (raiz) lo resuelve porque el plugin de TypeScript de Next.js
+—`"plugins": [{ "name": "next" }]` en `tsconfig.json`— reconoce ese nombre como caso especial y
+le provee tipos sin que exista de verdad; `next build`/`next dev` hacen lo mismo por su lado.
+`esbuild`, el empaquetador que usa `defineFunction` de Amplify Gen2 para el Lambda, no tiene
+absolutamente ninguna de esas dos cortesias: intenta resolver el nombre como cualquier import y
+falla si el paquete no existe en disco.
+
+### Solucion aplicada
+
+`npm install server-only` (el paquete real, publicado por Vercel: un archivo que lanza si
+`typeof window !== "undefined"`, del que Next.js *recomienda* depender explicitamente en
+proyectos que lo consumen fuera de su propio bundler). Con el paquete presente, `esbuild` lo
+resuelve como a cualquier otro modulo de `node_modules` y lo empaqueta sin cambios de codigo en
+ningun archivo de `src/lib`.
+
+### Regla para futuro
+
+Que algo tipe y compile con `next build`/`tsc` no prueba que cualquier otro empaquetador del
+proyecto lo resuelva igual: Next.js tiene casos especiales que no comparte con nada mas. Antes
+de reusar codigo de `src/lib` desde un Lambda de Amplify (o cualquier bundle fuera de Next), hay
+que probar el empaquetado real (`amplify/backend.test.ts` ya lo hace) y no solo el typecheck.
+
+## 34) `amplify/tsconfig.json` no comparte el alias `@/` con el raiz
+
+### Problema
+
+Con el barrido reusando `src/lib` por primera vez (Etapa 10), `npm run typecheck` —que corre
+`tsc --noEmit` dos veces, una por proyecto— empezo a fallar en la segunda pasada
+(`tsc -p amplify/tsconfig.json`) con decenas de `Cannot find module '@/lib/...'`.
+
+### Sintoma
+
+El error solo aparecia bajo `amplify/tsconfig.json`, nunca bajo el `tsconfig.json` raiz.
+
+### Causa raiz
+
+`amplify/tsconfig.json` es un proyecto de TypeScript **independiente** —`compilerOptions.paths`
+solo tenia `$amplify/*`, para los recursos generados por `ampx`— y `amplify/barrido/handler.ts`
+importa `src/lib` por ruta relativa (no por el alias: ver seccion 33 y el comentario del propio
+archivo). El problema es transitivo: esos archivos de `src/lib` usan `@/` **internamente**, en
+todo el proyecto, y esa segunda capa de imports es la que `amplify/tsconfig.json` no podia
+resolver.
+
+### Solucion aplicada
+
+Agregar `"@/*": ["../src/*"]` a los `paths` de `amplify/tsconfig.json`, apuntando a la misma
+carpeta que resuelve el alias del `tsconfig.json` raiz, solo que relativo a `amplify/`.
+
+### Regla para futuro
+
+Reusar codigo de `src/lib` desde `amplify/` (o desde cualquier proyecto de TypeScript con su
+propio `tsconfig.json`) exige que ese `tsconfig.json` conozca los mismos alias, aunque el punto
+de entrada los evite a proposito con rutas relativas: los alias reaparecen en cuanto se sigue un
+import mas adentro.
+
+---
+
+## 35) Un menu que pregunta por una accion con guarda queda oculto para todos
+
+### Problema
+
+El menu de navegacion tenia que mostrar solo las secciones que la persona puede usar, y la
+forma natural de lograrlo sin duplicar la matriz de permisos era que cada entrada declarara la
+`Accion` de su pantalla y se resolviera con `puedeEjecutar`. La entrada del catalogo del
+participante declaraba `convocatoria:ver-publicada`, que es literalmente la accion de esa
+pantalla.
+
+### Sintoma
+
+Con esa entrada, el enlace a `/convocatorias` quedaba **oculto para todo el mundo**, incluido
+quien tiene los dos permisos de venta. No fallaba nada: simplemente no aparecia.
+
+Lo detecto una prueba de invariante escrita a proposito para esto —"ninguna entrada usa una
+accion con guarda contextual"—, no el ojo. Un menu con una entrada de menos no se ve como un
+defecto; se ve como un menu.
+
+### Causa raiz
+
+`puedeEjecutar` decide en dos tiempos (D-9): **capacidad** (¿EAS concedio el permiso?) y
+**aplicabilidad** (la guarda: ¿el recurso esta en el estado correcto?).
+`convocatoria:ver-publicada` lleva `guardaGatingTriple`, que exige `estatusConvocatoria`,
+`yaPublicada` y `tipoConvocatoria`.
+
+Un enlace de menu **no tiene recurso**: no hay una convocatoria concreta de la que sacar esos
+datos. Y las guardas fallan cerradas por diseno (regla 18): un campo de contexto ausente
+deniega. Asi que la respuesta correcta de `puedeEjecutar` sin contexto es "no", siempre — el
+mecanismo funcionaba exactamente como debe, y la pregunta era la equivocada.
+
+Es una trampa silenciosa porque la regla 18 es una virtud del sistema. No hay error que
+propagar ni excepcion que ver: el `false` es legitimo y la consecuencia es un enlace que no se
+dibuja.
+
+### Solucion aplicada
+
+Separar el primer tiempo y darle nombre. `tieneCapacidad({ accion, permisos })` en
+`src/lib/auth/permisos.ts` responde solo por la capacidad, y `puedeEjecutar` lo invoca para su
+paso 1 — un solo lugar la calcula.
+
+El menu (`src/lib/navegacion.ts`) usa `tieneCapacidad`, y declara acciones **sin guarda**. La
+entrada del catalogo pasa a `solicitud:ver-mis-solicitudes`, que exige exactamente los mismos
+dos permisos de venta pero no arrastra el gating triple: expresa "¿esta persona compra?", que es
+lo que el menu de verdad pregunta. El gating de cada convocatoria lo sigue aplicando la
+pantalla, con `puedeEjecutar` completo.
+
+Dos pruebas sostienen la separacion: que ninguna entrada del menu use una accion con guarda, y
+que `tieneCapacidad` coincida con `puedeEjecutar` en toda accion sin guarda.
+
+### Regla para futuro
+
+`tieneCapacidad` es para **puertas** —menus, pestanas, listados de secciones—; `puedeEjecutar`
+es para **operaciones sobre un recurso**, y no admite sustituto. Antes de resolver visibilidad
+con una accion del catalogo, comprobar si tiene guarda: si la tiene, o se le pasa el recurso, o
+la pregunta va dirigida a la accion equivocada.
+
+Y no relaja nada: ocultar un enlace es cortesia. La autorizacion que cuenta es la que hace el
+servidor al servir la pantalla (principio P-1), que si tiene el recurso delante.
+
+## 36) Auditar el acceso donde se pide, y no donde se entrega, deja un hueco de bypass
+
+### Problema
+
+`api-contracts.md` describia `exportarBitacora` —la Server Action— como quien emite
+`BITACORA_EXPORTADA`. Es el patron obvio: la action es donde se decide "se permite exportar",
+asi que parecia el lugar natural para registrar que se exporto.
+
+### Sintoma
+
+Ninguno visible en una prueba unitaria de la action: llamada con permiso, devuelve la URL,
+escribe el evento, todo en verde. El defecto no esta en lo que la action hace, esta en lo que
+**no puede impedir**.
+
+### Causa raiz
+
+La action solo construye una URL (`/api/auditoria/exportar?...`); no hay ningun secreto ni token
+en esos parametros —`agregado`, `agregadoId`, `tipo`, fechas— porque no son datos sensibles por
+si mismos. Cualquiera con `Autob_Auditar` puede escribir esa URL a mano, sin pasar nunca por la
+action, y el Route Handler que la atiende tiene que volver a verificar el permiso de todos modos
+(ningun Route Handler hereda proteccion, `api-contracts.md` seccion 7). Si el evento se escribe
+en la action, ese camino directo exporta sin dejar rastro: la bitacora de quien miro los datos
+sensibles quedaria incompleta, justo lo que la seccion 3 de `trazabilidad-auditoria.md` dice que
+tiene que existir ("quien mira los datos sensibles tambien deja rastro").
+
+### Solucion aplicada
+
+Mover la escritura al Route Handler (`src/app/api/auditoria/exportar/route.ts`), en el mismo
+punto donde ya se lee la bitacora y se construye el CSV — justo antes de responder con el
+archivo. Es el mismo criterio que `COMPROBANTE_DESCARGADO` (`api-contracts.md` seccion 7): el
+evento se registra donde el dato **realmente sale**, no donde alguien pidio permiso para
+pedirlo. La Server Action `exportarBitacora` se queda delgada: verifica el permiso y devuelve la
+URL, sin tocar DynamoDB.
+
+### Regla para futuro
+
+Cuando una Server Action solo devuelve la URL de un Route Handler de descarga, el evento de
+auditoria de "se accedio a esto" se escribe en el Route Handler, nunca en la action que la
+antecede. Preguntar siempre: *¿puede alguien con el permiso adecuado llegar a este dato sin pasar
+por donde creo que se registra el acceso?* Si la respuesta es si, el registro esta en el lugar
+equivocado.
+
+## 37) Verificar integridad evento por evento inventa una carrera que nunca ocurrio
+
+### Problema
+
+`verificarIntegridadDeLote` tiene que reconstruir, entre otras cosas, si alguna vez hubo dos
+adjudicaciones vigentes simultaneas sobre el mismo lote (comprobacion 3 de
+`trazabilidad-auditoria.md` 5.1). La forma obvia de calcularlo es recorrer los eventos en el
+orden en que `Query` los devuelve —cronologico, por la `SK`— y llevar un estado.
+
+### Sintoma
+
+Con una reasignacion por vencimiento real —`SOLICITUD_VENCIDA` del turno que vencio y
+`LOTE_ADJUDICADO` del turno siguiente, escritos en la **misma** `TransactWriteItems`— el replay
+evento por evento marcaba, en algunas corridas y no en otras, "dos adjudicaciones vigentes
+simultaneas" entre un turno que ya habia vencido y el que apenas ganaba. La carrera no existio
+nunca: fue un artefacto de en que orden se leyeron dos eventos que ocurrieron en el mismo
+instante.
+
+### Causa raiz
+
+Los eventos de una misma transaccion comparten `ocurridoEn` al milisegundo
+(trazabilidad-auditoria.md 2.2). Su `SK` es `<ocurridoEn>#<eventoId>`, y `eventoId` es un ULID
+—monotono creciente en el tiempo, pero con una parte aleatoria dentro del mismo milisegundo—.
+Nada garantiza que el evento que libera el turno viejo ordene antes que el que adjudica el turno
+nuevo. Si el replay los procesa en el orden equivocado, hay un instante —que solo existe en la
+lectura, nunca existio en la base de datos— en el que el turno nuevo ya esta adjudicado y el
+viejo todavia no se liberado.
+
+### Solucion aplicada
+
+Agrupar los eventos por `correlacionId` antes de reproducir cualquier cosa, y aplicar los
+efectos de un grupo completo —todas las liberaciones antes que la adjudicacion del mismo
+grupo— antes de evaluar el siguiente. El orden **entre** grupos si importa y se conserva
+(cronologico); el orden **dentro** de un grupo deja de importar, porque es exactamente lo que no
+esta garantizado y exactamente lo que no debe importar: son un solo acto atomico.
+
+Verificado por falsificacion: construyendo el mismo escenario con los dos eventos en el orden
+contrario dentro del arreglo de entrada, la prueba sigue en verde solo con el agrupamiento; sin
+el, el resultado depende del orden y una de las dos permutaciones falla.
+
+### Regla para futuro
+
+Cualquier logica que reconstruya "que paso primero" a partir de la bitacora tiene que agrupar
+por `correlacionId` antes de mirar el orden de la `SK`. El orden cronologico entre transacciones
+es real y hay que respetarlo; el orden entre eventos de la **misma** transaccion no lo es, y
+tratarlo como si lo fuera inventa carreras que la base de datos nunca tuvo.

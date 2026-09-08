@@ -230,6 +230,7 @@ describe("ortografia del diccionario en espanol", () => {
       "Principal",
       "Borrador",
       "JPG, PNG o WEBP, hasta 10 MB.",
+      "Actor",
     ]);
 
     const aplanar = (nodo: unknown, prefijo = ""): [string, string][] =>

@@ -11,7 +11,12 @@
 > motor de fila— se verifica leyendo el archivo antes de afirmarlo o de editarlo. Ver
 > `CLAUDE.md`, seccion "Grafo de Codigo — Consulta, No Evidencia".
 >
-> Sincronizado con: `e4d8408` (rama `main`, 2026-09-08), Etapas 7 y 8 cerradas. Los headings de
+> Sincronizado con: rama `main`, 2026-09-08, Etapas 7 a 10 cerradas mas la **Etapa 2.2**
+> (impersonacion de identidad en desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y
+> navegacion por permiso, decision **D-11**) y la **Etapa 11** (auditoria: verificacion de
+> integridad recalculada desde el evento crudo, decision **D-12**). Etapas 10, 2.2, 10.1 y 11
+> pendientes de commit al escribir esto — el reindexado no vera sus simbolos hasta que se
+> confirme. Los headings de
 > `agent_files/*.md` ya estan indexados como nodos `Section` — consultables con
 > `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`. Este ADR no los duplica.
 >
@@ -100,7 +105,10 @@ Razon: si el barrido se cae, toda fila con adjudicacion vencida queda bloqueada 
 verificacion perezosa, cualquier lectura de una fila vencida la resuelve en el momento. El
 barrido pasa a ser red de seguridad, no unico mecanismo.
 Costo aceptado: una lectura puede provocar una escritura. Acotado e idempotente.
-Anclas: `amplify/barrido/handler.ts`.
+Implementado en la Etapa 10: los dos caminos aplican la misma transaccion condicional de T5, asi
+que competir entre si no produce doble efecto — quien llega segundo recibe `no_vigente`.
+Anclas: `amplify/barrido/handler.ts`, `src/lib/fila/barridoDeVencimientos.ts`,
+`src/lib/fila/vencerYReasignar.ts`, `src/lib/fila/consultarMiLugar.ts::resolverSiVencida`.
 
 ### D-8 — Idioma del dominio en espanol
 Entidades, estados y acciones en espanol (`solicitarCompra`, `EN_FILA`, `convocatoria:aprobar`).
@@ -132,6 +140,103 @@ Anclas: `src/lib/auth/permisos.ts::puedeEjecutar`, `::guardaGatingTriple`,
 `src/lib/auth/exigirPermiso.ts`, `src/lib/auth/easAdapter.ts::consultarPermisosEas`.
 Estas anclas se leen del archivo antes de tocar cualquier guarda: es codigo de seguridad.
 
+### D-10 — Impersonacion de identidad en desarrollo: roster cerrado en codigo
+El modo `ENABLE_DEV_TOOLS=FULL` permite elegir con que **identidad de negocio** se recorre la
+aplicacion, mediante una cookie por navegador que lleva **solo el id** de una persona de un
+roster cerrado en codigo. Sustituye `participanteId`, `nombre`, `correo` y `permisos`; **nunca la
+autenticacion**: `getSession()` exige la sesion real de Okta antes de mirar la cookie, y
+`oktaSub` conserva el valor real.
+Razon: simular permisos no alcanza para probar la aplicacion, porque hay guardas que dependen de
+la **identidad** y no de ningun permiso. `convocatoria:aprobar` deniega `self_approval`, asi que
+con una sola sesion de Okta el dictamen es inalcanzable; y una fila FIFO de un participante no
+tiene orden. `DEV_TOOLS_MOCK_ROLES` cambia los permisos, no el `participanteId`.
+Que el roster este cerrado —y no capturado desde la interfaz— es lo que impide que la cookie
+inyecte identidades o permisos arbitrarios: como maximo elige entre siete filas conocidas.
+Descartado:
+- Solo variables de entorno (lo que habia). Exige reiniciar por cada cambio de actor y **no
+  puede** dar dos `participanteId` distintos: el hueco no era de comodidad, era de alcance.
+- Campos libres de identidad y permisos en la interfaz. Convierte la cookie en una inyeccion de
+  identidad arbitraria y vuelve las pruebas irreproducibles.
+- Sesion simulada completa, sin Okta. Desbloquearia el login local, pero contradice la decision
+  ya escrita de que la impersonacion no sustituye la autenticacion.
+- Pagina dedicada en vez de barra flotante. Obliga a navegar ida y vuelta por cada cambio de
+  actor, que es justo lo que hace impracticable recorrer un flujo largo.
+- Dar permiso propio a la action en el catalogo. Seria pedirle a EAS que configure una
+  herramienta de desarrollo (regla 17). La compuerta es modo, entorno y sesion.
+Anclas: `src/lib/auth/personasSimuladas.ts::PERSONAS_SIMULADAS`,
+`src/lib/auth/impersonacion.ts::leerPersonaSimulada`, `::fijarPersonaSimulada`,
+`src/lib/auth/session.ts::getSession`, `src/app/actions/devTools.ts::cambiarPersonaSimulada`,
+`src/components/BarraDeIdentidadSimulada.tsx`, `src/components/PanelDeIdentidadSimulada.tsx`.
+
+### D-11 — La navegacion declara la accion que abre cada seccion, y comprueba solo la capacidad
+Cada entrada del menu (`src/lib/navegacion.ts`) declara la **`Accion`** de su pantalla, no una
+lista de permisos, y se resuelve con `tieneCapacidad` — el primer tiempo de `puedeEjecutar`, sin
+la guarda de aplicabilidad.
+Razon: una lista de permisos copiada en el menu es una segunda fuente de verdad frente a
+`permission-matrix.md`, y es la que se olvida de actualizar. Declarando la accion, el menu
+hereda cualquier cambio de la matriz sin tocarse. Evidencia de que el riesgo era real: la tabla
+de `ui-ux-requerimientos.md` seccion 2 **si** enumeraba permisos y se habia despegado — afirmaba
+que `Autob_Auditar` solo abria "Auditoria", cuando concede tambien `vehiculo:ver-catalogo`,
+`convocatoria:ver-administracion` y `tesoreria:ver-bandeja`.
+Se comprueba la capacidad y no la aplicabilidad porque un enlace es una **puerta a una
+pantalla**, no una operacion sobre un recurso: no hay contexto que evaluar. Y como las guardas
+fallan cerradas (regla 18), evaluarlas sin recurso oculta el enlace para todo el mundo — ocurrio
+con `convocatoria:ver-publicada` y lo detecto una prueba de invariante, no la vista
+(desafios-implementacion.md 35). De ahi que toda accion del menu sea `ver-*` sin guarda.
+No relaja nada: ocultar un enlace es cortesia, y la pantalla vuelve a decidir con
+`puedeEjecutar` completo (P-1).
+Descartado:
+- Lista de permisos por entrada. Duplica la matriz; ya se demostro que deriva.
+- `puedeEjecutar` con contexto vacio. Deniega siempre por la regla 18: menu vacio para todos.
+- Relajar las guardas para que un contexto ausente permita. Invertiria la correccion central de
+  la Etapa 2.1 en todo el sistema, para arreglar un menu.
+- Filtrar en el cliente. Obligaria a enviarle los permisos de la sesion; el servidor le pasa
+  enlaces ya filtrados y el cliente no tiene con que equivocarse.
+Anclas: `src/lib/navegacion.ts::entradasVisibles`, `src/lib/auth/permisos.ts::tieneCapacidad`,
+`src/components/EncabezadoAplicacion.tsx`, `src/components/MenuDeUsuario.tsx`.
+
+### D-12 — La verificacion de integridad recalcula desde el evento crudo, agrupado por transaccion
+`verificarIntegridadDeLote` (`src/lib/domain/verificacionDeAuditoria.ts`) no confia en ningun
+estado que la aplicacion crea vigente: reproduce las seis comprobaciones de
+`trazabilidad-auditoria.md` 5.1 leyendo la bitacora entera del lote (PA-12) y, para la
+comprobacion 5, contrastandola contra el estado **vigente** de la tabla base (`leerFilaCompleta`,
+PA-07 sin filtrar por estatus — la capacidad detras de `fila:ver-completa`, declarada desde la
+Etapa 2.1 y sin consumidor hasta ahora).
+Razon: un auditor que solo puede leer lo que la aplicacion ya afirma no prueba nada distinto de
+confiar en la aplicacion. Verificar de verdad exige poder detectar el caso en que el codigo
+mutó algo sin escribir su evento (regla 4 rota) — y eso solo se ve comparando la bitacora con la
+tabla, no leyendo una de las dos.
+El replay agrupa los eventos por `correlacionId` **antes** de mirar su orden en la `SK`: los de
+una misma transaccion comparten `ocurridoEn` al milisegundo, y el ULID de `eventoId` no garantiza
+cual ordena primero dentro de ese milisegundo. Sin el agrupamiento, una reasignacion por
+vencimiento —que libera un turno y adjudica el siguiente en la misma `TransactWriteItems`— podia
+leerse en el orden equivocado y marcar dos adjudicaciones vigentes que nunca coexistieron
+(`desafios-implementacion.md` 37).
+`BITACORA_EXPORTADA` se escribe en el Route Handler de descarga
+(`src/app/api/auditoria/exportar`), no en la Server Action `exportarBitacora`: la action solo
+construye la URL, y cualquiera con `Autob_Auditar` podria armarla a mano sin pasar por la action.
+Registrar el evento donde el archivo realmente se entrega —mismo criterio que
+`COMPROBANTE_DESCARGADO`— es lo que cierra ese camino (`desafios-implementacion.md` 36).
+Descartado:
+- Confiar solo en la bitacora para la comprobacion 5. No detecta una escritura sin su evento,
+  que es exactamente el defecto que esa comprobacion existe para atrapar.
+- Replay evento por evento en orden de `SK`. Inventa carreras que la base de datos nunca tuvo
+  (seccion "Sintoma" de `desafios-implementacion.md` 37).
+- Derivar el turno de `solicitudId` dentro de `src/lib/domain`. Violaria P-2 (el dominio no
+  importa nada de `src/lib/data`) por una razon cosmetica; se derivó en su lugar dentro de
+  `src/lib/auditoria/mapeo.ts`, que ya es capa de datos.
+- Escribir `BITACORA_EXPORTADA` en la Server Action, como decia el contrato original. Deja
+  exportar sin rastro a quien construye la URL de descarga directamente.
+- Construir ahora el sumidero append-only independiente (DynamoDB Streams + S3 con Object Lock)
+  que el riesgo **R20** propone como garantia fuerte. Es infraestructura AWS nueva fuera del
+  alcance que esta etapa recibio; se evalua y se difiere con justificacion, no se cierra
+  (`plan-ejecucion.md`, riesgo R20).
+Anclas: `src/lib/domain/verificacionDeAuditoria.ts::verificarIntegridadDeLote`,
+`src/lib/domain/reconstruccionDeFila.ts::reconstruirHistoriaDeFila`,
+`src/lib/domain/turnoDeEvento.ts::turnoDelEvento`, `src/lib/auditoria/mapeo.ts::aEventoDTO`,
+`src/lib/auditoria/verificarIntegridad.ts`, `src/lib/fila/leerFilaCompleta.ts`,
+`src/app/api/auditoria/exportar/route.ts`.
+
 ## Decisiones de modelo de datos
 
 Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
@@ -148,6 +253,16 @@ Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
 | T2 lleva el vehiculo a `RESERVADO` en la misma transaccion | Sin ese item `RESERVADO` es inalcanzable y T4 no tiene transicion valida al vender. No reintroduce la contencion de R18: el vehiculo se toca una vez por adjudicacion, no una por solicitud |
 | La cancelacion libera y **vuelve a llamar a T2**, sin intercambio atomico | T5 debe ser atomico porque lo dispara un barrido sobre un plazo vencido; la cancelacion reutiliza el camino ya probado de la adjudicacion. La ventana que abre ya existe: T1 tampoco puede adjudicar dentro de su transaccion |
 | Los nueve eventos de la fila se anclan a `AUDIT#LOTE#<loteId>` | "Reconstruir la fila" es una `Query` por lote; anclar `SOLICITUD_CREADA` a la solicitud obligaria a una consulta por participante |
+| `correoTitular` se copia de la sesion a la solicitud en T1, no se resuelve por *join* a un perfil | No existe ningun item de perfil de participante con correo (la Etapa 4 nunca hizo el *upsert* real); y aunque existiera, copiarlo conserva el correo con el que se pago aunque la cuenta cambie despues — lo que el auditor necesita ver (desafios-implementacion.md 31) |
+| GSI2 de la solicitud es disperso: T3 escribe `SOL_ESTATUS#EN_VERIFICACION`, T4 y T6 lo retiran | Misma logica que GSI4 con los vencimientos: el indice de "trabajo pendiente de tesoreria" (PA-11) solo debe contener lo que de verdad esta pendiente (desafios-implementacion.md 32) |
+| `solicitudId` se resuelve en reversa con `loteYTurnoDesdeIdentificador`, sin un indice nuevo | Es derivado (`<loteId>-<turno>`), no generado: dividir por el ultimo `-` basta, porque un `loteId` real (ULID) nunca contiene guion (desafios-implementacion.md 32) |
+| T6 (rechazar pago) sigue la estrategia de T5b (liberar y volver a llamar a T2), no la de T5 | El documento decia "identica a T5"; rechazar lo dispara una persona mirando la pantalla, no un barrido sobre un plazo vencido, asi que aplica el mismo argumento que ya justificaba T5b |
+| `rechazarPago` no retira el centinela de fila, a diferencia de la cancelacion voluntaria | `RECHAZADA_POR_TESORERIA` tiene que seguir visible en `MiLugarDTO` con su motivo (R-16); retirarlo borraria la unica forma en que el titular se entera |
+| La variante reducida de T5 (fila agotada) tambien libera el vehiculo a `EN_CONVOCATORIA` | El documento solo mencionaba `REMOVE adjudicacionActual` y `estatus = EN_OFERTA`; sin liberar el vehiculo, el siguiente que se forme nunca podria adjudicarse (el item 4 de T2 exige `EN_CONVOCATORIA`) — el mismo defecto de "lote huerfano" que la Etapa 10 corrige en el barrido, pero permanente |
+| `vencerYReasignar` reusa `leerFila` y `congelar` de `adjudicarLote.ts` en vez de duplicarlos | T5 es T2 con dos escrituras del vencido intercaladas delante; la abstencion por reservas y el congelamiento por R-09 son identicos |
+| El outbox se encola en la **misma** transaccion que T2/T5, no despues | Es lo unico que le da al correo la misma garantia que a su propio evento (regla 4); `itemsDeEncoladoAdjudicacion` devuelve lista vacia sin `correoTitular`, sin bloquear la adjudicacion (D-6) |
+| "Recoger lotes libres" se acota a convocatorias `PUBLICADA` y exige una `Query COUNT` de fila viva antes de llamar a `adjudicarLote` | Sin el filtro, cada lote `EN_OFERTA` sin candidatos (la mayoria del inventario) escribiria `FILA_AGOTADA` en cada corrida del barrido, para siempre; no existe GSI para "lotes con fila viva" y no se creo uno solo para esto |
+| Nuevo motivo de adjudicacion `RECUPERACION_POR_BARRIDO` | Un lote huerfano recuperado por el barrido no es "primera adjudicacion" ni ninguna reasignacion con causa conocida — forzarlo a uno de los cuatro existentes falsearia la bitacora |
 
 Centinelas: vehiculo activo (R-10), fila (R-07), adjudicacion activa (R-09), reserva de turno
 (R18). Transacciones criticas T1–T8 en `modelo-datos-dynamodb.md` seccion 6 (linea 258).
@@ -164,6 +279,54 @@ condicional con abstencion por reservas y congelamiento por R-09), `cancelarSoli
 identidades, R-12). La regresion permanente de la regla 16 es
 `src/lib/fila/fila.integracion.test.ts`, que **si vive en la compuerta** y corre contra DynamoDB
 real asumiendo el rol de computo SSR.
+
+**El pago y el dictamen de tesoreria son la Etapa 9**, en `src/lib/tesoreria/`:
+`subirComprobante.ts` (T3, S3 antes que DynamoDB, sin compensacion — `NegarBorradoDeComprobantes`
+lo impide), `avalarPago.ts` (T4, cierra la fila restante del lote llamando a
+`cerrarFilaDelLote`) y `rechazarPago.ts` (T6, mismo patron de liberar-y-llamar-a-`adjudicarLote`
+que `cancelarSolicitud`, no la forma atomica de T5). `rechazarPago` **no** retira el centinela de
+fila — a diferencia de la cancelacion voluntaria —, para que `RECHAZADA_POR_TESORERIA` siga
+visible en `MiLugarDTO` con su motivo. La regresion contra infraestructura real es
+`src/lib/tesoreria/tesoreria.integracion.test.ts`.
+
+**Los vencimientos y el correo son la Etapa 10**, en `src/lib/fila/vencerYReasignar.ts` (T5,
+estructuralmente T2 con dos escrituras del vencido por delante), `barridoDeVencimientos.ts`
+(camino A de D-7, mas la recuperacion de lotes huerfanos) y `consultarMiLugar.ts` (camino B).
+El correo vive en `src/lib/correo/`: `outbox.ts` encola dentro de la transaccion de T2/T5,
+`procesarOutbox.ts` despacha aparte con reintentos acotados por `MAXIMO_INTENTOS_CORREO`, y
+`clienteCes.ts` aisla el contrato aun no confirmado de CES (R17) detras de una interfaz propia.
+El barrido programado (`amplify/barrido/resource.ts`, cada 5 min) pasa de andamio a logica real;
+reusar `src/lib` desde su Lambda exigio instalar el paquete real `server-only` (`esbuild` no
+conoce el caso especial de Next) y agregar el alias `@/` a `amplify/tsconfig.json`
+(desafios-implementacion.md 33-34). La regresion permanente de la regla 16 para T5 es
+`src/lib/fila/vencimiento.integracion.test.ts`, contra DynamoDB real.
+
+**La impersonacion de desarrollo es la Etapa 2.2** (decision **D-10**), y no estaba en el plan:
+`src/lib/auth/personasSimuladas.ts` (roster cerrado), `impersonacion.ts` (cookie por navegador,
+validada contra el roster), el enganche en `session.ts`, la action
+`src/app/actions/devTools.ts` y el conmutador
+`src/components/BarraDeIdentidadSimulada.tsx` montado en el layout raiz dentro de un
+`<Suspense>`. Pertenece a identidad aunque se implemento despues de la Etapa 10: hasta entonces
+no habia pantallas suficientes para que el hueco se notara.
+
+**El armazon es la Etapa 10.1** (decision **D-11**), y tampoco estaba en el plan: estaba
+especificado en `ui-ux-requerimientos.md` seccion 2 desde la Etapa 0, pero ninguna etapa lo
+reclamo como entregable — la Etapa 1 dejo `layout.tsx` con solo `Normalize` y `Fonts`, y las
+Etapas 5 a 10 construyeron once pantallas sobre un armazon sin encabezado, sin pie y sin forma
+de llegar a ninguna. `EncabezadoAplicacion.tsx` y `MenuDeUsuario.tsx` (menu por permiso),
+`PieAplicacion.tsx`, `src/lib/navegacion.ts` y `layout.css`, con los paquetes
+`eden-workforce-header`/`-footer` y `eden-contextual-menu` en las mismas versiones que
+`icsmx-camp-webapp`.
+
+**La auditoria es la Etapa 11** (decision **D-12**): `src/lib/auditoria/` (`consultarBitacora.ts`
+con PA-12 paginada, `reconstruirFila.ts`, `verificarIntegridad.ts`, `mapeo.ts`, `csvDeBitacora.ts`,
+`filtrosDeBitacora.ts`), la replica pura en `src/lib/domain/` (`verificacionDeAuditoria.ts`,
+`reconstruccionDeFila.ts`, `turnoDeEvento.ts`), `src/lib/fila/leerFilaCompleta.ts` (PA-07 sin
+filtrar por estatus, la capacidad de `fila:ver-completa`), las pantallas `/auditoria` y
+`/auditoria/lotes/[loteId]`, y el Route Handler `src/app/api/auditoria/exportar`. Riesgo **R20**
+evaluado y **diferido** con justificacion: el sumidero append-only independiente que propone como
+garantia fuerte (DynamoDB Streams + S3 Object Lock) es infraestructura AWS nueva fuera del alcance
+que esta etapa recibio.
 
 ## Decisiones de negocio registradas
 
@@ -199,6 +362,13 @@ superconjunto pasa a ser configuracion de EAS.
 La lista de arriba es un resumen: la matriz vigente esta en `permission-matrix.md` y la
 aplicacion real, en `src/lib/auth/permisos.ts`. No decidir una guarda leyendo solo este ADR.
 
+**El rol no cruza al negocio.** Solo tres archivos lo conocen: `rolesSimulados.ts` (tabla rol →
+permisos), `personasSimuladas.ts` (roster de identidades de prueba) y `eas.ts` (que lee
+`DEV_TOOLS_MOCK_ROLES`). La Etapa 2.1 enunciaba la invariante como "ningun archivo fuera de
+`rolesSimulados.ts`", y **nunca fue cierto**: `eas.ts` lo importa desde el primer dia y el `grep`
+a mano no lo delato. Lo que se protege es la frontera entre `src/lib/auth` y el negocio, y desde
+la Etapa 2.2 lo verifica `src/lib/auth/rolesSimulados.test.ts` recorriendo el arbol de fuentes.
+
 ## Inmutabilidad de la bitacora
 
 Fuente: `agent_files/trazabilidad-auditoria.md` seccion 4 (linea 166).
@@ -231,6 +401,14 @@ confirma la frontera —`app → lib` 22 llamadas, `lib → types` 20, `lib → 
 `app → data` directa—, pero esa cuenta es del ultimo indexado: una violacion introducida
 despues no aparece hasta reindexar. Servicios reciben el cliente por `deps` — inyeccion que
 permite el cliente falso `src/utils/clienteDynamoFalso.ts` en pruebas.
+
+Dos excepciones registradas, las dos por la misma razon: el layout raiz no puede leer datos de
+la peticion sin volverse el punto donde todas las pantallas esperan, asi que la lectura ocurre
+dentro de un `<Suspense>` — y para estar dentro de un `<Suspense>` hay que ser un componente.
+`PanelDeIdentidadSimulada.tsx` (conmutador de D-10) lee sesion y cookie;
+`EncabezadoAplicacion.tsx` (menu de D-11) lee sesion e idioma, y `PieAplicacion.tsx` el idioma.
+En los dos casos la presentacion vive aparte y si es props pura:
+`BarraDeIdentidadSimulada.tsx` y `MenuDeUsuario.tsx`.
 
 ## Zona horaria y cache
 

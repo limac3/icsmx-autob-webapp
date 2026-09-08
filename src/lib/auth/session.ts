@@ -7,6 +7,8 @@ import {
 } from "@/types/identidad";
 import { auth } from "./auth0";
 import { obtenerPermisos } from "./eas";
+import { leerPersonaSimulada } from "./impersonacion";
+import { permisosDePersona } from "./personasSimuladas";
 
 // El upsert real en DynamoDB (para obtener un participanteId propio y
 // estable, distinto del `sub` de Okta) llega en la Etapa 4 junto con
@@ -37,6 +39,26 @@ export const getSession = cache(async (): Promise<Sesion | null> => {
   const sesionOkta = await auth.getSession();
   const usuario = sesionOkta?.user;
   if (!usuario?.sub) return null;
+
+  // Impersonacion de desarrollo (`impersonacion.ts`), y **despues** de exigir
+  // la sesion de Okta, no antes: sustituye la identidad de negocio y los
+  // permisos, jamas la autenticacion. Devuelve `null` sin tocar la peticion en
+  // cualquier modo que no sea FULL, asi que en produccion esta rama no existe.
+  //
+  // `oktaSub` se conserva real a proposito: es el unico dato que sigue
+  // respondiendo "quien esta conduciendo esta sesion".
+  const persona = await leerPersonaSimulada();
+  if (persona) {
+    const permisos = permisosDePersona(persona);
+    return {
+      participanteId: persona.participanteId,
+      oktaSub: usuario.sub,
+      correo: persona.correo,
+      nombre: persona.nombre,
+      permisos,
+      tiposDeConvocatoriaPermitidos: tiposDeConvocatoriaPermitidos(permisos),
+    };
+  }
 
   const [participanteId, permisos] = await Promise.all([
     resolverParticipanteId(usuario.sub),

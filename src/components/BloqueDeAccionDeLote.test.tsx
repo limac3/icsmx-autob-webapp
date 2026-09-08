@@ -9,10 +9,15 @@ import BloqueDeAccionDeLote, {
 
 const solicitar = vi.fn();
 const cancelar = vi.fn();
+const subir = vi.fn();
 
 vi.mock("@/app/actions/fila", () => ({
   solicitarCompra: (...args: unknown[]) => solicitar(...args),
   cancelarSolicitud: (...args: unknown[]) => cancelar(...args),
+}));
+
+vi.mock("@/app/actions/tesoreria", () => ({
+  subirComprobante: (...args: unknown[]) => subir(...args),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -25,6 +30,23 @@ vi.mock("next/navigation", () => ({
 vi.mock("@churchofjesuschrist/eden-has-overflow", () => ({
   useHasOverflow: () => [{ current: null }, { hasX: false }],
 }));
+
+// jsdom no implementa `DataTransfer`, y el `FileInput` de Eden lo usa para
+// sincronizar el valor del input con su estado interno. Doble minimo, no un
+// cambio al componente (regla 10) — ver desafios-implementacion.md seccion 20.
+const listaVacia = (() => {
+  const input = document.createElement("input");
+  input.type = "file";
+  return input.files;
+})();
+
+class DataTransferFalso {
+  readonly items = { add: () => undefined };
+  readonly files = listaVacia;
+}
+
+globalThis.DataTransfer ??=
+  DataTransferFalso as unknown as typeof globalThis.DataTransfer;
 
 const diccionario = obtenerDiccionario("es");
 
@@ -159,6 +181,64 @@ describe("con solicitud propia", () => {
     expect(contenedor.textContent).toContain("El vehículo es tuyo");
     expect(contenedor.textContent).toContain("8 oct 2026, 09:00");
     expect(contenedor.textContent).toContain("5 h 0 min");
+  });
+
+  it("ADJUDICADA ofrece subir comprobante", async () => {
+    const contenedor = await pintar({
+      miLugar: lugar("ADJUDICADA", { venceEn: "2026-10-08T15:00:00.000Z" }),
+    });
+
+    expect(contenedor.textContent).toContain("Subir comprobante");
+  });
+
+  it("subir comprobante abre el modal con el campo de archivo y el aviso de revision", async () => {
+    // La subida real —FormData extrayendo un File de un `<input type=file>`—
+    // no es simulable de forma confiable en jsdom (desafios-implementacion.md
+    // 20); se prueba que el modal se abre con lo que pide la pantalla 3.6, y
+    // el envio se deja al recorrido manual.
+    await pintar({
+      miLugar: lugar("ADJUDICADA", { venceEn: "2026-10-08T15:00:00.000Z" }),
+    });
+
+    await act(async () => {
+      boton("Subir comprobante")?.click();
+    });
+
+    expect(context.container.textContent).toContain(
+      "será revisado por tesorería",
+    );
+    expect(
+      context.container.querySelector('input[name="archivo"]'),
+    ).not.toBeNull();
+  });
+
+  it("CANCELADA_POR_VENCIMIENTO muestra la fecha de vencimiento", async () => {
+    const contenedor = await pintar({
+      miLugar: lugar("CANCELADA_POR_VENCIMIENTO"),
+      venceEnFormateado: "8 oct 2026, 09:00",
+    });
+
+    expect(contenedor.textContent).toContain("venció el plazo de pago");
+    expect(contenedor.textContent).toContain("8 oct 2026, 09:00");
+  });
+
+  it("RECHAZADA_POR_TESORERIA muestra el motivo", async () => {
+    const contenedor = await pintar({
+      miLugar: lugar("RECHAZADA_POR_TESORERIA", {
+        motivoRechazo: "El comprobante no coincide con el monto",
+      }),
+    });
+
+    expect(contenedor.textContent).toContain("rechazó el comprobante");
+    expect(contenedor.textContent).toContain(
+      "El comprobante no coincide con el monto",
+    );
+  });
+
+  it("NO_ADJUDICADA explica que la convocatoria cerro antes de tiempo", async () => {
+    const contenedor = await pintar({ miLugar: lugar("NO_ADJUDICADA") });
+
+    expect(contenedor.textContent).toContain("cerró sin que te alcanzara");
   });
 
   it("EN_VERIFICACION no lleva cuenta regresiva", async () => {

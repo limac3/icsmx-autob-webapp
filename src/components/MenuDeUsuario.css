@@ -1,0 +1,50 @@
+/* Menu de la aplicacion en el slot `tools` del WorkforceHeader.
+   Solo layout; la apariencia la ponen los componentes de Eden (regla 10). */
+
+.menu-usuario {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu-usuario__ancla {
+  display: inline-flex;
+}
+
+.menu-usuario__disparador {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--unity-spacing4, 0.25rem);
+}
+
+.menu-usuario__entrar {
+  padding-inline: var(--unity-spacing8, 0.5rem);
+  white-space: nowrap;
+}
+
+.menu-usuario__panel {
+  min-width: calc(220rem / 16);
+}
+
+.menu-usuario__lista {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Separa los accesos de la aplicacion de los de la cuenta. */
+.menu-usuario__lista--cuenta {
+  margin-top: var(--unity-spacing8, 0.5rem);
+  padding-top: var(--unity-spacing8, 0.5rem);
+  border-top: 1px solid var(--unity-greyLight3, #d8d8d8);
+}
+
+.menu-usuario__enlace {
+  display: block;
+  padding: var(--unity-spacing8, 0.5rem) var(--unity-spacing12, 0.75rem);
+  white-space: nowrap;
+}
+
+.menu-usuario__vacio {
+  margin: 0;
+  padding: var(--unity-spacing8, 0.5rem) var(--unity-spacing12, 0.75rem);
+}

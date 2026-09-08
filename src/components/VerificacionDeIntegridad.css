@@ -1,0 +1,23 @@
+/* Verificacion de integridad. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.verificacion-integridad {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--unity-spacing-100, 1rem);
+}
+
+.verificacion-integridad__item {
+  border-bottom: 1px solid var(--unity-color-border-default, #d3d3d3);
+  padding-bottom: var(--unity-spacing-100, 1rem);
+}
+
+.verificacion-integridad__encabezado {
+  display: flex;
+  align-items: baseline;
+  gap: var(--unity-spacing-050, 0.5rem);
+  flex-wrap: wrap;
+}

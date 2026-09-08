@@ -1,0 +1,22 @@
+/* Pantalla de auditoria. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.auditoria__filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--unity-spacing-100, 1rem);
+  align-items: flex-end;
+  margin-bottom: var(--unity-spacing-150, 1.5rem);
+}
+
+.auditoria__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--unity-spacing-100, 1rem);
+  margin-bottom: var(--unity-spacing-050, 0.5rem);
+}
+
+.auditoria__verificacion {
+  margin-top: var(--unity-spacing-200, 2rem);
+}

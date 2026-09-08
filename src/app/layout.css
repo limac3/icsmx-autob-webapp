@@ -1,0 +1,33 @@
+/* Armado de la pagina: encabezado, contenido y pie.
+   Tomado de `icsmx-camp-webapp` (PageWrapper.css y Main.css) para que las dos
+   aplicaciones se vean igual de encuadradas. Solo layout. */
+
+.envoltura {
+  min-height: 100vh;
+  width: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+/* Reserva del alto del encabezado mientras resuelve su `<Suspense>`, para que
+   el contenido no salte cuando llega. */
+.envoltura__hueco-encabezado {
+  min-height: calc(56rem / 16);
+}
+
+.envoltura__contenido {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(1600rem / 16);
+  overflow-x: hidden;
+  justify-self: center;
+  padding: var(--unity-spacing24, 1.5rem) var(--unity-spacing16, 1rem)
+    var(--unity-spacing64, 4rem);
+}
+
+@media (width > calc(600rem / 16)) {
+  .envoltura__contenido {
+    padding: var(--unity-spacing32, 2rem) var(--unity-spacing24, 1.5rem)
+      var(--unity-spacing96, 6rem);
+  }
+}

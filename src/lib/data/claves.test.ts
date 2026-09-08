@@ -8,6 +8,8 @@ import {
   gsi2,
   gsi3,
   gsi4,
+  identificadorDeSolicitud,
+  loteYTurnoDesdeIdentificador,
   NOMBRES_DE_INDICE,
   PREFIJO,
   TIPOS_DE_AGREGADO,
@@ -123,6 +125,52 @@ describe("orden de la fila — la garantia de D-5", () => {
 
   it("ANCHO_TURNO son diez digitos", () => {
     expect(ANCHO_TURNO).toBe(10);
+  });
+});
+
+describe("identificadorDeSolicitud", () => {
+  it("es <loteId>-<turno>, sin relleno de ceros", () => {
+    expect(identificadorDeSolicitud("L1", 7)).toBe("L1-7");
+    expect(identificadorDeSolicitud("L1", 0)).toBe("L1-0");
+  });
+
+  it("rechaza un turno invalido, igual que clave.solicitud", () => {
+    expect(() => identificadorDeSolicitud("L1", -1)).toThrow(RangeError);
+    expect(() => identificadorDeSolicitud("L1", 1.5)).toThrow(RangeError);
+  });
+});
+
+describe("loteYTurnoDesdeIdentificador — inverso de identificadorDeSolicitud", () => {
+  it("hace ida y vuelta con identificadorDeSolicitud", () => {
+    for (const [loteId, turno] of [
+      ["L1", 1],
+      ["01K4X9QZ8T7YF3M2N5P6R8S9V0", 42],
+      ["L1", 0],
+    ] as const) {
+      expect(
+        loteYTurnoDesdeIdentificador(identificadorDeSolicitud(loteId, turno)),
+      ).toEqual({ loteId, turno });
+    }
+  });
+
+  it("divide por el ultimo separador, no por el primero", () => {
+    // Tesoreria es quien necesita esto: `subirComprobante`, `avalarPago` y
+    // `rechazarPago` reciben solo `solicitudId` (api-contracts.md seccion 5) y
+    // no hay ningun patron de acceso que lea una solicitud sin conocer antes
+    // su loteId.
+    expect(loteYTurnoDesdeIdentificador("L1-7")).toEqual({
+      loteId: "L1",
+      turno: 7,
+    });
+  });
+
+  it("devuelve undefined para lo que no tiene esa forma", () => {
+    expect(
+      loteYTurnoDesdeIdentificador("sin-separador-numerico"),
+    ).toBeUndefined();
+    expect(loteYTurnoDesdeIdentificador("L1-siete")).toBeUndefined();
+    expect(loteYTurnoDesdeIdentificador("-7")).toBeUndefined();
+    expect(loteYTurnoDesdeIdentificador("7")).toBeUndefined();
   });
 });
 
@@ -277,6 +325,11 @@ describe("bitacora", () => {
     const a = clave.evento("LOTE", "L1", "2026-09-15T15:00:00.000Z", "E1");
     const b = clave.evento("LOTE", "L1", "2026-09-15T15:00:00.000Z", "E2");
     expect(a.SK).not.toBe(b.SK);
+  });
+
+  it("particionDeEvento es la misma PK que evento, sin inventar SK (PA-12)", () => {
+    const evento = clave.evento("LOTE", "L1", "2026-09-15T15:00:00.000Z", "E1");
+    expect(clave.particionDeEvento("LOTE", "L1")).toEqual({ PK: evento.PK });
   });
 
   it("los cuatro agregados con bitacora son los del documento", () => {

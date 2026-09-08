@@ -3,15 +3,31 @@
 Fuente de verdad del avance del proyecto. Cada etapa se marca `[x]` solo cuando **todos** sus
 entregables estan hechos y su compuerta de calidad pasa en verde.
 
-> Ultima actualizacion: 2026-09-08 — **Etapas 0 a 8 completadas**, incluida la Etapa 2.1 de
+> Ultima actualizacion: 2026-09-08 — **Etapas 0 a 10 completadas**, incluida la Etapa 2.1 de
 > correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora), el
 > **prototipo concurrente de la fila**, que cierra el riesgo **R18** y corrige T1, T2 y T8 del
 > modelo de datos, la **Etapa 5 (administracion de vehiculos)**, la **Etapa 6 (convocatorias:
 > ciclo completo de borrador a publicada, con lotes y aprobacion)**, la **Etapa 7 (catalogo de
-> participante, gating triple siempre 404, sin cache estatica)** y la **Etapa 8 (motor de fila:
+> participante, gating triple siempre 404, sin cache estatica)**, la **Etapa 8 (motor de fila:
 > turno por contador atomico, adjudicacion por escritura condicional, R-07, R-09, R-17 y R-18,
-> con prueba de concurrencia permanente contra DynamoDB real)**. Siguiente: **Etapa 9 —
-> Comprobante de pago y tesoreria**.
+> con prueba de concurrencia permanente contra DynamoDB real)**, la **Etapa 9 (comprobante y
+> tesoreria: T3/T4/T6 con GSI2 disperso para la bandeja, descarga por Route Handler nunca por
+> CloudFront, T6 corregido a la estrategia de T5b, probada contra DynamoDB y S3 reales)** y la
+> **Etapa 10 (vencimientos: T5 atomico con la variante reducida corregida para liberar tambien
+> el vehiculo, barrido programado con recuperacion de lotes huerfanos, verificacion perezosa en
+> `consultarMiLugar`, outbox de correo encolado en la misma transaccion que la adjudicacion,
+> cerrando los riesgos **R6** y **R8**, probada contra DynamoDB real con la prueba de
+> concurrencia permanente de la regla 16)**. Se agrego tambien la **Etapa 2.2 (impersonacion de
+> identidad en desarrollo: roster cerrado de personas, cookie por navegador y conmutador en el
+> layout — lo que hace recorrible el dictamen de convocatorias y la fila con varios
+> participantes)**, la **Etapa 10.1 (armazon: `WorkforceHeader`, `WorkforceFooter` y menu de
+> navegacion que declara la accion que abre cada seccion en vez de copiar la lista de permisos)**
+> — dos etapas que no estaban en el plan original — y la **Etapa 11 (auditoria: bitacora
+> filtrable por agregado, reconstruccion de fila con identidades, verificacion de integridad
+> recalculada desde el evento crudo y contrastada contra el estado vigente de la tabla, y
+> exportacion a CSV auditada en el momento de la descarga; riesgo **R20** evaluado y diferido con
+> justificacion, no cerrado)**.
+> Siguiente: **Etapa 12 — Endurecimiento y despliegue**.
 
 ---
 
@@ -245,10 +261,83 @@ los riesgos que dicen cubrir.
 
 - [x] Compuerta de calidad completa en verde
 - [x] La prueba de integracion de bitacora corre contra el sandbox
-- [x] Ningun archivo fuera de `rolesSimulados.ts` importa `Rol` (verificado con `grep`)
+- [x] Ningun archivo del negocio importa `Rol` — **el `grep` a mano de esta etapa afirmaba
+      "ningun archivo fuera de `rolesSimulados.ts`", y eso nunca fue cierto: `eas.ts` lo importa
+      desde el primer dia para leer `DEV_TOOLS_MOCK_ROLES`.** La invariante que si se sostiene es
+      que el rol no cruza de `src/lib/auth` hacia el negocio. Automatizada en la Etapa 2.2
+      (`rolesSimulados.test.ts`), que es lo que la vuelve una compuerta permanente en vez de una
+      revision manual
 
 **Salida esperada:** autorizacion que no codifica politica organizacional, falla cerrada y tiene
 pruebas que fallan cuando el defecto vuelve.
+
+---
+
+## Etapa 2.2 — Impersonacion de identidad en desarrollo ✅
+
+> **Por que existe esta etapa.** No estaba en el plan. `identidad-autorizacion.md` 4.1 dejaba el
+> modo `FULL` descrito pero sin implementar —"la UI para elegir el rol simulado no existe todavia
+> y se construye cuando exista una pantalla que la necesite"—, y con las Etapas 6 a 10 cerradas
+> esa pantalla ya son ocho. Al intentar recorrer el flujo completo en local aparecio que el hueco
+> no era de comodidad sino de **alcance**: hay dos guardas que no dependen de ningun permiso,
+> sino de la identidad, y con una sola sesion de Okta son **inalcanzables**.
+>
+> 1. `convocatoria:aprobar` deniega `self_approval` cuando `creadoPor === participanteId`. Quien
+>    crea una convocatoria no puede aprobarla, asi que **el dictamen no se puede probar** por
+>    muchos permisos que se simulen.
+> 2. La fila FIFO no tiene orden con un solo participante: sin turno 2 no hay congelamiento, ni
+>    cancelacion con reasignacion, ni vencimiento que reasigne a nadie.
+>
+> Cambiar `DEV_TOOLS_MOCK_ROLES` y reiniciar no resuelve ninguna de las dos: cambia los permisos,
+> no el `participanteId`.
+
+**Objetivo:** poder recorrer el flujo completo en local —alta, dictamen, publicacion, fila,
+comprobante, tesoreria— cambiando de actor sin reiniciar y con varios participantes a la vez.
+
+**Dependencias:** Etapa 2.1. Implementada despues de la Etapa 10, pero pertenece a identidad.
+
+- [x] `src/lib/auth/personasSimuladas.ts` — roster **cerrado en codigo** de siete personas, cada
+      una con `id`, `participanteId`, `nombre`, `correo` y roles. `participanteId` con prefijo
+      `dev-` para que la bitacora del sandbox delate al actor simulado; correos en un dominio
+      `.invalid` (RFC 2606) para que un despacho accidental del outbox no alcance a nadie real
+- [x] `src/lib/auth/impersonacion.ts` — cookie `autob_persona_simulada`, que **solo lleva el
+      `id`** y se valida contra el roster; un id desconocido se ignora y se cae al
+      comportamiento por variables de entorno
+- [x] `session.ts` — la persona sustituye `participanteId`, `nombre`, `correo` y `permisos`;
+      **`oktaSub` conserva el valor real** y la sesion de Okta se sigue exigiendo primero
+- [x] `src/app/actions/devTools.ts` — `cambiarPersonaSimulada`. No pasa por `puedeEjecutar`: no
+      hay permiso que la cubra ni debe haberlo (regla 17). Su compuerta son tres condiciones
+      simultaneas: modo `FULL`, `NODE_ENV` distinto de `production` y sesion real de Okta
+- [x] `src/components/BarraDeIdentidadSimulada.tsx` — conmutador en el layout raiz, colapsado,
+      con `Drawer`/`Summary` de Eden. **Un solo `<form>` con un boton de envio por persona**, asi
+      que funciona sin una linea de JavaScript de cliente y no necesita `"use client"`
+- [x] `src/components/PanelDeIdentidadSimulada.tsx` — lectura de sesion y roster, dentro de un
+      `<Suspense>` del layout; devuelve `null` si el modo no es `FULL`, si no hay sesion o si la
+      lectura falla
+- [x] Diccionarios: seccion `desarrollo` en `es` y `en`. Las personas se describen por sus
+      **permisos traducidos**, nunca por su rol ni por ENUMs crudos (regla 11)
+- [x] `rolesSimulados.test.ts` — automatiza la invariante del rol que la Etapa 2.1 verificaba a
+      mano, y corrige su enunciado
+- [x] `.env.local.example` — `FULL` documentado con la razon por la que hace falta
+
+**Verificacion:**
+
+- [x] Compuerta de calidad completa en verde
+- [x] `axe` sin violaciones sobre la barra (via `genericTests`)
+- [x] La cookie no puede conceder nada fuera del roster: id desconocido, vacio e inventado
+      cubiertos por prueba
+- [x] `FULL` en produccion **lanza** antes de conceder una sola identidad simulada
+- [x] En `MOCK_USERS` y en `OFF` la cookie **no se lee siquiera**, asi que no puede volver
+      dinamica una pantalla que no lo era
+- [x] Sin sesion de Okta no hay impersonacion: se comprueba que la cookie no se consulta
+- [x] El roster alcanza el catalogo completo de permisos, y separa en identidades distintas a
+      quien administra convocatorias de quien las aprueba — sin eso el dictamen seguiria sin
+      poder probarse
+- [ ] **[OPERADOR]** recorrido manual del flujo completo con el conmutador. Exige el login real
+      contra Okta, que sigue siendo el pendiente de la Etapa 2
+
+**Salida esperada:** el flujo completo recorrible en local, y la impersonacion imposible de
+activar en produccion.
 
 ---
 
@@ -784,92 +873,283 @@ con tesoreria.
 
 ---
 
-## Etapa 9 — Comprobante de pago y tesoreria
+## Etapa 9 — Comprobante de pago y tesoreria ✅
 
 **Objetivo:** cerrar la venta con el aval de tesoreria.
 
 **Dependencias:** Etapa 8.
 
-- [ ] Subida del comprobante por el adjudicado → estado `COMPROBANTE_CARGADO`
-- [ ] Paso a `EN_VERIFICACION`
-- [ ] Bandeja de tesoreria con las solicitudes pendientes de verificar
-- [ ] Aval del pago → solicitud `VENDIDA` y vehiculo marcado como vendido
-- [ ] Rechazo del pago → solicitud `RECHAZADA_POR_TESORERIA` y liberacion del lote hacia el
+- [x] Subida del comprobante por el adjudicado → estado `COMPROBANTE_CARGADO`. No hay un boton
+      "subir comprobante" separado: es la misma transicion que entra en verificacion (proyecto.md
+      5.4), servida desde el bloque de accion de la pantalla 3.3/3.4 con un `ToolModal`
+- [x] Paso a `EN_VERIFICACION`
+- [x] Bandeja de tesoreria con las solicitudes pendientes de verificar — `/tesoreria/verificacion`
+      (PA-11) mas su detalle `/tesoreria/verificacion/[solicitudId]`
+- [x] Aval del pago → solicitud `VENDIDA` y vehiculo marcado como vendido
+- [x] Rechazo del pago → solicitud `RECHAZADA_POR_TESORERIA` y liberacion del lote hacia el
       siguiente de la fila
-- [ ] Descarga del comprobante como Route Handler, con permiso verificado
-- [ ] Cada transicion escribe su evento de auditoria con actor y motivo
-- [ ] Tests de autorizacion: solo `OPERADOR_TESORERIA` avala o rechaza; solo el adjudicado sube
-      su propio comprobante
+- [x] Descarga del comprobante como Route Handler, con permiso verificado —
+      `GET /api/comprobantes/[solicitudId]`, nunca por CloudFront
+- [x] Cada transicion escribe su evento de auditoria con actor y motivo
+- [x] Tests de autorizacion: solo `OPERADOR_TESORERIA` avala o rechaza; solo el adjudicado sube
+      su propio comprobante — ya cubierto por la cobertura cartesiana de `permisos.test.ts`
+      (Etapa 2.1, seccion 5 de `permission-matrix.md`), mas casos explicitos en
+      `src/app/actions/tesoreria.test.ts`
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Un participante no puede descargar el comprobante de otro
-- [ ] El rechazo libera correctamente el lote y reasigna al siguiente
+- [x] Compuerta de calidad completa en verde
+- [x] Un participante no puede descargar el comprobante de otro —
+      `src/app/api/comprobantes/[solicitudId]/route.test.ts`: 404, nunca 403
+- [x] El rechazo libera correctamente el lote y reasigna al siguiente — probado contra
+      DynamoDB y S3 reales en `src/lib/tesoreria/tesoreria.integracion.test.ts`
 
-**Salida esperada:** venta cerrable de punta a punta.
+**Salida esperada:** venta cerrable de punta a punta. **Cumplida.**
+
+**Decisiones que se tomaron aqui y no estaban en el plan:**
+
+- **`correoTitular` se desnormaliza en la solicitud desde la sesion (T1).** No existe ningun
+  perfil de participante persistido con correo — la Etapa 4 nunca implemento el *upsert* real
+  (desafios-implementacion.md 8) —, asi que sin esta copia `PendienteDTO` no podria decirle a
+  tesoreria a quien le pertenece un comprobante. Es una excepcion deliberada a R-12: el dato es
+  del titular sobre su propia solicitud, no de un tercero (desafios-implementacion.md 31).
+- **`loteYTurnoDesdeIdentificador` (`claves.ts`), el inverso de `identificadorDeSolicitud`.**
+  Las tres actions de tesoreria reciben solo `solicitudId`, y ningun patron de acceso lee una
+  solicitud sin conocer antes su `loteId`. En vez de un indice nuevo, se recupera del propio
+  identificador — es derivado, no generado (desafios-implementacion.md 32).
+- **GSI2 de la solicitud es disperso, como GSI4.** `subirComprobante` escribe
+  `SOL_ESTATUS#EN_VERIFICACION`; `avalarPago` y `rechazarPago` la retiran. Sin eso, PA-11
+  seguiria mostrando trabajo ya resuelto. El documento original de T4 no lo mencionaba —misma
+  clase de correccion que T2 tuvo con `RESERVADO` (desafios-implementacion.md 32).
+- **T6 no es "identica a T5".** Sigue la estrategia de T5b (liberar y volver a llamar a
+  `adjudicarLote`), no la de T5 (un solo acto atomico): quien rechaza es una persona mirando la
+  pantalla, no un barrido sobre un plazo vencido.
+- **`rechazarPago` no retira el centinela de fila.** A diferencia de la cancelacion voluntaria,
+  `RECHAZADA_POR_TESORERIA` tiene que seguir visible en `MiLugarDTO` con su motivo (R-16); por
+  eso `MiLugarDTO` gana el campo opcional `motivoRechazo`, que **no** es una fuga de R-12 —es el
+  motivo del **propio** rechazo del titular, no de un tercero.
+- **Sin pantalla `/mis-solicitudes` nueva.** `ui-ux-requerimientos.md` 3.6 dice "`ToolModal`
+  **desde el bloque de accion**"; la Etapa 8 ya deja `BloqueDeAccionDeLote` leyendo
+  `EN_VERIFICACION`, `VENDIDA` y el plazo. Construir la pantalla 3.5 aparte habria sido una
+  segunda vista de lo mismo sin nada nuevo que probar — el mismo argumento que ya evito una
+  vista de dictamen separada para convocatorias (Etapa 6).
+- **`avalarPago` reusa `cerrarFilaDelLote` (Etapa 8) para las solicitudes restantes.** El
+  documento dice que pasan a `NO_ADJUDICADA` "fuera de la transaccion" sin detallar como; esa
+  funcion ya lo hacia para R-18 y no necesita saber por que se esta cerrando la fila.
+
+**Pendiente heredado por el operador:** ninguno nuevo. El recorrido de punta a punta contra el
+sandbox sigue las mismas credenciales que ya bloquean las etapas anteriores.
 
 ---
 
-## Etapa 10 — Vencimientos y reasignacion automatica
+## Etapa 10 — Vencimientos y reasignacion automatica ✅
 
 **Objetivo:** que la fila avance sola cuando alguien no paga a tiempo.
 
 **Dependencias:** Etapa 9.
 
-- [ ] `src/lib/fila/vencerYReasignar.ts` — cancela por vencimiento y adjudica al siguiente en
+- [x] `src/lib/fila/vencerYReasignar.ts` — cancela por vencimiento y adjudica al siguiente en
       **una sola** transaccion, con sus dos eventos de auditoria
-- [ ] Barrido programado **idempotente**: ejecutarlo dos veces no produce doble efecto
-- [ ] **Verificacion perezosa**: al leer una fila, si la adjudicacion vigente ya vencio, se
+- [x] Barrido programado **idempotente**: ejecutarlo dos veces no produce doble efecto
+- [x] **Verificacion perezosa**: al leer una fila, si la adjudicacion vigente ya vencio, se
       resuelve en ese momento; el barrido es red de seguridad, no unica defensa (riesgo R6)
 - [x] Descongelamiento de las solicitudes `CONGELADA` del participante que perdio su adjudicacion
       — **adelantado a la Etapa 8**: la cancelacion tambien hace perder una adjudicacion, y
       enviar la mitad congeladora de R-09 sin la que la deshace habria dejado a esos
       participantes fuera de sus otras filas para siempre. `src/lib/fila/descongelarSolicitudes.ts`
       lo reusan T5 y T6 sin cambios
-- [ ] **Recoger los lotes libres con fila viva.** T1 y la cancelacion no pueden adjudicar dentro
+- [x] **Recoger los lotes libres con fila viva.** T1 y la cancelacion no pueden adjudicar dentro
       de su propia transaccion —`TransactWriteItems` no devuelve valores—, asi que un proceso
       que muera entre las dos escrituras deja un lote `EN_OFERTA` con candidatos y sin nadie que
       dispare la adjudicacion. Hoy lo resuelve la siguiente solicitud; el barrido deberia
       recogerlo junto con los vencimientos (`modelo-datos-dynamodb.md` T5b)
-- [ ] `src/lib/correo/` — patron **outbox**: el correo se encola, nunca participa en la
+- [x] `src/lib/correo/` — patron **outbox**: el correo se encola, nunca participa en la
       transaccion critica (riesgo R8)
-- [ ] Correo de adjudicacion con los datos de pago y el plazo
-- [ ] Reintentos con retroceso y registro de fallos permanentes
-- [ ] Tests: vencimiento exacto en la frontera, reasignacion en cadena por varios lugares de la
+- [x] Correo de adjudicacion con los datos de pago y el plazo
+- [x] Reintentos con retroceso y registro de fallos permanentes
+- [x] Tests: vencimiento exacto en la frontera, reasignacion en cadena por varios lugares de la
       fila, fila agotada sin siguiente candidato
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Ejecutar el barrido dos veces seguidas no altera el resultado
-- [ ] Una caida del envio de correo no revierte ni bloquea la adjudicacion
+- [x] Compuerta de calidad completa en verde
+- [x] Ejecutar el barrido dos veces seguidas no altera el resultado
+- [x] Una caida del envio de correo no revierte ni bloquea la adjudicacion
 
 **Salida esperada:** el ciclo de la fila avanza sin intervencion manual.
 
+### Decisiones que se tomaron aqui y no estaban en el plan
+
+- **La variante reducida de T5 tambien libera el vehiculo.** `modelo-datos-dynamodb.md` la
+  describia sin ese `Update`; dejar el vehiculo `RESERVADO` mientras el lote vuelve a
+  `EN_OFERTA` reproducia el propio defecto que esta etapa pide corregir ("lotes libres con fila
+  viva"), pero de forma permanente en vez de una ventana de crash. Corregido y validado contra
+  DynamoDB real: tras la fila agotada, un participante nuevo puede formarse y adjudicarse sin
+  intervencion.
+- **"Recoger lotes libres" se acota a convocatorias `PUBLICADA` y exige fila viva antes de
+  llamar a `adjudicarLote`.** No hay GSI para "lotes `EN_OFERTA` con fila viva" y no se creo uno:
+  la mayoria de los lotes `EN_OFERTA` en cualquier instante son inventario normal sin
+  candidatos, y llamar a `adjudicarLote` sobre ellos sin filtrar escribiria un `FILA_AGOTADA`
+  por cada barrido, para siempre. Se reusan PA-05 (convocatorias publicadas) y PA-04 (sus
+  lotes), con una `Query COUNT` barata (`estatus = EN_FILA`) antes de intentar adjudicar.
+- **Nuevo motivo de adjudicacion `RECUPERACION_POR_BARRIDO`.** Los cuatro motivos existentes
+  describen quien disparo la adjudicacion (primera vez, o una reasignacion con causa conocida);
+  un lote huerfano recuperado por el barrido no es ninguno de los dos —no es la primera vez que
+  se intenta, y no se sabe con certeza que lo dejo sin dueno—, asi que se declaro un quinto valor
+  en vez de forzarlo a uno existente.
+- **`vencerYReasignar` reusa `leerFila` y `congelar` de `adjudicarLote.ts`**, exportados para la
+  ocasion (antes solo salian por `__test__`): la logica de abstencion por reservas, lectura de la
+  fila en orden y congelamiento por R-09 es identica a T2, y T5 solo le agrega dos escrituras del
+  lado del vencido por delante. Duplicarla habria sido el error que la Etapa 9 ya evito con
+  `cerrarFilaDelLote`.
+- **El outbox se encola dentro de la misma transaccion de T2 y T5**, no despues: es lo unico
+  que hace al correo tan garantizado como el evento de auditoria (regla 4 de `CLAUDE.md`).
+  `itemsDeEncoladoAdjudicacion` devuelve una lista vacia sin `correoTitular` en vez de fallar —el
+  correo nunca bloquea la adjudicacion (D-6)—.
+- **Los reintentos de correo son el propio horario del barrido, no una espera dentro de la
+  funcion.** Un mensaje que falla no se reintenta en la misma corrida; se deja `PENDIENTE` para
+  la siguiente pasada, cada 5 minutos. `MAXIMO_INTENTOS_CORREO = 5` acota el fallo permanente a
+  ~25 minutos. Un fallo no reintentable (401, 4xx) se declara permanente de inmediato, sin
+  esperar esos cinco intentos.
+- **`server-only` tuvo que instalarse como dependencia real.** El paquete no existia en
+  `node_modules` —el proyecto dependia de que el plugin de TypeScript de Next.js lo resolviera
+  como caso especial—, y `esbuild` (el empaquetador del Lambda de `defineFunction`) no tiene esa
+  logica: fallaba con "Could not resolve 'server-only'" al empaquetar el barrido, que ahora
+  reusa `src/lib` de verdad. Ver `desafios-implementacion.md`.
+- **`amplify/tsconfig.json` ganó el alias `@/*`.** El barrido importa `src/lib` por ruta
+  relativa (no por el alias, que ese `tsconfig` no comparte con el raiz), pero esos archivos
+  usan `@/` internamente en todo el proyecto; sin el mapeo, `tsc -p amplify/tsconfig.json`
+  fallaba en cascada al seguir esos imports.
+
 ---
 
-## Etapa 11 — Auditoria y cumplimiento
+## Etapa 10.1 — Armazon: encabezado, pie y navegacion por permiso ✅
+
+> **Por que existe esta etapa.** El armazon estaba **especificado desde la Etapa 0**
+> (`ui-ux-requerimientos.md` seccion 2: `WorkforceHeader`, contenido, `WorkforceFooter` y
+> navegacion por permiso) pero **ninguna etapa lo reclamo como entregable**. La Etapa 1 dejo
+> `layout.tsx` con solo `Normalize` y `Fonts`, y las Etapas 5 a 10 construyeron once pantallas
+> encima de ese armazon vacio: sin encabezado, sin pie y sin forma de llegar a ninguna pantalla
+> salvo escribiendo la URL.
+>
+> Es deuda de plan, no un requerimiento nuevo.
+
+**Objetivo:** el armazon estandarizado de una aplicacion de fuerza laboral, con un menu que
+solo ofrece lo que cada persona puede usar.
+
+**Dependencias:** Etapa 2.1 (permisos) y las pantallas de las Etapas 5 a 9.
+
+- [x] Paquetes: `eden-workforce-header`, `eden-workforce-footer`, `eden-contextual-menu`, en las
+      mismas versiones que `icsmx-camp-webapp`
+- [x] `src/app/layout.tsx` — rejilla `auto 1fr auto`; encabezado y pie cada uno en su
+      `<Suspense>`, porque los dos leen datos de la peticion y ninguno debe retrasar el
+      contenido. El contenido va en un `<div>`, no en un `<main>`: cada pantalla monta el suyo
+- [x] `src/app/layout.css` — armado tomado de `PageWrapper.css` y `Main.css` del proyecto hermano
+- [x] `src/lib/auth/permisos.ts` — `tieneCapacidad`, el primer tiempo de `puedeEjecutar` sin la
+      guarda. `puedeEjecutar` lo invoca para su paso 1, asi que un solo lugar calcula la
+      capacidad
+- [x] `src/lib/navegacion.ts` — catalogo del menu. **Cada entrada declara la `Accion` que abre su
+      puerta, no una lista de permisos**: asi el menu hereda los cambios de
+      `permission-matrix.md` sin tocarse
+- [x] `src/components/EncabezadoAplicacion.tsx` — Server Component que resuelve el menu; al
+      cliente le pasa enlaces ya filtrados, nunca los permisos de la sesion
+- [x] `src/components/MenuDeUsuario.tsx` — desplegable en el slot `tools`, con patron de
+      divulgacion (`aria-expanded` + panel `<nav>`), no `role="menu"`
+- [x] `src/components/PieAplicacion.tsx` — lee el idioma de la peticion antes de renderizar,
+      porque `WorkforceFooter` llama a `new Date()`
+- [x] Diccionarios: seccion `navegacion` en `es` y `en` (regla 11)
+- [x] `ui-ux-requerimientos.md` seccion 2 reescrita: la tabla deriva de acciones, no de permisos
+      — **la version anterior se habia despegado de la matriz** y afirmaba que `Autob_Auditar`
+      solo abria "Auditoria", cuando concede tambien `vehiculo:ver-catalogo`,
+      `convocatoria:ver-administracion` y `tesoreria:ver-bandeja`
+- [x] `desafios-implementacion.md` seccion 35 — la trampa de resolver un menu con una accion que
+      tiene guarda contextual
+
+**Verificacion:**
+
+- [x] Compuerta de calidad completa en verde
+- [x] `axe` sin violaciones sobre el menu, abierto y cerrado
+- [x] Cobertura permiso x seccion: cada permiso abre exactamente las secciones esperadas, y una
+      sesion sin permisos ve el menu vacio conservando sus accesos de cuenta
+- [x] **Ninguna entrada del menu usa una accion con guarda contextual** — la invariante que
+      hace correcto comprobar solo la capacidad. Fue esta prueba, y no la revision visual, la
+      que detecto que `convocatoria:ver-publicada` dejaba el catalogo oculto para todos
+- [x] `tieneCapacidad` coincide con `puedeEjecutar` en toda accion sin guarda, y nunca concede
+      donde `puedeEjecutar` deniega por falta de capacidad
+- [x] Todo `href` del menu corresponde a una ruta que existe en `src/app`
+- [x] Los permisos de la sesion no cruzan al cliente (verificado sobre las props del menu)
+- [ ] **[OPERADOR]** revision visual en navegador: encabezado y pie de Eden dibujados, menu
+      colapsando en movil. Ni `build` ni jsdom lo sustituyen
+
+**Salida esperada:** las once pantallas ya construidas, alcanzables desde un menu que respeta
+los permisos.
+
+---
+
+## Etapa 11 — Auditoria y cumplimiento ✅
 
 **Objetivo:** que un auditor pueda demostrar que todo ocurrio con justicia y en orden.
 
 **Dependencias:** Etapa 10.
 
-- [ ] Vista de auditor: bitacora completa por convocatoria, por lote y por solicitud
-- [ ] Reconstruccion de la fila de un lote: turnos, adjudicaciones y motivo de cada cambio
-- [ ] Verificacion de integridad: turnos contiguos, una sola adjudicacion vigente por lote,
-      toda transicion con evento correspondiente
-- [ ] Exportacion de la bitacora
-- [ ] Acceso de **solo lectura** con `Autob_Auditar`, sin ninguna action de mutacion
-- [ ] Tests de que el auditor no puede mutar nada
+- [x] Vista de auditor: bitacora completa por convocatoria, por lote, por vehiculo y por
+      solicitud (`/auditoria`, `consultarBitacora`, PA-12). `agregado` + `agregadoId` en la URL
+      con `<form method="get">`, sin JavaScript de cliente; tipo de evento, rango de fechas y
+      participante se filtran en memoria sobre la historia completa de ese agregado
+      (`eventoCoincideConFiltros`) — el mismo argumento de volumen que ya usa
+      `listarPendientesVerificacion`
+- [x] Reconstruccion de la fila de un lote: turnos, adjudicaciones y motivo de cada cambio
+      (`/auditoria/lotes/[loteId]`, `reconstruirFila`, `reconstruirHistoriaDeFila` puro).
+      `participanteId` sale del `actorId` de `SOLICITUD_CREADA`, sin ninguna lectura adicional
+- [x] Verificacion de integridad: las seis comprobaciones de `trazabilidad-auditoria.md` 5.1,
+      recalculadas desde el evento crudo — `verificarIntegridad`, `verificarIntegridadDeLote`
+      puro. Contrasta la bitacora contra el estado **vigente** de la tabla (`leerFilaCompleta`,
+      PA-07 sin filtrar por estatus — la capacidad detras de `fila:ver-completa`, declarada desde
+      la Etapa 2.1 y sin consumidor hasta ahora)
+- [x] Exportacion de la bitacora: CSV con los mismos filtros de la pantalla, via
+      `Route Handler` (`/api/auditoria/exportar`)
+- [x] Acceso de **solo lectura** con `Autob_Auditar`, sin ninguna action de mutacion — las cuatro
+      acciones del catalogo (`auditoria:ver-bitacora`, `auditoria:ver-fila-historica`,
+      `auditoria:exportar`) no llevan guarda contextual
+- [x] Tests de que el auditor no puede mutar nada — la invariante 1 de `permission-matrix.md`
+      (Etapa 2.1) ya cubre el catalogo completo y automaticamente cualquier accion nueva; se
+      agrega que `exportarBitacora` no delega en ningun servicio de negocio
+
+**Decisiones que se tomaron aqui y no estaban en el plan:**
+
+- **`BITACORA_EXPORTADA` se escribe en el Route Handler de descarga, no en la Server Action.**
+  El contrato original decia que la action lo emitia; moverlo evita que cualquiera con
+  `Autob_Auditar` construya la URL de descarga a mano y exporte sin dejar rastro — mismo criterio
+  que `COMPROBANTE_DESCARGADO`. `api-contracts.md` seccion 6 corregida
+  (`desafios-implementacion.md` 36)
+- **`consultarBitacora` devuelve `{ eventos, cursor? }`, no `EventoDTO[]` a secas.** El contrato
+  declaraba `cursor` como entrada sin decir de donde salia el siguiente; sin un cursor de salida
+  la paginacion no se puede completar. `api-contracts.md` corregido
+- **La verificacion de integridad agrupa la bitacora por `correlacionId`, no evento por evento.**
+  Una reasignacion por vencimiento escribe el cierre de un turno y la adjudicacion del siguiente
+  en la misma transaccion, con el mismo `ocurridoEn` al milisegundo; su orden relativo en la `SK`
+  lo desempata un ULID con parte aleatoria. Replay evento-por-evento podia ver la adjudicacion
+  nueva antes que el cierre de la vieja y marcar, por un instante que nunca existio, dos
+  adjudicaciones vigentes. Verificado por falsificacion: quitar el agrupamiento hace fallar la
+  prueba correspondiente (`desafios-implementacion.md` 37)
+- **Riesgo R20 evaluado y diferido**, no cerrado ni ignorado: el sumidero append-only
+  independiente (DynamoDB Streams + S3 con Object Lock) es infraestructura AWS nueva que esta
+  etapa no tenia en su alcance. Lo que si se construyo es una segunda red de **lectura** —la
+  comprobacion 5 de integridad— que delata una escritura sin condicion aunque no la impida. Ver
+  el riesgo R20 arriba
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Dado un lote con reasignaciones, la vista reconstruye la secuencia completa y correcta
-- [ ] El auditor recibe `forbidden` en toda action de mutacion
+- [x] Compuerta de calidad completa en verde — 1782 pruebas, `typecheck` y `build` limpios
+- [x] Dado un lote con reasignaciones, la vista reconstruye la secuencia completa y correcta —
+      probado con eventos de congelamiento, omision y reasignacion compartiendo `correlacionId`
+- [x] El auditor recibe `forbidden` en toda action de mutacion — heredado de la invariante 1
+- [ ] **[OPERADOR]** revision visual en navegador de `/auditoria` y
+      `/auditoria/lotes/[loteId]` con datos reales: filtros, exportacion descargable y las seis
+      comprobaciones legibles. Exige sesion real de Okta con `Autob_Auditar` y un lote con
+      historia, que no existen en este entorno — mismo pendiente que bloquea las Etapas 5 a 10.1
 
-**Salida esperada:** trazabilidad demostrable de punta a punta.
+**Salida esperada:** trazabilidad demostrable de punta a punta. **Cumplida.**
 
 ---
 
@@ -973,15 +1253,17 @@ politica IAM del rol de la aplicacion, mas prueba de integracion que confirma el
 
 **Senal de alerta:** cualquier `UpdateCommand` cuya clave empiece con `AUDIT#`.
 
-### R6 — Barrido de vencimientos caido
+### R6 — Barrido de vencimientos caido — **cerrado**
 
-**Probabilidad:** media · **Impacto:** alto
+**Probabilidad:** media · **Impacto:** alto · **Estado:** cerrado en la Etapa 10
 
 Si el barrido no corre, la fila se congela y nadie avanza.
 
-**Mitigacion:** barrido idempotente, mas **verificacion perezosa** al leer la fila para que el
-sistema se autocorrija sin depender del barrido. Alarma si no se ejecuta y runbook de
-ejecucion manual.
+**Mitigacion:** barrido idempotente (`src/lib/fila/barridoDeVencimientos.ts`), mas
+**verificacion perezosa** al leer la fila (`consultarMiLugar.ts`) para que el sistema se
+autocorrija sin depender del barrido. `detectadoPor` en `SOLICITUD_VENCIDA` distingue cual de
+los dos caminos resolvio cada vencimiento, que es lo que permite medir si el barrido esta
+cumpliendo su funcion. Falta la alarma de infraestructura (observabilidad, fuera del codigo).
 
 **Senal de alerta:** adjudicaciones con vencimiento pasado que siguen vigentes.
 
@@ -998,14 +1280,17 @@ horario de verano.
 **Senal de alerta:** un `new Date()` sin zona explicita en codigo de cliente que decida
 visibilidad.
 
-### R8 — El correo bloquea o revierte la adjudicacion
+### R8 — El correo bloquea o revierte la adjudicacion — **cerrado**
 
-**Probabilidad:** media · **Impacto:** medio
+**Probabilidad:** media · **Impacto:** medio · **Estado:** cerrado en la Etapa 10
 
-**Mitigacion:** patron outbox. El envio se encola y se procesa aparte, con reintentos; nunca
-participa en la transaccion critica.
+**Mitigacion:** patron outbox. El mensaje se encola en la **misma** transaccion que adjudica
+(`src/lib/correo/outbox.ts`, llamado desde `adjudicarLote.ts` y `vencerYReasignar.ts`) pero el
+envio real ocurre aparte, en `procesarOutbox.ts`, con reintentos acotados por
+`MAXIMO_INTENTOS_CORREO` y sin bloquear ni revertir nada si CES falla o esta ausente (R17).
 
-**Senal de alerta:** un `await ses.send(...)` dentro del flujo de adjudicacion.
+**Senal de alerta:** un `await enviarCorreo(...)` dentro de `adjudicarLote.ts` o
+`vencerYReasignar.ts`, fuera de `itemsDeEncoladoAdjudicacion`.
 
 ### R9 — `festack-scripts` sin soporte verificado de TypeScript
 
@@ -1113,7 +1398,17 @@ festack-scripts no vaya a soportar por estar congelado.
 
 ### R17 — CES aun no esta aprobado para este proyecto
 
-**Probabilidad:** media · **Impacto:** alto si se materializa tarde
+**Probabilidad:** media · **Impacto:** alto si se materializa tarde · **Estado:** materializado
+segun lo previsto — la mitigacion de codigo esta completa, la aprobacion sigue pendiente
+
+> Se llego a la Etapa 10 sin aprobacion de CES, que era la senal de alerta de este riesgo. Se
+> construyo igual el adaptador (`src/lib/correo/clienteCes.ts`) y el procesador del outbox
+> (`procesarOutbox.ts`), asi que el riesgo se convirtio exactamente en la demora que anticipaba
+> esta mitigacion y no en un bloqueo: la aplicacion adjudica y notifica en cuanto CES este
+> aprobado y sus credenciales (`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`) se
+> configuren como secretos de Amplify. **[OPERADOR]** sigue pendiente de gestionar la
+> aprobacion; sin ella, los correos se acumulan `PENDIENTE` en el outbox indefinidamente sin
+> afectar la fila.
 
 El correo transaccional sale por **CES** (Church Email Service), un servicio REST corporativo
 —`POST` de un JSON con autenticacion basica— y no por SES. La decision lo saca por completo de
@@ -1196,9 +1491,21 @@ lo contiene frente a codigo que omita la condicion a proposito.
 
 **Mitigacion:** la condicion, ya documentada en las siete transacciones. La garantia fuerte exige
 sacar la bitacora del alcance de la aplicacion — DynamoDB Streams hacia un sumidero append-only
-(S3 con Object Lock o equivalente) — y se evalua en la **Etapa 11**.
+(S3 con Object Lock o equivalente).
 
-**Senal de alerta:** un `PutCommand` sobre una clave `AUDIT#` sin `ConditionExpression`.
+**Evaluado en la Etapa 11, y deliberadamente diferido.** Streams + Lambda consumidor + bucket con
+Object Lock es infraestructura AWS nueva —costo, politica de retencion, idempotencia del
+consumidor—, y nada de eso estaba en el alcance que la etapa recibio ("vista de auditor,
+reconstruccion, verificacion, exportacion"). Construirla sin que el operador la pidiera seria
+alcance no autorizado, no una compuerta de calidad. Lo que la Etapa 11 si agrega es una segunda
+red, de lectura: `verificarIntegridad` recalcula la bitacora entera contra el estado vigente de la
+tabla (comprobacion 5 de `trazabilidad-auditoria.md` 5.1) y delataria una discrepancia dejada por
+un `Put` sin condicion — no la impide, pero la hace visible sin esperar a un auditor externo.
+Con `probabilidad: baja` y esa red nueva, el riesgo se acepta explicitamente en vez de cerrarse:
+construir el sumidero queda pendiente de decision del operador, no de una etapa de este plan.
+
+**Senal de alerta:** un `PutCommand` sobre una clave `AUDIT#` sin `ConditionExpression`, o una
+comprobacion 5 de `verificarIntegridad` en `incumple` sin que ninguna otra explique por que.
 
 ---
 
@@ -1223,7 +1530,8 @@ sacar la bitacora del alcance de la aplicacion — DynamoDB Streams hacia un sum
 | 2026-09-04 | **Autorizacion por permisos, no por roles** (D-9). EAS responde un booleano por permiso | RBAC con la lista de roles en el codigo, que era el modelo de la Etapa 2: EAS no puede entregar roles, y congelaba politica organizacional en el repositorio. Tambien se descarto el `deny-override` ("quien administra nunca compra"): mismo defecto, y volveria inexpresable el caso legitimo de que la organizacion decida permitirlo |
 | 2026-09-04 | Siete permisos a granularidad de **capacidad** | Un permiso por accion (33): mas fino, pero fragmenta capacidades que en la practica se conceden juntas y multiplica el costo de configuracion en EAS |
 | 2026-09-04 | Guardas cerradas por omision: toda precondicion exige `=== true` | Contexto tipado por accion (33 tipos), que el diagnostico externo proponia: mas seguro en compilacion, pero mucho mas costoso. La invariante 8 —quitar un campo a la vez y exigir denegacion— cubre la misma clase de defecto y ademas atrapa los futuros |
-| 2026-09-04 | `attribute_not_exists(PK)` en cada `Put` de evento, mas sumidero append-only en la Etapa 11 | Confiar solo en el `Deny` de IAM, que es lo que afirmaban tres documentos: **es falso**, `PutItem` sobrescribe y no se puede denegar sin romper la regla 4 |
+| 2026-09-04 | `attribute_not_exists(PK)` en cada `Put` de evento | Confiar solo en el `Deny` de IAM, que es lo que afirmaban tres documentos: **es falso**, `PutItem` sobrescribe y no se puede denegar sin romper la regla 4 |
+| 2026-09-08 | El sumidero append-only independiente de R20 (DynamoDB Streams + S3 Object Lock) se evalua en la Etapa 11 y se **difiere**, no se construye | Construirlo dentro del alcance recibido ("vista de auditor, reconstruccion, verificacion, exportacion"): es infraestructura AWS nueva sin pedirla el operador. La Etapa 11 agrega en su lugar una red de lectura — la comprobacion 5 de `verificarIntegridad` — que delata la discrepancia sin impedirla |
 | 2026-09-04 | ~~`ConditionCheck` sobre la convocatoria dentro de la transaccion de T1~~ — **revertida el 2026-09-05**, ver abajo | Confiar en los atributos desnormalizados del lote: una publicacion por tandas interrumpida deja lotes comprables bajo una convocatoria sin publicar |
 | 2026-09-04 | `style-src` y `font-src` autorizan el origen del Font Foundry | Mantener `self`: bloquea la hoja de estilo remota de `<Fonts>` de Eden y sus woff2, y ni `build` ni jsdom lo detectan porque no aplican CSP |
 | 2026-09-05 | Reserva de turno como **item propio** `LOTE#<id>/RESERVA#<id>`, escrita antes del contador | Anotarla como atributo mapa del item del lote, que era el mecanismo que este plan proponia: cierra la carrera igual, pero mete el item del lote en la transaccion de toda solicitud y DynamoDB las cancela con `TransactionConflict` — medido, entre 5 y 9 de cada 10 |

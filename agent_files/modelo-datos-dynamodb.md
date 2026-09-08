@@ -109,11 +109,15 @@ existe y haria pasar la condicion, adjudicando el mismo lote dos veces.
 **Solicitud:**
 
 ```
-solicitudId, participanteId, turno, solicitadoEn
+solicitudId, loteId, convocatoriaId, participanteId, turno, solicitadoEn
 estatus     EN_FILA | CONGELADA | ADJUDICADA | EN_VERIFICACION | VENDIDA
             | CANCELADA_POR_VENCIMIENTO | RECHAZADA_POR_TESORERIA
             | CANCELADA_POR_PARTICIPANTE | NO_ADJUDICADA
-adjudicadoEn, venceEn, comprobanteClaveS3, motivoRechazo
+adjudicadoEn, venceEn, comprobanteClaveS3, comprobanteSubidoEn, motivoRechazo
+correoTitular   -- copia de la sesion en T1 (Etapa 9). No hay perfil de
+                -- participante persistido; sin esta copia PA-11 no podria
+                -- decirle a tesoreria a quien le pertenece un comprobante
+                -- (desafios-implementacion.md 31)
 ```
 
 Todas las fechas en **ISO-8601 UTC** (R-04). La conversion a `America/Mexico_City` ocurre solo
@@ -449,7 +453,28 @@ Implementada en `src/lib/fila/adjudicarLote.ts` (Etapa 8).
 4. Update vehiculo    -> RESERVADO          CONDITION estatus = EN_CONVOCATORIA
 5. Put evento         LOTE_ADJUDICADO
                       CONDITION attribute_not_exists(PK)
+6. Put mensaje +      outbox del correo de adjudicacion (seccion 6.1) — solo si el
+   evento             ganador tiene correoTitular; lista vacia si no, sin bloquear
+                      CONDITION attribute_not_exists(PK)
 ```
+
+#### 6.1 El outbox viaja en la transaccion que adjudica (D-6, riesgo R8)
+
+`itemsDeEncoladoAdjudicacion` (`src/lib/correo/outbox.ts`, Etapa 10) devuelve el `Put` del
+mensaje (`OUTBOX#<mensajeId> / META`, con las claves dispersas de GSI4 — seccion 3) y el `Put`
+de `CORREO_ENCOLADO`, listos para aplanarse dentro del arreglo de items de T2 y T5. Devuelve una
+lista **vacia** si el ganador no tiene `correoTitular`: la adjudicacion nunca depende del
+correo.
+
+**Por que en la misma transaccion, y no despues.** Un `Put` suelto tras el `TransactWriteItems`
+dejaria la misma ventana que ya cerro la regla 4 para los eventos: si el proceso muere entre las
+dos escrituras, la adjudicacion existe y el aviso nunca se encola, y nada lo detecta —el barrido
+de correos solo actua sobre lo que ya esta en el outbox—. Meterlo en la transaccion lo hace tan
+garantizado como el propio evento.
+
+El envio real —el `POST` a CES— sigue sin participar nunca: ocurre aparte, en
+`src/lib/correo/procesarOutbox.ts`, que el barrido invoca despues de resolver los vencimientos
+(`arquitectura-tecnica-aws.md` 4.5).
 
 `venceEn = adjudicadoEn + horasLiquidacion` en horas naturales (R-13).
 
@@ -520,33 +545,58 @@ inviable la variante descartada de R18.
 ### T3 — Subir comprobante
 
 ```
-1. Update solicitud   SET estatus = EN_VERIFICACION, comprobanteClaveS3,
-                          GSI2PK = SOL_ESTATUS#EN_VERIFICACION
+0. S3 PutObject       comprobantes/<solicitudId>/<archivoId>.<ext>   <- antes que DynamoDB
+1. Update solicitud   SET estatus = EN_VERIFICACION, comprobanteClaveS3, comprobanteSubidoEn,
+                          GSI2PK = SOL_ESTATUS#EN_VERIFICACION, GSI2SK = <comprobanteSubidoEn>#<id>
                       REMOVE GSI4PK, GSI4SK                    <- detiene el reloj
                       CONDITION estatus = ADJUDICADA AND venceEn > :ahora
 2. Put evento         COMPROBANTE_CARGADO   CONDITION attribute_not_exists(PK)
 ```
 
 La condicion `venceEn > :ahora` impide subir el comprobante fuera de plazo aunque el barrido
-todavia no haya pasado.
+todavia no haya pasado. Las claves de GSI2 son las que alimentan PA-11 (la bandeja de
+tesoreria): son **dispersas**, con la misma logica que GSI4 (seccion 3) — solo existen mientras
+la solicitud espera dictamen.
+
+> **El paso 0 no tiene compensacion**, a diferencia de `agregarFotografia`. Si el paso 1 falla,
+> el objeto queda huerfano en S3: la politica IAM del rol de la aplicacion niega
+> `s3:DeleteObject` sobre `comprobantes/*` (`amplify/permisos.ts`), asi que ni siquiera se
+> intenta borrarlo. Un comprobante de pago es evidencia; el huerfano es el peor caso aceptable.
+>
+> **La condicion combinada no distingue por si sola `invalid_state` de `plazo_vencido`**
+> (`api-contracts.md` seccion 5 los exige separados). Como los dos casos comparten un solo item
+> de la transaccion, no se puede usar el truco posicional de T2: el diagnostico se calcula
+> **antes** de intentar la escritura, con la solicitud que quien invoca ya leyo — mismo criterio
+> que `motivoDelRechazo` de T1 (`src/lib/tesoreria/subirComprobante.ts`).
 
 ### T4 — Avalar pago
 
 ```
-1. Update solicitud   -> VENDIDA                CONDITION estatus = EN_VERIFICACION
-2. Update lote        -> VENDIDO
-3. Update vehiculo    -> VENDIDO
-4. Delete centinela   PART#<id> / ADJUDICACION_ACTIVA
-5. Delete centinela   VEH#<id> / ACTIVO
+1. Update solicitud   SET estatus = VENDIDA, vendidaEn
+                      REMOVE GSI2PK, GSI2SK                   <- ya no es trabajo pendiente
+                      CONDITION estatus = EN_VERIFICACION
+2. Update lote        -> VENDIDO   CONDITION estatus = ADJUDICADO AND adjudicacionActual = :solicitudId
+3. Update vehiculo    -> VENDIDO   CONDITION estatus = RESERVADO
+4. Delete centinela   PART#<id> / ADJUDICACION_ACTIVA   CONDITION attribute_exists(SK)
+5. Delete centinela   VEH#<id> / ACTIVO                 CONDITION attribute_exists(SK)
 6. Put evento         PAGO_AVALADO          CONDITION attribute_not_exists(PK)
 ```
 
 Las solicitudes restantes del lote pasan a `NO_ADJUDICADA` **fuera** de esta transaccion: son
-una cantidad no acotada y no afectan ninguna invariante.
+una cantidad no acotada y no afectan ninguna invariante. `avalarPago.ts` no repite esa logica —
+llama a `cerrarFilaDelLote` (Etapa 8, R-18), que ya la implementa e ignora el estatus del lote
+para decidir que cerrar.
+
+> **Corrige el documento igual que T2 lo hizo con `RESERVADO`.** El enunciado original no
+> mencionaba retirar las claves de GSI2 (item 1) ni las condiciones de los items 2–5. Sin la
+> primera, una solicitud `VENDIDA` seguiria en la particion que lee PA-11.
 
 ### T5 — Vencer y reasignar (R-15)
 
-Un solo acto atomico que cierra al vencido y adjudica al siguiente:
+Un solo acto atomico que cierra al vencido y adjudica al siguiente. Implementado en
+`src/lib/fila/vencerYReasignar.ts` (Etapa 10), estructuralmente T2 con dos escrituras del lado
+del vencido intercaladas delante: reusa `leerFila` y `congelar` de `adjudicarLote.ts` en vez de
+duplicar la abstencion por reservas (R18) y el congelamiento por R-09.
 
 ```
 1. Update solicitud vencida  -> CANCELADA_POR_VENCIMIENTO
@@ -560,6 +610,8 @@ Un solo acto atomico que cierra al vencido y adjudica al siguiente:
 5. Put centinela             adjudicacion activa del nuevo   CONDITION attribute_not_exists
 6. Put evento                SOLICITUD_VENCIDA   CONDITION attribute_not_exists(PK)
 7. Put evento                LOTE_ADJUDICADO     CONDITION attribute_not_exists(PK)
+8. Put mensaje + evento      outbox del correo de adjudicacion, si el nuevo tiene correoTitular
+                             (seccion 6.1) — lista vacia si no lo tiene, nunca bloquea
 ```
 
 La condicion del item 3 (`adjudicacionActual = :solicitudVencida`) es lo que hace segura la
@@ -567,9 +619,46 @@ operacion frente a concurrencia: si otro proceso ya reasigno el lote, esta trans
 cancela sin efectos.
 
 Si el item 5 falla, se reintenta con el siguiente candidato. Si la fila se agota, se ejecuta
-una variante reducida (items 1, 2, 6 mas `REMOVE adjudicacionActual` y `estatus = EN_OFERTA`).
+una variante reducida.
 
-El **correo no participa**: se encola en el outbox (riesgo R8).
+> **Correccion al implementar la Etapa 10: la variante reducida tambien libera el vehiculo.**
+> Este documento la describia como "items 1, 2, 6 mas `REMOVE adjudicacionActual` y
+> `estatus = EN_OFERTA`", sin tocar `VEH#<id>`. Dejarlo `RESERVADO` mientras el lote vuelve a
+> `EN_OFERTA` reproduce de forma **permanente** el defecto que la propia Etapa 10 pide corregir
+> en el barrido ("lotes libres con fila viva", ver el callout de T5b): el siguiente que se
+> forme entraria a la fila, pero el item 4 de T2 exige `vehiculo.estatus = EN_CONVOCATORIA` y
+> fallaria siempre — el lote quedaria huerfano para siempre, no solo hasta el proximo barrido.
+> La variante reducida real es: items 1, 2, 6, mas el mismo `Update` de vehiculo que usan T4,
+> T5b y T6 (`RESERVADO -> EN_CONVOCATORIA`). Validado contra DynamoDB real: tras la fila
+> agotada, un participante nuevo se forma y se adjudica sin intervencion
+> (`src/lib/fila/vencimiento.integracion.test.ts`).
+
+**El correo no participa en el sentido critico**: el envio por CES nunca ocurre dentro de esta
+transaccion (riesgo R8). Pero **encolarlo si participa** — el item 8 viaja en la misma
+transaccion que la adjudicacion, igual que en T2 (seccion 6.1) —, porque es lo unico que
+garantiza al correo la misma atomicidad que a su propio evento de auditoria (regla 4 de
+`CLAUDE.md`).
+
+#### Verificacion perezosa y el barrido — dos caminos a la misma escritura (D-7)
+
+`consultarMiLugar` (PA-08) aplica T5 **antes** de construir el `MiLugarDTO` si la solicitud
+propia esta `ADJUDICADA` y su `venceEn` ya paso, con `detectadoPor: VERIFICACION_PEREZOSA`. El
+barrido programado (`src/lib/fila/barridoDeVencimientos.ts`) recorre GSI4 `VENCE#<dia>` con
+`GSI4SK <= ahora` y aplica lo mismo con `detectadoPor: BARRIDO`. Competir es inofensivo: los dos
+ejecutan la misma transaccion condicional sobre el item 1, y quien llega segundo encuentra la
+condicion ya falsa y recibe `no_vigente` sin ningun efecto.
+
+#### Recoger los lotes libres con fila viva
+
+El mismo barrido resuelve el hueco que anota el callout de T5b: un lote `EN_OFERTA` con
+candidatos `EN_FILA` y sin `adjudicacionActual`, dejado asi por un proceso que murio entre
+registrar la solicitud (o liberar el lote) y llamar a `adjudicarLote`. Se acota a convocatorias
+`PUBLICADA` (PA-05) y sus lotes (PA-04): fuera de ahi ningun lote admite fila nueva. Antes de
+llamar a `adjudicarLote` se comprueba con una `Query COUNT` barata que exista al menos un
+candidato `EN_FILA` — sin esa comprobacion, cada lote `EN_OFERTA` sin tocar (la inmensa mayoria
+del inventario en cualquier instante) escribiria un `FILA_AGOTADA` en cada corrida del barrido,
+para siempre. La adjudicacion resultante usa el motivo `RECUPERACION_POR_BARRIDO` — no es
+"primera adjudicacion" ni ninguna de las tres reasignaciones con causa conocida.
 
 #### T5b — Cancelacion voluntaria: liberar y **volver a adjudicar**, no un intercambio atomico
 
@@ -603,8 +692,34 @@ garantia de negocio en un limite tecnico.
 
 ### T6 — Rechazar pago (R-16)
 
-Identica a T5 cambiando el estado a `RECHAZADA_POR_TESORERIA`, con `motivoRechazo` obligatorio
-y condicion `estatus = EN_VERIFICACION`.
+> **Corregido al implementar la Etapa 9: no es "identica a T5".** Esa frase describia la forma
+> de la escritura, pero T6 sigue la **estrategia de T5b** (liberar-y-volver-a-llamar-a-T2), no
+> la de T5 (un solo acto atomico). El barrido de T5 tiene que ser atomico porque actua sobre un
+> plazo vencido y no puede dejar el lote sin dueno si el proceso se cae a la mitad; rechazar lo
+> dispara una persona de tesoreria mirando la pantalla, y reutilizar T2 —con su abstencion por
+> reservas, su congelamiento por R-09 y sus reintentos— vale mas que replicarlo dentro de una
+> transaccion (mismo argumento de T5b).
+
+```
+1. Update solicitud   SET estatus = RECHAZADA_POR_TESORERIA, motivoRechazo, rechazadaEn
+                      REMOVE GSI2PK, GSI2SK                   <- ya no es trabajo pendiente
+                      CONDITION estatus = EN_VERIFICACION
+2. Delete centinela   PART#<id> / ADJUDICACION_ACTIVA   CONDITION attribute_exists(SK)
+3. Update lote        SET estatus = EN_OFERTA REMOVE adjudicacionActual, adjudicadoEn, venceEn,
+                          turnoAdjudicado
+                      CONDITION adjudicacionActual = :solicitudId
+4. Update vehiculo    -> EN_CONVOCATORIA   CONDITION estatus = RESERVADO
+5. Put evento         PAGO_RECHAZADO (motivo obligatorio)   CONDITION attribute_not_exists(PK)
+```
+
+**No retira el centinela de fila** (`LOTE#<id> / PART#<participanteId>`), a diferencia de la
+cancelacion voluntaria de T5b: `RECHAZADA_POR_TESORERIA` tiene que seguir siendo visible para
+`consultarMiLugar`, que es como el titular se entera del motivo (`ui-ux-requerimientos.md`
+seccion 3.4).
+
+**Fuera de esta transaccion**, en ese orden: `descongelarSolicitudes` para el participante
+rechazado (R-09, antes de reasignar) y despues `adjudicarLote` con
+`motivo: REASIGNACION_POR_RECHAZO`, exactamente como hace T5b.
 
 ### T7 — Incluir vehiculo en convocatoria
 

@@ -1,0 +1,13 @@
+/* Detalle de verificacion. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.detalle-verificacion {
+  display: grid;
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.detalle-verificacion__imagen {
+  max-width: 100%;
+  height: auto;
+}

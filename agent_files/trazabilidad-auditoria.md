@@ -133,7 +133,11 @@ Motivo obligatorio marcado con **M**.
 | `FILA_AGOTADA` | Sin candidatos vivos (R-17) | `turnosRevisados` |
 
 `motivoAdjudicacion` distingue `PRIMERA_ADJUDICACION`, `REASIGNACION_POR_VENCIMIENTO`,
-`REASIGNACION_POR_RECHAZO` y `REASIGNACION_POR_CANCELACION`.
+`REASIGNACION_POR_RECHAZO`, `REASIGNACION_POR_CANCELACION` y `RECUPERACION_POR_BARRIDO` — este
+ultimo, agregado en la Etapa 10: el barrido encuentra un lote `EN_OFERTA` con fila viva que
+nadie llego a adjudicar (un proceso murio entre dos escrituras que no pueden ir en la misma
+transaccion, `modelo-datos-dynamodb.md` T5b), y no es ni la primera vez ni una reasignacion con
+causa conocida.
 
 > **`SOLICITUD_OMITIDA` es el evento que hace auditable la regla R-09.** Sin el, la bitacora
 > mostraria una adjudicacion al turno 5 mientras los turnos 3 y 4 seguian vivos, y pareceria una

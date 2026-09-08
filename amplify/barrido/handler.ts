@@ -1,10 +1,17 @@
-/**
- * Andamio del barrido. La logica llega en la Etapa 10.
- *
- * Se deja funcional y sin efectos a proposito: permite verificar en la Etapa 3 que el
- * horario dispara, que el rol tiene los permisos correctos y que el registro estructurado
- * sale como se espera, sin arriesgar escrituras antes de que existan las transacciones.
- */
+// Etapa 10. Las dos tareas de `arquitectura-tecnica-aws.md` 2.6: aplicar T5 a
+// las adjudicaciones vencidas y despachar el outbox de correo. La logica vive
+// en `src/lib`, no aqui — este archivo solo es el punto de entrada que
+// `defineFunction` empaqueta (`amplify/barrido/resource.ts`).
+//
+// **Rutas relativas y no el alias `@/`.** `amplify/tsconfig.json` no comparte
+// los `paths` del `tsconfig.json` raiz (esta fuera de su `include`), y el
+// empaquetado con `esbuild` de `defineFunction` resuelve contra el archivo de
+// entrada, no contra el proyecto de Next. El alias solo funcionaria por
+// casualidad si algun dia coincide la resolucion; las rutas relativas no
+// dependen de esa coincidencia.
+import { barridoDeVencimientos } from "../../src/lib/fila/barridoDeVencimientos.ts";
+import { procesarOutbox } from "../../src/lib/correo/procesarOutbox.ts";
+
 export const handler = async (): Promise<void> => {
   const nombreTabla = process.env.AUTOB_TABLE_NAME;
 
@@ -16,14 +23,15 @@ export const handler = async (): Promise<void> => {
     );
   }
 
+  const vencimientos = await barridoDeVencimientos();
+  const correo = await procesarOutbox();
+
   console.info(
     JSON.stringify({
-      mensaje: "barrido ejecutado (andamio, sin efectos)",
+      mensaje: "barrido ejecutado",
       tabla: nombreTabla,
-      pendiente: [
-        "vencimientos T5 (Etapa 10)",
-        "despacho de outbox (Etapa 10)",
-      ],
+      vencimientos,
+      correo,
     }),
   );
 };

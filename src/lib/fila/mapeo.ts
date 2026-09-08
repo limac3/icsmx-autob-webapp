@@ -48,6 +48,9 @@ export const aSolicitud = (
   return {
     solicitudId,
     loteId,
+    ...(texto(item.convocatoriaId)
+      ? { convocatoriaId: texto(item.convocatoriaId) }
+      : {}),
     participanteId,
     turno,
     estatus: item.estatus,
@@ -59,8 +62,14 @@ export const aSolicitud = (
     ...(texto(item.comprobanteClaveS3)
       ? { comprobanteClaveS3: texto(item.comprobanteClaveS3) }
       : {}),
+    ...(texto(item.comprobanteSubidoEn)
+      ? { comprobanteSubidoEn: texto(item.comprobanteSubidoEn) }
+      : {}),
     ...(texto(item.motivoRechazo)
       ? { motivoRechazo: texto(item.motivoRechazo) }
+      : {}),
+    ...(texto(item.correoTitular)
+      ? { correoTitular: texto(item.correoTitular) }
       : {}),
   };
 };

@@ -43,19 +43,53 @@ Disponibles en la organizacion: `eden-buttons` (`Primary`, `Secondary`), `eden-f
 ## 2. Armazon
 
 `src/app/layout.tsx`: `Normalize` + `Fonts`, `WorkforceHeader`, contenido, `WorkforceFooter`.
+Rejilla `auto 1fr auto` en `.envoltura`, para que el pie quede abajo aunque la pantalla tenga
+poco contenido, y contenido centrado con ancho maximo (`layout.css`). Mismo armado que
+`icsmx-camp-webapp`, para que las dos aplicaciones se vean igual de encuadradas.
 
-**Navegacion por permiso.** Solo se muestran las secciones que el usuario puede usar:
+El encabezado y el pie van cada uno en su `<Suspense>`: los dos leen datos de la peticion —el
+encabezado la sesion, el pie el idioma— y ninguno debe retrasar el contenido, que es lo que la
+persona vino a ver. El contenido lo envuelve un `<div>`, no un `<main>`: cada pantalla monta el
+suyo con su propia clase, y anidar landmarks `main` seria HTML invalido.
 
-| Permiso | Secciones |
-| --- | --- |
-| `Autob_Venta_a_empleados`, `Autob_Venta_en_general` | Convocatorias · Mis solicitudes |
-| `Autob_Administrar_Vehiculos`, `Autob_Administrar_Convocatorias` | Vehiculos · Convocatorias (admin) |
-| `Autob_Aprobar_Convocatorias` | Por aprobar |
-| `Autob_Operar_Tesoreria` | Verificacion de pagos |
-| `Autob_Auditar` | Auditoria |
+**Navegacion por permiso.** El menu vive en el slot `tools` del `WorkforceHeader`, como un
+desplegable (`MenuDeUsuario.tsx`). Solo se muestran las secciones que la persona puede usar.
 
-Con varios permisos, se muestran todas las secciones que correspondan. Ocultar una seccion es
-solo cortesia: el servidor vuelve a decidir en cada action y en cada pagina.
+**Cada entrada declara la accion que abre su puerta, no una lista de permisos**
+(`src/lib/navegacion.ts`). Es lo que mantiene el menu pegado a la matriz: si
+`permission-matrix.md` cambia que permisos habilitan una accion, el menu lo hereda sin tocarse.
+
+| Seccion | Ruta | Accion que la abre |
+| --- | --- | --- |
+| Convocatorias | `/convocatorias` | `solicitud:ver-mis-solicitudes` |
+| Vehiculos | `/admin/vehiculos` | `vehiculo:ver-catalogo` |
+| Administrar convocatorias | `/admin/convocatorias` | `convocatoria:ver-administracion` |
+| Aprobaciones | `/aprobaciones` | `convocatoria:ver-aprobaciones` |
+| Tesoreria | `/tesoreria/verificacion` | `tesoreria:ver-bandeja` |
+
+> **Esta tabla ya no enumera permisos, y es a proposito.** La version anterior lo hacia y se
+> despego de la matriz: afirmaba que `Autob_Auditar` solo abria "Auditoria", cuando ese permiso
+> concede tambien `vehiculo:ver-catalogo`, `convocatoria:ver-administracion` y
+> `tesoreria:ver-bandeja` — un auditor ve esas tres secciones, en modo lectura. Dos fuentes de
+> verdad para lo mismo y una se olvida de actualizar.
+
+Se comprueba la **capacidad** de la accion, no su aplicabilidad: un enlace es una puerta a una
+pantalla, no una operacion sobre un recurso, asi que no hay contexto que evaluar. Por eso todas
+las acciones de la tabla son `ver-*` sin guarda — una accion guardada, evaluada sin recurso,
+denegaria siempre (regla 18) y el enlace quedaria oculto para todo el mundo. Detalle en
+`desafios-implementacion.md` seccion 35.
+
+`/mis-solicitudes` (seccion 3.5) y `/auditoria` (seccion 7) entran al menu cuando existan sus
+rutas. Un enlace hacia una ruta inexistente es un 404 ofrecido por la propia aplicacion, y hay
+una prueba que lo impide (`navegacion.test.ts`).
+
+Con varios permisos, se muestran todas las secciones que correspondan, en el orden declarado.
+Una sesion autenticada **sin ningun permiso** ve el menu vacio con un aviso, y conserva sus
+accesos de cuenta (Mi sesion, Cerrar sesion): es un caso real y distinto de un EAS caido.
+
+Ocultar una seccion es solo cortesia: el servidor vuelve a decidir en cada action y en cada
+pagina, con `puedeEjecutar` completo. El menu tampoco recibe los permisos de la sesion — el
+servidor le pasa enlaces ya filtrados, asi que el cliente no tiene con que equivocarse.
 
 En movil la navegacion colapsa; el destino mas usado de cada rol queda accesible en un toque.
 
@@ -323,18 +357,23 @@ Que la consecuencia aparezca antes de confirmar es lo que evita rechazos por err
 
 Solo lectura, sin un solo boton de mutacion.
 
-- **Bitacora** — cronologica, filtrable por convocatoria, lote, participante, tipo de evento y
-  rango de fechas. Cada evento: fecha en hora de negocio, tipo traducido, actor con sus roles de
-  entonces, motivo y `correlacionId`. Los eventos de un mismo `correlacionId` se agrupan
-  visualmente: hacen visible la causalidad.
+- **Bitacora** (`/auditoria`) — se elige primero el agregado (vehiculo, convocatoria, lote o
+  solicitud) y su identificador, porque PA-12 solo sabe leer la historia de uno concreto; tipo de
+  evento, rango de fechas y participante se filtran despues, sobre esa historia completa. Cada
+  evento: fecha en hora de negocio, tipo traducido, actor con sus **permisos** de entonces (nunca
+  roles: EAS no los expone desde la Etapa 2.1), motivo y `correlacionId` — visible como columna,
+  no agrupado visualmente: alcanza para relacionar los eventos de una misma transaccion sin
+  necesitar que queden contiguos en la tabla.
 - **Reconstruccion de fila** (`/auditoria/lotes/[loteId]`) — linea de tiempo con todas las
   solicitudes en orden de turno, sus estados y las adjudicaciones. **Aqui si se muestran
   identidades.** Todo salto de turno aparece con su `SOLICITUD_OMITIDA` y su razon.
-- **Verificacion de integridad** — las seis comprobaciones de `trazabilidad-auditoria.md` 5.1,
-  cada una con veredicto visible. Los huecos de turno se marcan **informativos**, no como
-  incumplimiento, con nota explicativa.
-- **Exportacion** — descarga con los filtros aplicados. Avisa que la exportacion queda
-  registrada.
+- **Verificacion de integridad** (misma ruta que la reconstruccion) — las seis comprobaciones de
+  `trazabilidad-auditoria.md` 5.1, recalculadas desde el evento crudo y no desde lo que la
+  aplicacion cree que paso, cada una con veredicto visible. Los huecos de turno se marcan
+  **informativos**, no como incumplimiento.
+- **Exportacion** — descarga en CSV con los filtros aplicados, por un enlace que entrega un
+  `Route Handler`. Avisa que la exportacion queda registrada, y la queda: `BITACORA_EXPORTADA` se
+  escribe al momento de la descarga, no antes.
 
 ---
 

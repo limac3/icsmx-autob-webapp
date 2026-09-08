@@ -117,3 +117,124 @@ export type ActorUsuario = {
 /** Quien ejecuta el acto: una persona con sus permisos, o el sistema. */
 export type ActorDeEvento =
   ActorUsuario | { tipo: "SISTEMA"; id?: undefined; permisos?: undefined };
+
+// --- DTOs de lectura (Etapa 11) ----------------------------------------------
+//
+// Fuente: api-contracts.md seccion 6. Estos tipos son la forma que un evento
+// crudo de DynamoDB toma **fuera** de `src/lib/data`, para el auditor.
+//
+// A diferencia de `PendienteDTO` o `MiLugarDTO`, aqui exponer identidades no
+// es una excepcion: es el proposito completo de la pantalla. R-12 protege al
+// **participante**, no al auditor con `Autob_Auditar` (trazabilidad-auditoria
+// 2.4). No hay nada que acotar en este tipo.
+
+/** Un evento de la bitacora, tal como lo lee el auditor (PA-12, PA-13). */
+export type EventoDTO = {
+  eventoId: string;
+  tipo: TipoDeEvento;
+  /** ISO-8601 UTC. La pantalla lo formatea en hora de negocio al presentar. */
+  ocurridoEn: string;
+  actorTipo: TipoDeActor;
+  actorId: string;
+  actorPermisos?: readonly Permiso[];
+  correlacionId: string;
+  vehiculoId?: string;
+  convocatoriaId?: string;
+  loteId?: string;
+  solicitudId?: string;
+  estadoAnterior?: string;
+  estadoNuevo?: string;
+  motivo?: string;
+  datos?: Record<string, unknown>;
+};
+
+/** Una pagina de `EventoDTO`, con cursor opaco para la siguiente. */
+export type PaginaDeEventosDTO = {
+  eventos: readonly EventoDTO[];
+  cursor?: string;
+};
+
+/**
+ * La historia de un turno dentro de un lote — la unidad de la reconstruccion
+ * de fila (`reconstruirFila`, `ui-ux-requerimientos.md` 7).
+ *
+ * `participanteId` sale del `actorId` de su propio `SOLICITUD_CREADA`: quien
+ * pide entrar a la fila es quien firma esa entrada de la bitacora
+ * (`src/lib/fila/solicitarCompra.ts`), asi que no hace falta ninguna lectura
+ * adicional para saber de quien es el turno.
+ */
+export type SolicitudHistoricaDTO = {
+  turno: number;
+  participanteId: string;
+  eventos: readonly EventoDTO[];
+};
+
+/**
+ * Reconstruccion completa de la fila de un lote.
+ *
+ * `eventosDelLote` son los que no pertenecen a ningun turno especifico —hoy
+ * solo `FILA_AGOTADA`— y por eso no encajan en ningun `SolicitudHistoricaDTO`.
+ */
+export type FilaHistoricaDTO = {
+  loteId: string;
+  solicitudes: readonly SolicitudHistoricaDTO[];
+  eventosDelLote: readonly EventoDTO[];
+};
+
+/** Cada una de las seis comprobaciones de `trazabilidad-auditoria.md` 5.1. */
+export type VeredictoDeComprobacion = "cumple" | "incumple" | "informativo";
+
+/**
+ * Union discriminada y no un `detalle: string`: la prueba y la pantalla
+ * necesitan los datos crudos (que turno, que par de turnos) para poder
+ * traducir y probar sin depender de un texto compuesto en un idioma fijo
+ * (regla 11 de CLAUDE.md).
+ */
+export type ComprobacionDeIntegridad =
+  | {
+      clave: "turnosContiguos";
+      veredicto: VeredictoDeComprobacion;
+      /** Huecos entre turnos consecutivos. Informativos, nunca un defecto. */
+      huecos: readonly number[];
+      /** Un turno emitido dos veces si es un defecto del contador atomico. */
+      duplicados: readonly number[];
+    }
+  | {
+      clave: "ordenDeAdjudicacion";
+      veredicto: VeredictoDeComprobacion;
+      /** Turnos vivos, mas pequenos que el adjudicado, sin `SOLICITUD_OMITIDA`. */
+      saltosSinJustificar: readonly {
+        turnoSaltado: number;
+        turnoAdjudicado: number;
+      }[];
+    }
+  | {
+      clave: "unaAdjudicacionVigente";
+      veredicto: VeredictoDeComprobacion;
+      /** Un turno se adjudico sin que el anterior hubiera cerrado su ciclo. */
+      conflictos: readonly { turnoVigente: number; turnoNuevo: number }[];
+    }
+  | {
+      clave: "vencimientosConTiempo";
+      veredicto: VeredictoDeComprobacion;
+      /** `SOLICITUD_VENCIDA` con `detectadoEn` anterior a su propio `venceEn`. */
+      turnosConFechaInconsistente: readonly number[];
+    }
+  | {
+      clave: "transicionesConEvento";
+      veredicto: VeredictoDeComprobacion;
+      /** Estatus vigente sin un evento que lo explique — posible regla 4 rota. */
+      turnosSinExplicar: readonly number[];
+    }
+  | {
+      clave: "motivosObligatorios";
+      veredicto: VeredictoDeComprobacion;
+      eventosSinMotivo: readonly string[];
+    };
+
+export type ClaveDeComprobacion = ComprobacionDeIntegridad["clave"];
+
+export type ResultadoVerificacion = {
+  loteId: string;
+  comprobaciones: readonly ComprobacionDeIntegridad[];
+};

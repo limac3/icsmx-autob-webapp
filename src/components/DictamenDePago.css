@@ -1,0 +1,8 @@
+/* Dictamen de tesoreria. Solo layout; la apariencia la ponen los componentes
+   de Eden (regla 10). */
+
+.dictamen-pago {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}

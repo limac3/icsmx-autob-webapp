@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { PERMISOS, type Permiso } from "@/types/identidad";
 import {
   puedeEjecutar,
+  tieneCapacidad,
   __test__,
   type Accion,
   type Contexto,
@@ -599,5 +600,62 @@ describe("puedeEjecutar — guardas contextuales (casos allow y deny)", () => {
         estatusSolicitud: "EN_FILA",
       }),
     ).toEqual({ permitido: false, razon: "not_owner" });
+  });
+});
+
+describe("tieneCapacidad — el primer tiempo, sin la guarda", () => {
+  const capacidad = (accion: Accion, permisos: Permiso[]) =>
+    tieneCapacidad({ accion, permisos: new Set(permisos) });
+
+  it("concede cuando la sesion trae alguno de los permisos de la accion", () => {
+    expect(capacidad("tesoreria:ver-bandeja", ["Autob_Operar_Tesoreria"])).toBe(
+      true,
+    );
+    // La bandeja la ven dos permisos distintos; basta uno.
+    expect(capacidad("tesoreria:ver-bandeja", ["Autob_Auditar"])).toBe(true);
+  });
+
+  it("deniega sin ninguno de los permisos de la accion", () => {
+    expect(capacidad("tesoreria:ver-bandeja", ["Autob_Venta_en_general"])).toBe(
+      false,
+    );
+    expect(capacidad("tesoreria:ver-bandeja", [])).toBe(false);
+  });
+
+  it("cerrada por omision ante una accion que no existe", () => {
+    expect(capacidad("inventada" as Accion, [...PERMISOS])).toBe(false);
+  });
+
+  it("ignora la guarda: concede donde puedeEjecutar deniega por falta de contexto", () => {
+    // Es justo el motivo de que exista. Con la guarda evaluada sin recurso,
+    // el enlace del menu quedaria oculto para quien si puede entrar.
+    const permisos: Permiso[] = ["Autob_Aprobar_Convocatorias"];
+    expect(capacidad("convocatoria:aprobar", permisos)).toBe(true);
+    expect(decidir("convocatoria:aprobar", permisos).permitido).toBe(false);
+  });
+
+  it("coincide con puedeEjecutar en toda accion sin guarda", () => {
+    const sinGuarda = (
+      Object.keys(__test__.CATALOGO_ACCIONES) as Accion[]
+    ).filter((accion) => !("guarda" in __test__.CATALOGO_ACCIONES[accion]));
+
+    expect(sinGuarda.length).toBeGreaterThan(0);
+    for (const accion of sinGuarda) {
+      for (const permiso of PERMISOS) {
+        expect(capacidad(accion, [permiso])).toBe(
+          decidir(accion, [permiso]).permitido,
+        );
+      }
+    }
+  });
+
+  it("nunca concede mas que puedeEjecutar al reves: si no hay capacidad, no hay permiso", () => {
+    for (const accion of Object.keys(__test__.CATALOGO_ACCIONES) as Accion[]) {
+      for (const permiso of PERMISOS) {
+        if (!capacidad(accion, [permiso])) {
+          expect(decidir(accion, [permiso]).permitido).toBe(false);
+        }
+      }
+    }
   });
 });

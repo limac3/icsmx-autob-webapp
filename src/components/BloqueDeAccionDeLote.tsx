@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Error as AlertaError,
@@ -11,9 +11,17 @@ import {
 import { Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
 import { Card } from "@churchofjesuschrist/eden-card";
 import { DialogModal } from "@churchofjesuschrist/eden-dialog-modal";
+import {
+  FileInput,
+  Form,
+  FormField,
+} from "@churchofjesuschrist/eden-form-parts";
 import { H4 } from "@churchofjesuschrist/eden-headings";
+import { Row } from "@churchofjesuschrist/eden-row";
 import { Text2 } from "@churchofjesuschrist/eden-text";
+import { ToolModal } from "@churchofjesuschrist/eden-tool-modal";
 import { cancelarSolicitud, solicitarCompra } from "@/app/actions/fila";
+import { subirComprobante } from "@/app/actions/tesoreria";
 import CuentaRegresiva from "@/components/CuentaRegresiva";
 import type { Diccionario } from "@/dictionaries";
 import type { MiLugarDTO } from "@/types/fila";
@@ -77,6 +85,8 @@ const BloqueDeAccionDeLote = ({
   const [enProceso, iniciar] = useTransition();
   const [error, setError] = useState<CodigoError | undefined>(undefined);
   const [confirmando, setConfirmando] = useState(false);
+  const [subiendoComprobante, setSubiendoComprobante] = useState(false);
+  const formIdComprobante = useId();
   const etiquetas = diccionario.fila;
 
   const ejecutar = (accion: () => Promise<{ ok: boolean; error?: string }>) => {
@@ -101,6 +111,25 @@ const BloqueDeAccionDeLote = ({
   const cancelar = () => {
     setConfirmando(false);
     ejecutar(() => cancelarSolicitud({ convocatoriaId, loteId }));
+  };
+
+  /**
+   * Subir el comprobante — pantalla 3.6. El archivo no se valida mas que por
+   * cortesia en el cliente (`accept`); la validacion real de tipo y tamano
+   * ocurre en el servidor (`api-contracts.md` seccion 5).
+   */
+  const subirArchivo = (formData: FormData) => {
+    const archivo = formData.get("archivo");
+    if (!(archivo instanceof File) || archivo.size === 0 || !miLugar) return;
+
+    ejecutar(async () => {
+      const resultado = await subirComprobante({
+        solicitudId: miLugar.solicitudId,
+        archivo,
+      });
+      if (resultado.ok) setSubiendoComprobante(false);
+      return resultado;
+    });
   };
 
   const lugar = miLugar ? (
@@ -178,12 +207,21 @@ const BloqueDeAccionDeLote = ({
               />
             </Text2>
           )}
+          <Primary
+            type="button"
+            disabled={enProceso}
+            onClick={() => {
+              setSubiendoComprobante(true);
+            }}
+          >
+            {etiquetas.subirComprobante}
+          </Primary>
           {botonCancelar}
         </>
       ) : null}
 
-      {/* Los tres estados que la Etapa 9 produce y la Etapa 8 ya sabe leer.
-          Se muestran sin accion: subir el comprobante llega con tesoreria. */}
+      {/* El reloj ya esta detenido (proyecto.md 5.4): sin cuenta regresiva,
+          para no sugerir que la demora de tesoreria puede costar el vehiculo. */}
       {miLugar?.estatus === "EN_VERIFICACION" ? (
         <Info>
           <Text2 renderAs="p">{etiquetas.enVerificacion}</Text2>
@@ -195,6 +233,75 @@ const BloqueDeAccionDeLote = ({
           <Text2 renderAs="p">{etiquetas.comprada}</Text2>
         </Success>
       ) : null}
+
+      {miLugar?.estatus === "CANCELADA_POR_VENCIMIENTO" ? (
+        <Warn>
+          <Text2 renderAs="p">{etiquetas.canceladaPorVencimiento}</Text2>
+          {venceEnFormateado ? (
+            <Text2 renderAs="p">{`${etiquetas.venceEl} ${venceEnFormateado}`}</Text2>
+          ) : null}
+        </Warn>
+      ) : null}
+
+      {miLugar?.estatus === "RECHAZADA_POR_TESORERIA" ? (
+        <AlertaError>
+          <Text2 renderAs="p">{etiquetas.rechazadaPorTesoreria}</Text2>
+          {miLugar.motivoRechazo ? (
+            <Text2 renderAs="p">{miLugar.motivoRechazo}</Text2>
+          ) : null}
+        </AlertaError>
+      ) : null}
+
+      {miLugar?.estatus === "NO_ADJUDICADA" ? (
+        <Text2 renderAs="p">{etiquetas.noAdjudicada}</Text2>
+      ) : null}
+
+      <ToolModal
+        open={subiendoComprobante}
+        onClose={() => {
+          setSubiendoComprobante(false);
+        }}
+        header={etiquetas.subirComprobante}
+        closeLabel={etiquetas.volver}
+        footer={
+          <Row gapSize="8">
+            <Primary
+              form={formIdComprobante}
+              type="submit"
+              disabled={enProceso}
+            >
+              {enProceso
+                ? etiquetas.subiendoComprobante
+                : etiquetas.enviarComprobante}
+            </Primary>
+            <Secondary
+              type="button"
+              onClick={() => {
+                setSubiendoComprobante(false);
+              }}
+            >
+              {etiquetas.volver}
+            </Secondary>
+          </Row>
+        }
+      >
+        <Form id={formIdComprobante} action={subirArchivo}>
+          <FormField
+            label={etiquetas.campoComprobante}
+            description={etiquetas.formatosComprobante}
+          >
+            <FileInput
+              name="archivo"
+              accept="image/jpeg,image/png,application/pdf"
+              isDroppable
+              required
+            />
+          </FormField>
+          <Info>
+            <Text2 renderAs="p">{etiquetas.avisoRevisionComprobante}</Text2>
+          </Info>
+        </Form>
+      </ToolModal>
 
       <DialogModal
         open={confirmando}

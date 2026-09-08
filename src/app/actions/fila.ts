@@ -36,6 +36,8 @@ import { exito, fallo, type Resultado } from "@/types/resultado";
 type ContextoDeFila = {
   lote: Lote;
   participanteId: string;
+  /** De la sesion, para que T1 se lo copie a la solicitud (ver `types/fila.ts`). */
+  correo: string;
   actor: ActorUsuario;
   /** La solicitud viva propia en ese lote, si la hay. */
   miSolicitud: Solicitud | null;
@@ -118,6 +120,7 @@ const conLote = async (
   return exito({
     lote,
     participanteId: sesion.participanteId,
+    correo: sesion.correo,
     actor: permiso.actor,
     miSolicitud: miSolicitud.data,
   });
@@ -143,7 +146,7 @@ export const solicitarCompra = async (entrada: {
   const contexto = await conLote("solicitud:crear", entrada);
   if (!contexto.ok) return contexto;
 
-  const { lote, participanteId, actor } = contexto.data;
+  const { lote, participanteId, correo, actor } = contexto.data;
 
   // Informativo para la bitacora: cuanta fila habia cuando entro. No decide
   // nada, asi que un fallo al contarlo no puede impedir la solicitud.
@@ -153,6 +156,7 @@ export const solicitarCompra = async (entrada: {
     lote,
     participanteId,
     actor,
+    ...(correo ? { correoTitular: correo } : {}),
     ...(tamano.ok ? { tamanoFilaAlMomento: tamano.data } : {}),
   });
   if (!resultado.ok) return resultado;

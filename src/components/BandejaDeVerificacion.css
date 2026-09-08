@@ -1,0 +1,6 @@
+/* Bandeja de tesoreria. Solo layout; la apariencia la ponen los componentes
+   de Eden (regla 10). */
+
+.bandeja-verificacion {
+  width: 100%;
+}

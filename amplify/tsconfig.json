@@ -12,7 +12,13 @@
     "noEmit": true,
     "skipLibCheck": true,
     "paths": {
-      "$amplify/*": ["../.amplify/generated/*"]
+      "$amplify/*": ["../.amplify/generated/*"],
+      // El barrido (Etapa 10) importa la logica de `src/lib` por ruta
+      // relativa (ver el comentario en `barrido/handler.ts`), pero esos
+      // archivos usan el alias `@/` internamente en todo el proyecto. Sin
+      // este mapeo, `tsc -p amplify/tsconfig.json` resuelve el archivo de
+      // entrada y falla en cascada al seguir sus propios imports.
+      "@/*": ["../src/*"]
     },
     "allowImportingTsExtensions": true
   },

@@ -195,6 +195,15 @@ type MiLugarDTO = {
 `consultarMiLugar` devuelve `null` si el participante no esta en esa fila. **No es un error**:
 es la respuesta normal para quien todavia no ha solicitado.
 
+> **Desde la Etapa 10, `consultarMiLugar` puede mutar.** Es la verificacion perezosa del
+> vencimiento (D-7, `arquitectura-tecnica-aws.md` 4.4): si la solicitud propia esta `ADJUDICADA`
+> y su `venceEn` ya paso, aplica T5 (`vencerYReasignar`) antes de construir el DTO y devuelve el
+> estado **posterior** a esa resolucion. Sigue siendo una lectura en el sentido de la seccion —no
+> hay una Server Action que la dispare, y el permiso que la protege no cambia—, pero puede
+> escribir `SOLICITUD_VENCIDA`, `LOTE_ADJUDICADO` y el encolado del correo como efecto de
+> consultar el propio lugar. Es inofensivo si compite con el barrido: la transaccion es
+> condicional y quien llega segundo no hace nada.
+
 ### 4.2 Comportamiento de `solicitarCompra`
 
 1. Verifica el gating triple y que la venta este abierta.
@@ -234,7 +243,7 @@ siguiente turno vivo** en el mismo acto. Si estaba `CONGELADA` o `EN_FILA`, solo
 | `subirComprobante` | `{ solicitudId, archivo }` | `{ estatus }` | `comprobante:subir` | `validation_failed`, `invalid_state`, `plazo_vencido`, `not_owner` | `COMPROBANTE_CARGADO` |
 | `avalarPago` | `{ solicitudId, nota? }` | `{ estatus }` | `pago:avalar` | `invalid_state` | `PAGO_AVALADO` |
 | `rechazarPago` | `{ solicitudId, motivo }` | `{ estatus }` | `pago:rechazar` | `invalid_state`, `validation_failed` | `PAGO_RECHAZADO` (+ reasignacion) |
-| `listarPendientesVerificacion` | `{ cursor? }` | `PendienteDTO[]` | `tesoreria:ver-bandeja` | — | — |
+| `listarPendientesVerificacion` | `{}` | `PendienteDTO[]` | `tesoreria:ver-bandeja` | — | — |
 
 **`subirComprobante`:** solo el titular, solo desde `ADJUDICADA`, solo dentro del plazo. Archivo
 `image/jpeg|png` o `application/pdf`, maximo 10 MB. Devuelve `plazo_vencido` — distinto de
@@ -245,25 +254,72 @@ vencerlo por demora propia.
 
 **`rechazarPago`** exige motivo no vacio (R-16) y libera el lote como un vencimiento.
 
+**`listarPendientesVerificacion` no acepta `cursor` todavia.** El documento original lo
+preveia para paginar; al volumen de hoy (decenas de solicitudes en verificacion a la vez) PA-11
+lee la particion entera, igual que la bandeja del aprobador. Se agrega cuando haga falta.
+
 ---
 
 ## 6. `src/app/actions/auditoria.ts`
 
 | Action | Entrada | Salida | Permiso |
 | --- | --- | --- | --- |
-| `consultarBitacora` | `{ agregado, agregadoId, cursor? }` | `EventoDTO[]` | `auditoria:ver-bitacora` |
+| `consultarBitacora` | `{ agregado, agregadoId, cursor? }` | `PaginaDeEventosDTO` | `auditoria:ver-bitacora` |
 | `reconstruirFila` | `{ loteId }` | `FilaHistoricaDTO` | `auditoria:ver-fila-historica` |
 | `verificarIntegridad` | `{ loteId }` | `ResultadoVerificacion` | `auditoria:ver-bitacora` |
 | `exportarBitacora` | `{ filtros }` | `{ urlDescarga }` | `auditoria:exportar` |
 
+> **`consultarBitacora` devuelve `PaginaDeEventosDTO` (`{ eventos, cursor? }`), no `EventoDTO[]`
+> a secas** (correccion de la Etapa 11). El contrato original aceptaba `cursor` como entrada sin
+> decir de donde salia el siguiente; sin un cursor de salida la paginacion no se puede completar.
+> La pantalla `/auditoria` no lo ejercita — lee la historia completa de un agregado con
+> `consultarBitacoraCompleta`, que agota internamente todas las paginas, por el mismo argumento de
+> volumen que `listarPendientesVerificacion` (seccion 5) — pero la action si respeta el contrato
+> para quien la invoque directamente.
+
 `FilaHistoricaDTO` **si incluye identidades** — es el unico contrato del sistema que lo hace, y
-esta reservado a `Autob_Auditar`.
+esta reservado a `Autob_Auditar`. Agrupa la bitacora de un lote por turno; `participanteId` sale
+del `actorId` de su propio `SOLICITUD_CREADA`, sin ninguna lectura adicional.
 
 `ResultadoVerificacion` devuelve las seis comprobaciones de la seccion 5.1 de
-`trazabilidad-auditoria.md`, cada una con veredicto y detalle. Los huecos de turno se reportan
-como **informativos**, no como incumplimiento.
+`trazabilidad-auditoria.md`, cada una con veredicto y los datos crudos del hallazgo (turnos,
+pares de turnos), no una frase compuesta — la pantalla la traduce contra el diccionario (regla 11
+de `CLAUDE.md`). Los huecos de turno se reportan como **informativos**, no como incumplimiento.
+La comprobacion 5 (`transicionesConEvento`) contrasta la bitacora contra el estado **vigente** de
+la tabla base (`leerFilaCompleta`, PA-07 sin filtrar por estatus) — es la unica de las seis que
+necesita algo mas que la bitacora misma.
 
-`exportarBitacora` emite `BITACORA_EXPORTADA`: mirar los datos sensibles tambien deja rastro.
+> **`exportarBitacora` no lee la bitacora ni escribe `BITACORA_EXPORTADA`.** Solo verifica el
+> permiso y devuelve la URL del Route Handler de descarga
+> (`src/app/api/auditoria/exportar`), que es quien hace las dos cosas **al momento de entregar el
+> archivo** — el mismo criterio que `COMPROBANTE_DESCARGADO` en la seccion 7. Registrar el evento
+> en la action dejaria un hueco: cualquiera con `Autob_Auditar` podria construir esa misma URL a
+> mano y exportar sin dejar rastro (`desafios-implementacion.md` 36).
+
+---
+
+## 6.1 `src/app/actions/devTools.ts` — solo desarrollo
+
+| Action | Entrada | Salida | Permiso |
+| --- | --- | --- | --- |
+| `cambiarPersonaSimulada` | `FormData` con `persona` (id del roster, o vacio) | `void` | **ninguno** |
+
+**La unica action del sistema que no pasa por `puedeEjecutar`,** y a proposito: no hay permiso
+que cubra "elegir con quien navego", y crearlo seria pedirle a EAS que configure una herramienta
+de desarrollo (regla 17). Su compuerta son tres condiciones que se exigen **las tres**:
+
+1. `ENABLE_DEV_TOOLS=FULL`.
+2. `NODE_ENV` distinto de `production` — lo exige `exigirModoSeguro()`.
+3. Una sesion real de Okta: la impersonacion sustituye permisos e identidad, nunca la
+   autenticacion.
+
+**Lanza** si alguna falla, o si el id no esta en el roster de `src/lib/auth/personasSimuladas.ts`
+— no devuelve `Resultado`. Un conmutador de desarrollo que falla en silencio manda a depurar la
+pantalla equivocada (regla 15). Recibe `FormData` porque la barra es un unico `<form>` con un
+boton de envio por persona, sin JavaScript de cliente.
+
+Invalida `convocatorias:visibles`, `convocatorias` y `vehiculos`: los tres listados dependen de
+los permisos de quien mira. Ver seccion 4.1.1 de `identidad-autorizacion.md`.
 
 ---
 
@@ -285,6 +341,22 @@ Permiso `comprobante:descargar`. Devuelve la URL firmada de S3 o el flujo direct
 
 Respuestas: `200`, `401` sin sesion, `404` si no existe o no le corresponde (nunca `403`, que
 confirmaria su existencia).
+
+### `GET /api/auditoria/exportar`
+
+Exportacion de bitacora a CSV (Etapa 11). Route Handler por la misma razon que el anterior:
+entrega un archivo con `Content-Disposition: attachment`.
+
+Permiso `auditoria:exportar`, verificado por su cuenta — la Server Action `exportarBitacora`
+solo devuelve esta URL, sin leer nada. Recibe los filtros por *query string*
+(`agregado`, `agregadoId`, `tipo?`, `desde?`, `hasta?`, `participanteId?`), lee la bitacora
+completa del agregado (`consultarBitacoraCompleta`), filtra en memoria y **emite
+`BITACORA_EXPORTADA` antes de responder** — no en la action, para que nadie pueda construir esta
+URL a mano y exportar sin dejar rastro (`desafios-implementacion.md` 36).
+
+Respuestas: `200` con el CSV, `400` con un agregado o `agregadoId` invalidos, `403` sin el
+permiso — no hay nada que ocultar aqui, a diferencia del comprobante, asi que un `403` no
+delata nada.
 
 ### `GET /api/health`
 
@@ -310,6 +382,9 @@ propios duplicaria el flujo y lo romperia.
 | `MiLugarDTO` | Seccion 4.1 | `participanteId`, correo, nombre |
 | `PendienteDTO` | solicitudId, lote, vehiculo, `adjudicadoEn`, correo del titular | — |
 | `EventoDTO` | Evento completo con actor | — |
+| `PaginaDeEventosDTO` | `EventoDTO[]` + `cursor?` de PA-12 | — |
+| `FilaHistoricaDTO` | `SolicitudHistoricaDTO[]` (turno, `participanteId`, eventos) + eventos del lote | — |
+| `ResultadoVerificacion` | Las seis comprobaciones de integridad, con veredicto y datos crudos | — |
 
 `PendienteDTO` **si** expone el correo del titular: tesoreria necesita identificar a quien
 pago. Es una excepcion deliberada a R-12, acotada a `Autob_Operar_Tesoreria`.
@@ -324,7 +399,7 @@ pago. Es una excepcion deliberada a R-12, acotada a `Autob_Operar_Tesoreria`.
 | `concluirConvocatoria` | `convocatorias:visibles`, `convocatoria:<id>` |
 | `incluirVehiculo`, `retirarVehiculoDeConvocatoria` | `convocatoria:<id>` |
 | `editarVehiculo`, fotografias | `vehiculo:<id>` |
-| `solicitarCompra`, `cancelarSolicitud` | `lote:<loteId>` |
+| `solicitarCompra`, `cancelarSolicitud`, `subirComprobante` | `lote:<loteId>` |
 | `avalarPago`, `rechazarPago` | `lote:<loteId>`, `convocatoria:<id>` |
 
 Recordatorio del riesgo R4: **la publicacion programada no la cubre ninguna etiqueta**. Ver

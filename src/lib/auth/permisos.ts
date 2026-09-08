@@ -393,6 +393,36 @@ const CATALOGO_ACCIONES = {
 export type Accion = keyof typeof CATALOGO_ACCIONES;
 
 /**
+ * **Solo el primer tiempo de `puedeEjecutar`: la capacidad.** ¿Alguno de los
+ * permisos que EAS concedio habilita esta accion? Sin mirar el recurso.
+ *
+ * Existe para el menu de navegacion, y la distincion importa: un enlace es una
+ * **puerta a una pantalla**, no una operacion sobre un recurso, asi que no hay
+ * `contexto` que pasarle. Y como las guardas fallan cerradas por diseno (regla
+ * 18), evaluarlas sin recurso denegaria siempre — el menu quedaria vacio para
+ * todo el mundo.
+ *
+ * No relaja nada: la pantalla de destino vuelve a decidir con `puedeEjecutar`
+ * completo, sobre el recurso que si tiene delante. Ocultar un enlace es
+ * cortesia; la unica autorizacion que cuenta es la del servidor al servir la
+ * pantalla (principio P-1).
+ *
+ * Cerrada por omision igual que `puedeEjecutar`: una accion fuera del catalogo
+ * devuelve `false`.
+ */
+export const tieneCapacidad = ({
+  accion,
+  permisos,
+}: {
+  accion: Accion;
+  permisos: ReadonlySet<Permiso>;
+}): boolean => {
+  const definicion: DefinicionAccion | undefined = CATALOGO_ACCIONES[accion];
+  if (!definicion) return false;
+  return definicion.permisos.some((permiso) => permisos.has(permiso));
+};
+
+/**
  * Decide si `permisos` puede ejecutar `accion` sobre `contexto`. Pura: sin
  * I/O, sin red, sin base de datos — todo lo que la decision necesita ya llego
  * en `contexto`, resuelto por quien invoca.
@@ -413,11 +443,9 @@ export const puedeEjecutar = ({
   const definicion: DefinicionAccion | undefined = CATALOGO_ACCIONES[accion];
   if (!definicion) return denegar("forbidden");
 
-  // 1. Capacidad — la concede EAS, no este archivo.
-  const tienePermiso = definicion.permisos.some((permiso) =>
-    permisos.has(permiso),
-  );
-  if (!tienePermiso) return denegar("forbidden");
+  // 1. Capacidad — la concede EAS, no este archivo. Se delega para que exista
+  // un solo lugar que la calcule: el menu pregunta lo mismo, sin el paso 2.
+  if (!tieneCapacidad({ accion, permisos })) return denegar("forbidden");
 
   // 2. Aplicabilidad — lo unico que EAS no puede saber.
   if (!definicion.guarda) return permitir();

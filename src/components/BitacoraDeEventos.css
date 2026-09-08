@@ -1,0 +1,6 @@
+/* Bitacora de auditoria. Solo layout; la apariencia la ponen los componentes
+   de Eden (regla 10). */
+
+.bitacora-eventos {
+  width: 100%;
+}

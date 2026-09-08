@@ -184,6 +184,18 @@ export const clave = {
     SK: `${exigirIdentificador(ocurridoEn, "ocurridoEn")}#${exigirIdentificador(eventoId, "eventoId")}`,
   }),
 
+  /**
+   * Solo la particion de la bitacora de un agregado — PA-12. Existe por la
+   * misma razon que `gsi2.particionDeEstatus`: para consultar la particion
+   * entera sin inventar un `ocurridoEn` y un `eventoId` de relleno.
+   */
+  particionDeEvento: (
+    agregado: TipoDeAgregado,
+    agregadoId: string,
+  ): { PK: string } => ({
+    PK: `AUDIT#${agregado}#${exigirIdentificador(agregadoId, "agregadoId")}`,
+  }),
+
   mensaje: (mensajeId: string): Clave => ({
     PK: `OUTBOX#${exigirIdentificador(mensajeId, "mensajeId")}`,
     SK: "META",
@@ -253,6 +265,35 @@ const conCerosVerificado = (turno: number): number => {
     throw new RangeError(`turno debe ser un entero no negativo, no ${turno}`);
   }
   return turno;
+};
+
+/**
+ * Inverso exacto de `identificadorDeSolicitud`: recupera `loteId` y `turno`
+ * del identificador de negocio, o `undefined` si no tiene esa forma.
+ *
+ * Lo necesita tesoreria (`subirComprobante`, `avalarPago`, `rechazarPago`):
+ * `api-contracts.md` les entrega solo `solicitudId`, y no hay ningun patron
+ * de acceso que lea una solicitud sin conocer de antemano su `loteId`. En vez
+ * de inventar un indice nuevo, se recupera del identificador mismo — es
+ * exactamente la garantia que documenta `identificadorDeSolicitud`: los dos
+ * componentes ya identifican la solicitud sin ambiguedad.
+ *
+ * Se divide por el **ultimo** `-`: un `loteId` real es un ULID (alfabeto de
+ * Crockford, sin guion), asi que el separador nunca es ambiguo. `turno` viaja
+ * sin relleno de ceros en el identificador (a diferencia de la `SK` de la
+ * tabla base), asi que se exige que sean solo digitos.
+ */
+export const loteYTurnoDesdeIdentificador = (
+  solicitudId: string,
+): { loteId: string; turno: number } | undefined => {
+  const indice = solicitudId.lastIndexOf("-");
+  if (indice <= 0) return undefined;
+
+  const loteId = solicitudId.slice(0, indice);
+  const turnoTexto = solicitudId.slice(indice + 1);
+  if (!/^\d+$/.test(turnoTexto)) return undefined;
+
+  return { loteId, turno: Number(turnoTexto) };
 };
 
 // --- Indices secundarios ----------------------------------------------------

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { defineBackend } from "@aws-amplify/backend";
+import { defineBackend, secret } from "@aws-amplify/backend";
 import { CDKContextKey } from "@aws-amplify/platform-core";
 // Las extensiones `.ts` son obligatorias y literales. `ampx` ejecuta este archivo con el
 // *type stripping* nativo de Node, cuyo resolvedor ESM no completa extensiones **ni mapea
@@ -65,6 +65,23 @@ if (!funcionBarrido.role) {
 }
 aplicarPermisosAutob(funcionBarrido, funcionBarrido.role, recursos);
 backend.barrido.addEnvironment("AUTOB_TABLE_NAME", tabla.tabla.tableName);
+
+// CES (Church Email Service) — el procesador del outbox de la Etapa 10.
+// `secret()` referencia un parametro de Secrets Manager por nombre; su
+// **valor** lo pone el operador con `ampx sandbox secret set` (o el equivalente
+// de una rama compartida), no este archivo. Declarar la referencia aqui no
+// exige que el valor ya exista: CES sigue sin aprobar (riesgo R17,
+// `plan-ejecucion.md`) y el backend despliega igual, como documenta
+// `runbooks.md` R-11 — lo que cambia es que ahora el procesador **si** intenta
+// leerlas al ejecutarse, y sin ellas falla de forma explicita (regla 15).
+backend.barrido.addEnvironment("CES_URL", secret("CES_URL"));
+backend.barrido.addEnvironment("CES_USER", secret("CES_USER"));
+backend.barrido.addEnvironment("CES_PASSWORD", secret("CES_PASSWORD"));
+backend.barrido.addEnvironment("CES_FROM_ADDRESS", secret("CES_FROM_ADDRESS"));
+backend.barrido.addEnvironment(
+  "APP_BASE_URL",
+  process.env.APP_BASE_URL ?? "http://localhost:3000",
+);
 
 backend.addOutput({
   custom: {
