@@ -11,7 +11,7 @@
 > motor de fila— se verifica leyendo el archivo antes de afirmarlo o de editarlo. Ver
 > `CLAUDE.md`, seccion "Grafo de Codigo — Consulta, No Evidencia".
 >
-> Sincronizado con: `d211ddd` (rama `main`, 2026-09-06), Etapa 5 cerrada. Los headings de
+> Sincronizado con: `3ebeb6f` (rama `main`, 2026-09-07), Etapa 6 cerrada. Los headings de
 > `agent_files/*.md` ya estan indexados como nodos `Section` — consultables con
 > `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`. Este ADR no los duplica.
 >
@@ -222,6 +222,10 @@ permite el cliente falso `src/utils/clienteDynamoFalso.ts` en pruebas.
 - Zona horaria unica de negocio `America/Mexico_City`, en `src/lib/domain/fechas.ts` con
   `Intl.DateTimeFormat().formatToParts`. Persistir siempre ISO-8601 UTC. Prohibido comparar
   ventanas de venta con la hora local del cliente. Ancla: `::partesEnZonaDeNegocio`.
+- Misma logica para el dinero: la moneda y la **region de formato** son fijas (`MXN`, `MX`),
+  aunque el idioma de la interfaz cambie. Con `es` a secas `Intl` aplica convenciones de Espana
+  y escribe `185.000 MXN`, donde el punto es lo que un lector mexicano toma por decimales.
+  Ancla: `src/lib/domain/dinero.ts::formatearPrecio`.
 - Nada sin publicar entra a cache estatica: las rutas dependen de `publicadaEn`; `Suspense` con
   lectura dinamica o `cacheLife` corto con `revalidateTag` disparado por la publicacion.
 - URLs firmadas de CloudFront: firmar en SSR, nunca persistir en base de datos ni generar
