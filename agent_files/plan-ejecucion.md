@@ -551,6 +551,11 @@ punta a punta, que depende de credenciales del operador.
   muestran un **resumen en texto plano** (`textoPlanoDeDescripcion`). El render con formato llega
   en la Etapa 7, con `eden-html-fragment`.
 
+**Fuera de esta etapa a proposito:** la vista administrativa del lote
+(`ui-ux-requerimientos.md` 4.5) muestra adjudicacion vigente, `venceEn` y `tamanoFila`, que los
+escribe el motor de fila. Aqui habria sido una pantalla de campos vacios sin nada que probar;
+esta anotada en la **Etapa 8**.
+
 **Pendiente heredado por el operador:** comprobacion de punta a punta del ciclo completo contra
 el sandbox, que depende de credenciales.
 
@@ -645,6 +650,12 @@ el sandbox, que depende de credenciales.
       `miPosicion` y `tamanoFila` (regla 7)
 - [ ] Cancelacion voluntaria del participante y su efecto sobre la fila
 - [ ] Pantalla de fila con el lugar propio y el tamano de la fila
+- [ ] **Vista administrativa del lote** `/admin/convocatorias/[id]/lotes/[loteId]/fila`
+      (`ui-ux-requerimientos.md` 4.5), que la Etapa 6 dejo fuera a proposito: todo lo que muestra
+      —adjudicacion vigente, `venceEn`, `tamanoFila`— lo escribe el motor de fila, y antes de
+      esta etapa habria sido una pantalla de campos vacios sin nada que probar. Muestra
+      **agregados, nunca identidades**: la fila completa es exclusiva del auditor
+      (`permission-matrix.md` seccion 4)
 - [ ] `src/app/actions/fila.ts`
 
 **Pruebas obligatorias de esta etapa** (regla 16):
