@@ -37,6 +37,7 @@ import type {
   EstatusConvocatoria,
 } from "@/types/convocatoria";
 import type { EstadoFormularioConvocatoria } from "@/types/formularioConvocatoria";
+import type { EstadoFormularioLote } from "@/types/formularioLote";
 import { fallo, type Resultado } from "@/types/resultado";
 
 /**
@@ -446,4 +447,56 @@ export const guardarConvocatoriaDesdeFormulario = async (
   }
 
   return { estado: "guardado", convocatoriaId: resultado.data.convocatoriaId };
+};
+
+/**
+ * Inclusion de un vehiculo desde el formulario de la pantalla de detalle.
+ *
+ * El precio se lee como **entero de pesos**: `Number("")` vale cero, y sin este
+ * cuidado un campo sin capturar se enviaria como un lote de cero pesos en vez de
+ * rechazarse. `NaN` lo rechaza `revisarPrecio` con `no_es_entero`.
+ */
+export const incluirVehiculoDesdeFormulario = async (
+  _estadoPrevio: EstadoFormularioLote,
+  formData: FormData,
+): Promise<EstadoFormularioLote> => {
+  const crudoPrecio = String(formData.get("precio") ?? "").trim();
+
+  const resultado = await incluirVehiculo({
+    convocatoriaId: String(formData.get("convocatoriaId") ?? "").trim(),
+    vehiculoId: String(formData.get("vehiculoId") ?? "").trim(),
+    precio: crudoPrecio === "" ? Number.NaN : Number(crudoPrecio),
+  });
+
+  if (!resultado.ok) {
+    return {
+      estado: "error",
+      error: resultado.error,
+      ...(resultado.detalles ? { detalles: resultado.detalles } : {}),
+    };
+  }
+
+  return { estado: "incluido", loteId: resultado.data.loteId };
+};
+
+/** Retiro de un lote desde el dialogo de la pantalla de detalle. */
+export const retirarLoteDesdeFormulario = async (
+  _estadoPrevio: EstadoFormularioLote,
+  formData: FormData,
+): Promise<EstadoFormularioLote> => {
+  const resultado = await retirarVehiculoDeConvocatoria({
+    convocatoriaId: String(formData.get("convocatoriaId") ?? "").trim(),
+    loteId: String(formData.get("loteId") ?? "").trim(),
+    motivo: String(formData.get("motivo") ?? ""),
+  });
+
+  if (!resultado.ok) {
+    return {
+      estado: "error",
+      error: resultado.error,
+      ...(resultado.detalles ? { detalles: resultado.detalles } : {}),
+    };
+  }
+
+  return { estado: "retirado", loteId: resultado.data.loteId };
 };

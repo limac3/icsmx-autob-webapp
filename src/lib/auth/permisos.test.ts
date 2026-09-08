@@ -84,6 +84,10 @@ const CATALOGO_ESPERADO: CasoAccion[] = [
     permisosQuePermiten: [ADMIN_CONV, APROBAR, AUDITAR],
   },
   {
+    accion: "convocatoria:ver-aprobaciones",
+    permisosQuePermiten: [APROBAR],
+  },
+  {
     accion: "convocatoria:incluir-vehiculo",
     permisosQuePermiten: [ADMIN_CONV],
     contexto: {

@@ -94,7 +94,7 @@ capturar se guardaria como cero kilometros, que es un dato falso y plausible.
 | --- | --- | --- | --- | --- | --- |
 | `crearConvocatoria` | `DatosConvocatoria` | `{ convocatoriaId }` | `convocatoria:crear` | `validation_failed` | `CONVOCATORIA_CREADA` |
 | `editarConvocatoria` | `{ convocatoriaId, cambios }` | `{ convocatoriaId }` | `convocatoria:editar` | `validation_failed`, `invalid_state` | `CONVOCATORIA_EDITADA` |
-| `incluirVehiculo` | `{ convocatoriaId, vehiculoId, precio }` | `{ loteId }` | `convocatoria:incluir-vehiculo` | `invalid_state`, `conflicto_concurrencia` | `VEHICULO_INCLUIDO` |
+| `incluirVehiculo` | `{ convocatoriaId, vehiculoId, precio }` | `{ loteId }` | `convocatoria:incluir-vehiculo` | `validation_failed`, `invalid_state` | `VEHICULO_INCLUIDO` |
 | `retirarVehiculoDeConvocatoria` | `{ convocatoriaId, loteId, motivo }` | `{ loteId }` | `convocatoria:retirar-vehiculo` | `invalid_state` | `VEHICULO_RETIRADO_DE_CONVOCATORIA` |
 | `enviarAAprobacion` | `{ convocatoriaId }` | `{ estatus }` | `convocatoria:enviar-a-aprobacion` | `invalid_state`, `validation_failed` | `CONVOCATORIA_ENVIADA_A_APROBACION` |
 | `aprobarConvocatoria` | `{ convocatoriaId }` | `{ estatus }` | `convocatoria:aprobar` | `invalid_state`, `forbidden` (auto-aprobacion) | `CONVOCATORIA_APROBADA` |
@@ -112,13 +112,34 @@ comprueban al crear, al editar y de nuevo al enviar a aprobacion.
 
 **Notas de contrato:**
 
-- `incluirVehiculo` devuelve `conflicto_concurrencia` cuando el vehiculo ya esta en otra
-  convocatoria activa (falla el centinela de R-10). No es error del usuario: la UI relee.
+- `incluirVehiculo` devuelve `invalid_state` cuando el vehiculo ya esta en otra convocatoria
+  activa (falla el centinela de R-10), con `detalles: { vehiculo: "en_otra_convocatoria" }`. El
+  detalle hace falta porque tres de las cinco condiciones de la transaccion devuelven el mismo
+  codigo, y la UI no podria distinguir "elige otro vehiculo" de "la convocatoria dejo de ser
+  editable". Se identifica por la **posicion del item que cancelo**: el centinela es el primero.
+  El precio invalido llega como `validation_failed` con `detalles.precio`.
 - `aprobarConvocatoria` devuelve `forbidden` si el aprobador es el creador (R-05), **incluso
   teniendo ambos permisos**.
 - `ocultarConvocatoria` devuelve `invalid_state` si existe cualquier solicitud (R-06).
 - `concluirConvocatoria` pasa las solicitudes `EN_FILA` y `CONGELADA` a `NO_ADJUDICADA`, pero
   **respeta las adjudicaciones vigentes** con su plazo intacto (R-18).
+
+### 3.1 Adaptadores de formulario
+
+| Adaptador | Delega en |
+| --- | --- |
+| `guardarConvocatoriaDesdeFormulario` | `crearConvocatoria` o `editarConvocatoria`, segun venga `convocatoriaId` |
+| `incluirVehiculoDesdeFormulario` | `incluirVehiculo` |
+| `retirarLoteDesdeFormulario` | `retirarVehiculoDeConvocatoria` |
+
+Mismo motivo que en vehiculos: los formularios funcionan sin JavaScript y la conversion de
+cadenas ocurre en un solo sitio. Dos conversiones cargan con una trampa concreta:
+
+- Cada instante son **dos campos**, `<campo>Fecha` y `<campo>Hora`, porque Eden no tiene un
+  control combinado. Se unen y se interpretan en **hora de negocio** (regla 9): sin eso, capturar
+  "08:00" desde Tijuana y desde Ciudad de Mexico guardaria dos instantes distintos.
+- El precio y las horas de liquidacion vacios se convierten en `NaN` y no en `0`: `Number("")`
+  vale cero, y un lote de cero pesos o un plazo de cero horas son datos falsos y plausibles.
 
 ---
 

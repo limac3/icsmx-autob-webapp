@@ -214,7 +214,26 @@
     "campoHorasLiquidacion": "Hours to settle payment",
     "horasLiquidacionAyuda": "Calendar hours from the award, not business days.",
     "subcampoFecha": "Date",
-    "subcampoHora": "Time"
+    "subcampoHora": "Time",
+    "seccionLotes": "Included vehicles",
+    "sinLotes": "No vehicles have been included yet.",
+    "columnaVehiculo": "Vehicle",
+    "columnaPrecio": "Price",
+    "columnaAcciones": "Actions",
+    "incluirVehiculo": "Include vehicle",
+    "campoVehiculo": "Available vehicle",
+    "elegirVehiculo": "Choose a vehicle",
+    "campoPrecio": "Sale price",
+    "precioAyuda": "Whole pesos, no cents.",
+    "sinDisponibles": "There are no available vehicles to include.",
+    "incluido": "Vehicle included in the sale announcement.",
+    "retirarDeConvocatoria": "Remove",
+    "retiradoDeConvocatoria": "Vehicle removed from the sale announcement.",
+    "motivoRetiroLote": "Reason for removal",
+    "motivoRetiroLoteAyuda": "It is recorded in the audit log. It is required.",
+    "loteConFila": "It cannot be removed: participants are already queued.",
+    "enOtraConvocatoria": "That vehicle joined another active sale announcement. Refresh the list and choose a different one.",
+    "creadaPor": "Created by"
   },
   "validacionConvocatoria": {
     "requerido": "This field is required",
@@ -251,6 +270,18 @@
     "hecho_CONCLUIR": "Sale announcement closed.",
     "continuar": "Continue",
     "cancelar": "Cancel",
-    "titulo": "Actions"
+    "titulo": "Actions",
+    "noApruebasLoTuyo": "You cannot approve a sale announcement that you created."
+  },
+  "aprobaciones": {
+    "titulo": "Approvals",
+    "descripcion": "Sale announcements awaiting a decision.",
+    "sinPendientes": "There are no sale announcements awaiting a decision.",
+    "pendientes": "Sale announcements to review",
+    "columnaConvocatoria": "Sale announcement",
+    "columnaCreadaPor": "Created by",
+    "columnaEnviada": "Waiting since",
+    "columnaPeriodo": "Sale period",
+    "dictaminar": "Review"
   }
 }

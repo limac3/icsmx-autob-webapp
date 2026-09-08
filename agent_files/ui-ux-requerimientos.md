@@ -248,10 +248,24 @@ Validacion en vivo de R-14 (`publicadaEn <= inicioVenta < finVenta`), con el err
 campo culpable, no en un aviso general.
 
 **Inclusion de vehiculos:** selector de vehiculos `DISPONIBLE` con precio por lote. Solo
-editable en `BORRADOR`; en cualquier otro estatus, solo lectura con el motivo visible.
+editable en `BORRADOR`; en cualquier otro estatus, la lista de lotes se muestra en solo lectura.
 
-Si `incluirVehiculo` devuelve `conflicto_concurrencia`: "Este vehiculo fue incluido en otra
-convocatoria." + recarga de la lista.
+El selector usa **`<option>` nativo** dentro del `Select` de Eden: su `Option` deduce el valor
+con `value || children`, asi que la opcion vacia de marcador enviaria su propia etiqueta como
+identificador de vehiculo (`desafios-implementacion.md` 28).
+
+> **El error de vehiculo ya comprometido es `invalid_state`, no `conflicto_concurrencia`.** Este
+> documento pedia lo segundo; el servicio devuelve lo primero, y con razon: que el vehiculo este
+> en otra convocatoria activa no es una carrera perdida que convenga reintentar, es un estado que
+> no se puede cambiar desde aqui. Como tres de las cinco condiciones de la transaccion producen
+> el mismo codigo, el servicio distingue esta por la **posicion del item que cancelo** y devuelve
+> `detalles: { vehiculo: "en_otra_convocatoria" }`. La pantalla lo traduce a "Ese vehiculo entro
+> en otra convocatoria activa. Actualiza la lista y elige otro."
+
+**Retiro de un lote:** boton por fila, con el motivo en un `DialogModal` —obligatorio, va a la
+bitacora—. El lote no desaparece: pasa a `RETIRADO` y se queda a la vista con su motivo, porque
+el auditor tiene que poder ver que ese vehiculo estuvo incluido y a que precio. Un lote con
+participantes formados no ofrece el boton y explica por que.
 
 **Enviar a aprobacion** pide confirmacion e indica que la convocatoria dejara de ser editable.
 
@@ -267,14 +281,25 @@ Vista administrativa del lote: estatus, adjudicacion vigente, `venceEn`, `tamano
 
 ## 5. Aprobador — `/aprobaciones`
 
-Bandeja de convocatorias en `EN_APROBACION`, con antiguedad de la solicitud.
+Bandeja de convocatorias en `EN_APROBACION`, **las mas antiguas primero** —al reves que el
+listado administrativo—: la que lleva mas tiempo esperando es la que esta reteniendo una venta.
+Cada fila muestra quien la creo y cuanto lleva en espera, calculado con la hora del servidor.
 
-Vista de dictamen: todos los datos, la lista de lotes con sus vehiculos y fotografias, y quien
-la creo. Dos acciones: **Aprobar** (confirmacion) y **Rechazar** (motivo obligatorio,
-`TextArea`; el boton permanece deshabilitado mientras este vacio).
+Puerta propia: `convocatoria:ver-aprobaciones`, que exige `Autob_Aprobar_Convocatorias`.
+
+> **La vista de dictamen es la pantalla de detalle**, no una ruta aparte. Las acciones de
+> `/admin/convocatorias/[id]` se derivan de la maquina de estados y del permiso de quien mira, de
+> modo que quien aprueba ve alli sus dos botones sobre exactamente los mismos datos —incluidos
+> los lotes y quien la creo— que ve quien administra. Una segunda vista del mismo dictamen se
+> separaria de la primera al primer cambio.
+
+Dos acciones: **Aprobar** (confirmacion) y **Rechazar** (motivo obligatorio, `TextArea`; el boton
+permanece deshabilitado mientras este vacio).
 
 Si es el creador, ambos botones se ocultan y se muestra: "No puedes aprobar una convocatoria que
-tu creaste." La validacion real esta en el servidor (R-05).
+tu creaste." Se muestra el aviso y no solo se ocultan los botones: quien aprueba y creo la
+convocatoria veria una pantalla identica a la de alguien sin autorizacion, y acabaria pidiendo un
+permiso que ya tiene. La validacion real esta en el servidor (R-05).
 
 ---
 

@@ -16,6 +16,7 @@ import {
 import { Tab, Tabs } from "@churchofjesuschrist/eden-tabs";
 import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import type { Diccionario } from "@/dictionaries";
+import { textoPlanoDeDescripcion } from "@/lib/domain/htmlDeDescripcion";
 import {
   ESTATUS_CONVOCATORIA,
   type Convocatoria,
@@ -107,8 +108,15 @@ const TablaConvocatorias = ({
                           >
                             {diccionario.tiposConvocatoria[convocatoria.tipo]}
                           </Link>
+                          {/* La descripcion es HTML del editor enriquecido.
+                              Pintarla tal cual dejaria las etiquetas a la vista
+                              —React las escapa, asi que no es un agujero, pero
+                              si un listado ilegible—. */}
                           <Text4 renderAs="p">
-                            {convocatoria.descripcionParticipacion}
+                            {textoPlanoDeDescripcion(
+                              convocatoria.descripcionParticipacion,
+                              120,
+                            )}
                           </Text4>
                         </TD>
                         <TD>

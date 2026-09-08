@@ -8,6 +8,7 @@ import {
   desplazamientoEnMinutos,
   diaDeNegocio,
   esInstanteValido,
+  formatearEspera,
   formatearFecha,
   formatearFechaHora,
   instanteDesdeHoraDeNegocio,
@@ -375,5 +376,57 @@ describe("campos datetime-local con segundos", () => {
     expect(desdeCampoLocal("2026-09-10T08:00:00")?.toISOString()).toBe(
       "2026-09-10T14:00:00.000Z",
     );
+  });
+});
+
+describe("formatearEspera", () => {
+  const ahora = new Date("2026-09-07T18:00:00.000Z");
+  const hace = (ms: number): Date => new Date(ahora.getTime() - ms);
+
+  const MINUTO = 60_000;
+  const HORA = 60 * MINUTO;
+  const DIA = 24 * HORA;
+
+  it("cuenta en dias cuando el intervalo pasa de un dia", () => {
+    expect(formatearEspera(hace(3 * DIA), ahora, "es")).toBe("hace 3 días");
+  });
+
+  it("cuenta en horas por debajo de un dia", () => {
+    // "hace 0 dias" no le dice nada a quien revisa una bandeja por antiguedad.
+    expect(formatearEspera(hace(5 * HORA), ahora, "es")).toBe("hace 5 horas");
+  });
+
+  it("cuenta en minutos por debajo de una hora", () => {
+    expect(formatearEspera(hace(20 * MINUTO), ahora, "es")).toBe(
+      "hace 20 minutos",
+    );
+  });
+
+  it("no redondea hacia arriba: 47 horas siguen siendo un dia", () => {
+    // Truncar y no redondear es deliberado. Decir "hace 2 dias" de algo que
+    // lleva 47 horas exagera la espera justo donde se decide a que atender
+    // primero.
+    expect(formatearEspera(hace(47 * HORA), ahora, "es")).toBe("hace 1 día");
+  });
+
+  it("no usa palabras de calendario que no comprobo", () => {
+    // Con `numeric: "auto"` esto diria "ayer", y en la pared fue anteayer:
+    // el calculo son milisegundos transcurridos, no dias del calendario.
+    expect(formatearEspera(hace(47 * HORA), ahora, "es")).not.toBe("ayer");
+  });
+
+  it("cambia de unidad justo en el limite", () => {
+    expect(formatearEspera(hace(DIA), ahora, "es")).toBe("hace 1 día");
+    expect(formatearEspera(hace(DIA - 1), ahora, "es")).toBe("hace 23 horas");
+  });
+
+  it("traduce al idioma que se le pide", () => {
+    expect(formatearEspera(hace(3 * DIA), ahora, "en")).toBe("3 days ago");
+  });
+
+  it("dice que un instante futuro esta por venir, en vez de fingir que paso", () => {
+    // Una fecha mal capturada no debe leerse como una espera larga.
+    const futuro = new Date(ahora.getTime() + 2 * HORA);
+    expect(formatearEspera(futuro, ahora, "es")).toBe("dentro de 2 horas");
   });
 });

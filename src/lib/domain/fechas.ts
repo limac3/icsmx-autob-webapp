@@ -309,3 +309,45 @@ export const aCampoLocal = (instante: Date): string => {
     `T${conCeros(hora, 2)}:${conCeros(minuto, 2)}`
   );
 };
+
+const MINUTO_EN_MS = 60_000;
+const HORA_EN_MS = 60 * MINUTO_EN_MS;
+const DIA_EN_MS = 24 * HORA_EN_MS;
+
+/**
+ * Cuanto lleva esperando algo, en palabras: "hace 3 dias", "hace 2 horas".
+ *
+ * **La unidad se elige por magnitud.** "Hace 0 dias" no le dice nada a quien
+ * revisa una bandeja por antiguedad, y "hace 73 horas" obliga a dividir de
+ * cabeza; la unidad util cambia con el tamano del intervalo.
+ *
+ * Se calcula **en el servidor** y con el instante como argumento. Dejarselo al
+ * navegador mostraria una espera distinta a cada persona segun su reloj, para un
+ * dato con el que se decide a que atender primero.
+ *
+ * Un instante en el futuro —una convocatoria con la fecha mal capturada— da un
+ * intervalo negativo, y `Intl` lo dice tal cual ("dentro de 2 horas") en vez de
+ * fingir que ya paso.
+ *
+ * **`numeric: "always"` y no `"auto"`.** Con `"auto"`, `Intl` sustituye los
+ * intervalos de uno por palabras de calendario —"ayer", "hoy"— que afirman algo
+ * que este calculo nunca comprobo: son milisegundos transcurridos, no dias del
+ * calendario. Algo de hace 47 horas trunca a un dia y saldria como "ayer"
+ * cuando en la pared fue anteayer.
+ */
+export const formatearEspera = (
+  desde: Date,
+  ahora: Date,
+  idioma: string,
+): string => {
+  const relativo = new Intl.RelativeTimeFormat(idioma, { numeric: "always" });
+  const transcurrido = ahora.getTime() - desde.getTime();
+
+  if (Math.abs(transcurrido) >= DIA_EN_MS) {
+    return relativo.format(-Math.trunc(transcurrido / DIA_EN_MS), "day");
+  }
+  if (Math.abs(transcurrido) >= HORA_EN_MS) {
+    return relativo.format(-Math.trunc(transcurrido / HORA_EN_MS), "hour");
+  }
+  return relativo.format(-Math.trunc(transcurrido / MINUTO_EN_MS), "minute");
+};

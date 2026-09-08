@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { TransactionCanceledException } from "@aws-sdk/client-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -226,5 +227,64 @@ describe("guardas", () => {
 
     expect(resultado).toEqual({ ok: false, error: "invalid_state" });
     expect(falso.comandos).toHaveLength(0);
+  });
+});
+
+describe("que condicion fallo cambia lo que se le dice al usuario", () => {
+  /** Cancelacion con una sola condicion incumplida, en la posicion pedida. */
+  const canceladaEn = (indice: number): TransactionCanceledException =>
+    new TransactionCanceledException({
+      message: "cancelada",
+      $metadata: {},
+      CancellationReasons: Array.from({ length: 5 }, (_, i) => ({
+        Code: i === indice ? "ConditionalCheckFailed" : "None",
+      })),
+    });
+
+  it("el centinela que falla significa que el vehiculo esta en otra convocatoria", async () => {
+    // Tres de las cinco condiciones devuelven `invalid_state`, asi que el
+    // codigo por si solo no distingue "el vehiculo ya esta comprometido" de
+    // "la convocatoria dejo de ser editable". Sin este detalle, la pantalla no
+    // puede decir cual de las dos cosas hay que corregir.
+    const falso = crearClienteFalso({ lanza: canceladaEn(0) });
+
+    const resultado = await incluirVehiculo(
+      { convocatoria, vehiculo, precio: 180_000, actor },
+      deps(falso),
+    );
+
+    expect(resultado).toEqual({
+      ok: false,
+      error: "invalid_state",
+      detalles: { vehiculo: "en_otra_convocatoria" },
+    });
+  });
+
+  it("la convocatoria que dejo de estar en BORRADOR no culpa al vehiculo", async () => {
+    // El `ConditionCheck` de la convocatoria es el tercer item. Si el detalle
+    // se pegara a cualquier cancelacion, este caso mandaria a elegir otro
+    // vehiculo cuando el problema es que la convocatoria ya se envio.
+    const falso = crearClienteFalso({ lanza: canceladaEn(2) });
+
+    const resultado = await incluirVehiculo(
+      { convocatoria, vehiculo, precio: 180_000, actor },
+      deps(falso),
+    );
+
+    expect(resultado).toEqual({ ok: false, error: "invalid_state" });
+  });
+
+  it("el centinela sigue siendo el primer item de la transaccion", async () => {
+    // La distincion de arriba se apoya en la posicion. Esta prueba es la que
+    // avisa si alguien reordena los items y deja el mensaje apuntando a otra
+    // condicion.
+    const falso = crearClienteFalso();
+    await incluirVehiculo(
+      { convocatoria, vehiculo, precio: 180_000, actor },
+      deps(falso),
+    );
+
+    const primero = itemsDeTransaccion(falso)[0];
+    expect(primero?.Put?.Item?.SK).toBe("ACTIVO");
   });
 });

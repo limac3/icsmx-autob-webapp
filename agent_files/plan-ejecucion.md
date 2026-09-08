@@ -3,11 +3,12 @@
 Fuente de verdad del avance del proyecto. Cada etapa se marca `[x]` solo cuando **todos** sus
 entregables estan hechos y su compuerta de calidad pasa en verde.
 
-> Ultima actualizacion: 2026-09-05 — **Etapas 0 a 4 completadas**, incluida la Etapa 2.1 de
-> correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora), mas el
+> Ultima actualizacion: 2026-09-07 — **Etapas 0 a 6 completadas**, incluida la Etapa 2.1 de
+> correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora), el
 > **prototipo concurrente de la fila**, que cierra el riesgo **R18** y corrige T1, T2 y T8 del
-> modelo de datos, y la **Etapa 5 (administracion de vehiculos)**. Siguiente: **Etapa 6 —
-> Convocatorias**.
+> modelo de datos, la **Etapa 5 (administracion de vehiculos)** y la **Etapa 6 (convocatorias:
+> ciclo completo de borrador a publicada, con lotes y aprobacion)**. Siguiente: **Etapa 7 —
+> Catalogo para participantes**.
 
 ---
 
@@ -511,25 +512,47 @@ punta a punta, que depende de credenciales del operador.
 
 **Dependencias:** Etapa 5.
 
-- [ ] `src/lib/convocatorias/` — crear, editar, incluir vehiculo, retirar vehiculo, enviar a
-      aprobacion, aprobar, rechazar, publicar, ocultar, concluir
-- [ ] `src/app/actions/convocatorias.ts`
-- [ ] Creacion del **lote** (vehiculo dentro de convocatoria) con su contador de turnos en cero
-- [ ] Maquina de estados aplicada en servidor: toda transicion valida contra `transiciones.ts`
-- [ ] Un aprobador no puede aprobar una convocatoria que el mismo creo
-- [ ] Publicacion programada: `publicadaEn` en el futuro no hace visible la convocatoria
-- [ ] `revalidateTag` al publicar (ver riesgo R4)
-- [ ] Un vehiculo puede incluirse en mas de una convocatoria, pero **no en dos activas a la vez**
-- [ ] Pantallas de administracion y de aprobacion
-- [ ] Tests de transiciones validas e invalidas y de autorizacion por permiso
+- [x] `src/lib/convocatorias/` — crear, editar, incluir vehiculo, retirar vehiculo, enviar a
+      aprobacion, aprobar, rechazar, publicar, ocultar, reactivar, concluir
+- [x] `src/app/actions/convocatorias.ts` — once actions tipadas y tres adaptadores de formulario
+- [x] Creacion del **lote** (vehiculo dentro de convocatoria) con su contador de turnos en cero
+- [x] Maquina de estados aplicada en servidor: toda transicion valida contra `transiciones.ts`
+- [x] Un aprobador no puede aprobar una convocatoria que el mismo creo — guarda en `permisos.ts`,
+      exigida de nuevo en el servicio, y la interfaz **explica** por que no ofrece los botones
+- [x] Publicacion programada: la segunda pata del gating (`yaPublicada`) esta implementada y
+      probada al milisegundo. **La pantalla que la consume es de la Etapa 7**, donde esta la
+      prueba de que no se ve por URL directa
+- [x] `revalidateTag` al publicar (ver riesgo R4) — `updateTag` en Next 16, con prueba de que
+      publicar tira `convocatorias:visibles` y de que editar un borrador **no** lo hace
+- [x] Un vehiculo puede incluirse en mas de una convocatoria, pero **no en dos activas a la vez**
+- [x] Pantallas de administracion y de aprobacion
+- [x] Tests de transiciones validas e invalidas y de autorizacion por permiso
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Toda transicion invalida es rechazada por el servidor, no solo oculta en la UI
-- [ ] Cada transicion escribe su evento de auditoria
+- [x] Compuerta de calidad completa en verde
+- [x] Toda transicion invalida es rechazada por el servidor, no solo oculta en la UI
+- [x] Cada transicion escribe su evento de auditoria
 
-**Salida esperada:** ciclo completo de convocatoria de borrador a publicada.
+**Salida esperada:** ciclo completo de convocatoria de borrador a publicada. **Cumplida.**
+
+**Decisiones que se tomaron aqui y no estaban en el plan:**
+
+- La **vista de dictamen no tiene ruta propia**. `/aprobaciones` es la bandeja; el dictamen
+  ocurre en `/admin/convocatorias/[id]`, cuyas acciones ya salen de la maquina de estados y del
+  permiso de quien mira. Duplicar la pantalla daria dos vistas del mismo dictamen que se
+  separarian al primer cambio (`ui-ux-requerimientos.md` 5).
+- Accion nueva `convocatoria:ver-aprobaciones` (`Autob_Aprobar_Convocatorias`), para que la
+  bandeja tenga puerta propia. No revela nada que `ver-administracion` no muestre ya.
+- El selector de vehiculos usa `<option>` nativo dentro del `Select` de Eden: su `Option` deduce
+  el valor con `value || children` y la opcion vacia enviaria su etiqueta como identificador
+  (`desafios-implementacion.md` 28).
+- La descripcion es HTML desde que se captura con editor enriquecido, asi que los listados
+  muestran un **resumen en texto plano** (`textoPlanoDeDescripcion`). El render con formato llega
+  en la Etapa 7, con `eden-html-fragment`.
+
+**Pendiente heredado por el operador:** comprobacion de punta a punta del ciclo completo contra
+el sandbox, que depende de credenciales.
 
 ---
 

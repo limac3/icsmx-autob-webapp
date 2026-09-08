@@ -1,7 +1,10 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { updateTag } from "next/cache";
+
 import { getSession } from "@/lib/auth/session";
+import { etiqueta } from "@/lib/cache";
 import { aprobarConvocatoria as aprobarServicio } from "@/lib/convocatorias/aprobarConvocatoria";
 import { concluirConvocatoria as concluirServicio } from "@/lib/convocatorias/concluirConvocatoria";
 import { crearConvocatoria as crearServicio } from "@/lib/convocatorias/crearConvocatoria";
@@ -383,5 +386,96 @@ describe("contexto derivado de los lotes", () => {
 
     expect(resultado).toEqual({ ok: false, error: "invalid_state" });
     expect(servicios.incluir).not.toHaveBeenCalled();
+  });
+});
+
+describe("invalidacion de cache (riesgo R4)", () => {
+  const etiquetasInvalidadas = (): string[] =>
+    vi.mocked(updateTag).mock.calls.map(([etiqueta]) => etiqueta);
+
+  beforeEach(() => {
+    sesionSimulada.mockResolvedValue(
+      sesion(["Autob_Administrar_Convocatorias"]),
+    );
+  });
+
+  it("publicar tira tambien lo que ve un participante", async () => {
+    // Es el riesgo R4 en una linea: sin esta etiqueta, la convocatoria queda
+    // publicada en la base de datos y ausente del catalogo que se sirve.
+    lectura.mockResolvedValue({
+      ok: true,
+      data: { ...convocatoria, estatus: "APROBADA" },
+    });
+    servicios.publicar.mockResolvedValue({
+      ok: true,
+      data: {
+        estatus: "PUBLICADA",
+        lotesPropagados: 1,
+        propagacionCompleta: true,
+      },
+    });
+
+    await acciones.publicarConvocatoria("C1");
+
+    expect(etiquetasInvalidadas()).toEqual(
+      expect.arrayContaining([
+        etiqueta.convocatoria("C1"),
+        etiqueta.catalogoConvocatorias,
+        etiqueta.convocatoriasVisibles,
+      ]),
+    );
+  });
+
+  it("editar un borrador no toca la cache de quien compra", async () => {
+    // La direccion contraria importa igual: un borrador no es visible, y tirar
+    // la cache del catalogo en cada correccion de una descripcion la volveria
+    // inutil justo cuando mas trafico tiene.
+    lectura.mockResolvedValue({ ok: true, data: convocatoria });
+    servicios.editar.mockResolvedValue({
+      ok: true,
+      data: { convocatoriaId: "C1" },
+    });
+
+    await acciones.editarConvocatoria("C1", { horasLiquidacion: 24 });
+
+    expect(etiquetasInvalidadas()).toEqual([
+      etiqueta.convocatoria("C1"),
+      etiqueta.catalogoConvocatorias,
+    ]);
+  });
+
+  it("incluir un vehiculo caduca tambien su ficha y el catalogo de vehiculos", async () => {
+    // El vehiculo cambia de estatus a `EN_CONVOCATORIA`: sin esto seguiria
+    // apareciendo como disponible para incluirlo en otra convocatoria.
+    lectura.mockResolvedValue({ ok: true, data: convocatoria });
+    lecturaDeVehiculo.mockResolvedValue({ ok: true, data: vehiculo });
+    servicios.incluir.mockResolvedValue({ ok: true, data: { loteId: "L2" } });
+
+    await acciones.incluirVehiculo({
+      convocatoriaId: "C1",
+      vehiculoId: "V1",
+      precio: 180_000,
+    });
+
+    expect(etiquetasInvalidadas()).toEqual(
+      expect.arrayContaining([
+        etiqueta.vehiculo("V1"),
+        etiqueta.catalogoVehiculos,
+      ]),
+    );
+  });
+
+  it("una mutacion que falla no invalida nada", async () => {
+    // Invalidar de todos modos costaria una recarga completa para volver a
+    // mostrar exactamente lo mismo.
+    lectura.mockResolvedValue({
+      ok: true,
+      data: { ...convocatoria, estatus: "APROBADA" },
+    });
+    servicios.publicar.mockResolvedValue({ ok: false, error: "invalid_state" });
+
+    await acciones.publicarConvocatoria("C1");
+
+    expect(etiquetasInvalidadas()).toEqual([]);
   });
 });

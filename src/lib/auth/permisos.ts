@@ -196,6 +196,12 @@ const CATALOGO_ACCIONES = {
       "Autob_Auditar",
     ],
   },
+  // La bandeja del aprobador. No revela nada que `ver-administracion` no
+  // muestre ya en su pestana de `EN_APROBACION`: existe para que la pantalla de
+  // dictamen tenga una puerta propia y la matriz diga de quien es.
+  "convocatoria:ver-aprobaciones": {
+    permisos: ["Autob_Aprobar_Convocatorias"],
+  },
   "convocatoria:incluir-vehiculo": {
     permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) => {

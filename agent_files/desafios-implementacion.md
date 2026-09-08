@@ -1539,3 +1539,72 @@ Y la regla que no depende de ningun componente: **lo que decide si un dato es
 admisible se ejecuta en el servidor**, porque es lo unico que el cliente no
 puede saltarse. Un editor que restringe la interfaz es comodidad para quien
 captura, nunca un control de seguridad.
+
+---
+
+## 28) El `Option` de Eden deduce su valor del texto, y una opcion vacia envia su etiqueta
+
+### Problema
+
+El selector de vehiculos de la pantalla de lotes necesita una opcion de marcador
+—"Elige un vehiculo"— con valor vacio, para que `required` obligue a elegir. Sin
+ella el navegador da por valida la primera de la lista, que es justo el vehiculo
+que nadie escogio.
+
+### Sintoma
+
+Con `<Option value="">Elige un vehiculo</Option>`, el `<option>` que Eden
+renderiza sale con `value="Elige un vehiculo"`. Un envio sin elegir nada no
+falla la validacion del navegador: manda esa cadena como `vehiculoId`, y el
+servidor responde `not_found` sobre un vehiculo que se llama como el texto del
+marcador.
+
+### Causa raiz
+
+`Option.js`:
+
+```js
+value = getChildrenText(value || children);
+```
+
+`value || children` con la cadena vacia es falsy, asi que **toma los hijos**. Es
+razonable para el caso normal —`<Option>Sonora</Option>` sin `value` explicito—
+pero convierte "valor vacio" en algo que la API no puede expresar. `Select`
+repite el mismo calculo al armar sus `<option>` nativos, de modo que no hay
+forma de corregirlo desde fuera.
+
+Detras hay una segunda cosa que conviene saber: **`Option` no es un `<option>`**.
+Es un `A11y` —un `<button>`— del desplegable propio de Eden, y `Select` decide
+si monta ese desplegable comparando `child?.type === Option`. La misma
+comparacion por identidad de la seccion 23; aqui no falla porque el componente
+es cliente, pero es la que hace que un `<option>` nativo entre por otro camino.
+
+### Solucion aplicada
+
+`<option>` nativo dentro del `Select` de Eden, que es un uso documentado —su API
+dice "elements or `<Option>` components"—. Con hijos nativos `hasCustomComponents`
+queda en `false`, `Select` no monta el desplegable y renderiza un `<select>`
+normal: el valor viaja intacto y el formulario sigue funcionando sin JavaScript.
+
+```tsx
+<Select name="vehiculoId" required defaultValue="">
+  <option value="">{etiquetas.elegirVehiculo}</option>
+  {disponibles.map((vehiculo) => (
+    <option key={vehiculo.vehiculoId} value={vehiculo.vehiculoId}>
+      {vehiculo.etiqueta}
+    </option>
+  ))}
+</Select>
+```
+
+La prueba que lo fija afirma que la primera opcion tiene `value === ""` y su
+texto es la etiqueta. Se falsifico volviendo a `Option`: falla con
+`expected 'Elige un vehiculo' to be ''`.
+
+### Regla para futuro
+
+**Un componente de Eden que acepta `value` no necesariamente lo respeta.** Antes
+de apoyar una decision de correccion —que se envia, que se compara— en el valor
+de un control de terceros, comprobar en el DOM que ese valor es el que se
+escribio. Vale para cualquier caso en que el valor "vacio", "cero" o "falso"
+tenga significado propio: es donde los `||` de una libreria hacen dano.

@@ -83,6 +83,7 @@ superconjunto pasa a ser una decision de configuracion de EAS.
 | `convocatoria:crear` | `Autob_Administrar_Convocatorias` | — |
 | `convocatoria:editar` | `Autob_Administrar_Convocatorias` | Solo en `BORRADOR`. Fechas coherentes (R-14) |
 | `convocatoria:ver-administracion` | `Autob_Administrar_Convocatorias` o `Autob_Aprobar_Convocatorias` o `Autob_Auditar` | — |
+| `convocatoria:ver-aprobaciones` | `Autob_Aprobar_Convocatorias` | — |
 | `convocatoria:incluir-vehiculo` | `Autob_Administrar_Convocatorias` | Solo en `BORRADOR`; el vehiculo debe estar `DISPONIBLE` (R-10) |
 | `convocatoria:retirar-vehiculo` | `Autob_Administrar_Convocatorias` | Solo en `BORRADOR`; el lote sin solicitudes vivas |
 | `convocatoria:enviar-a-aprobacion` | `Autob_Administrar_Convocatorias` | Desde `BORRADOR`; al menos un lote; fechas validas |
@@ -93,6 +94,12 @@ superconjunto pasa a ser una decision de configuracion de EAS.
 | `convocatoria:reactivar` | `Autob_Administrar_Convocatorias` | Solo desde `OCULTA`; vuelve a `BORRADOR` |
 | `convocatoria:concluir` | `Autob_Administrar_Convocatorias` | Desde `PUBLICADA`, pasado `finVenta` o sin solicitudes vivas |
 
+> **`convocatoria:ver-aprobaciones` es la bandeja, no el detalle.** Solo abre la lista de lo que
+> espera dictamen, y por eso exige unicamente el permiso de aprobacion: quien administra ya ve
+> esas convocatorias en su propia pestana de `EN_APROBACION`, y quien audita las ve en la suya.
+> Separarla de `ver-administracion` no oculta ningun dato nuevo; lo que hace es que la pantalla
+> del aprobador tenga una puerta propia y la matriz diga a quien pertenece.
+>
 > **`convocatoria:aprobar` se deniega a quien creo la convocatoria, aunque tenga el permiso.**
 > La guarda es por identidad, no por capacidad: es el caso mas claro de por que EAS no basta.
 > Quien concedio el permiso no puede saber quien creo *esta* convocatoria.

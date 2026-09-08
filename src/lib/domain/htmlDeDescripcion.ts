@@ -110,3 +110,50 @@ export const revisarHtmlDeDescripcion = (
 
   return undefined;
 };
+
+/**
+ * Entidades que puede producir el editor. La lista corta basta: el marcado
+ * permitido no admite nada que necesite mas.
+ */
+const ENTIDADES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  "#39": "'",
+  nbsp: " ",
+};
+
+const ENTIDAD = /&(#?\w+);/g;
+
+/**
+ * Texto plano de una descripcion, para listados y resumenes.
+ *
+ * **Existe porque la descripcion dejo de ser texto.** Desde que se captura con
+ * el editor enriquecido, pintarla directamente en una celda muestra
+ * `<p>Abierta al <strong>personal</strong>.</p>` con las etiquetas a la vista:
+ * React escapa la cadena, asi que no es un agujero de seguridad, pero si es un
+ * listado ilegible.
+ *
+ * No sustituye al render de la descripcion completa —eso es `HtmlFragment` en
+ * la pantalla del participante—, sino que resuelve el caso contrario: donde
+ * cabe una linea y el formato estorba.
+ */
+export const textoPlanoDeDescripcion = (html: string, maximo = 160): string => {
+  const texto = html
+    .replace(ETIQUETA, " ")
+    .replace(
+      ENTIDAD,
+      (crudo, nombre: string) => ENTIDADES[nombre.toLowerCase()] ?? crudo,
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (texto.length <= maximo) return texto;
+
+  // Se corta en el ultimo espacio para no partir una palabra por la mitad.
+  const recorte = texto.slice(0, maximo);
+  const espacio = recorte.lastIndexOf(" ");
+  return `${(espacio > 0 ? recorte.slice(0, espacio) : recorte).trimEnd()}…`;
+};

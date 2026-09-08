@@ -165,6 +165,7 @@ Fuente: `agent_files/proyecto.md` seccion 8 (linea 373).
 | Sin estado `COMPROBANTE_CARGADO` | Separarlo de `EN_VERIFICACION` | El enunciado los define como el mismo evento |
 | El lote es la entidad de la fila | Fila a nivel de vehiculo | Reofertar sin arrastrar historia previa |
 | 404 en lugar de 403 para lo no visible (R-01) | 403 explicito | No revelar la existencia de convocatorias no publicadas |
+| La vista de dictamen es la pantalla de detalle; `/aprobaciones` es solo la bandeja | Una ruta `/aprobaciones/[id]` con su propia vista | Las acciones se derivan de la maquina de estados y del permiso de quien mira, asi que la pantalla de detalle ya **es** la de dictamen. Dos vistas del mismo dictamen se separarian al primer cambio |
 
 ## Catalogo de permisos
 

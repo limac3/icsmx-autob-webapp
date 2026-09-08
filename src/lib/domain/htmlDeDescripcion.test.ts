@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { revisarHtmlDeDescripcion } from "./htmlDeDescripcion";
+import {
+  revisarHtmlDeDescripcion,
+  textoPlanoDeDescripcion,
+} from "./htmlDeDescripcion";
 
 describe("lo que el editor produce se acepta", () => {
   it.each([
@@ -122,5 +125,59 @@ describe("enlaces", () => {
     expect(
       revisarHtmlDeDescripcion('<a href="https://ejemplo.test">ir</a>'),
     ).toBeUndefined();
+  });
+});
+
+describe("textoPlanoDeDescripcion", () => {
+  it("quita el marcado y deja la frase legible", () => {
+    // Sin esto, la celda del listado muestra las etiquetas a la vista: React
+    // las escapa, asi que no es un agujero, pero si un listado ilegible.
+    expect(
+      textoPlanoDeDescripcion("<p>Abierta al <strong>personal</strong>.</p>"),
+    ).toBe("Abierta al personal .");
+  });
+
+  it("no pega dos bloques que estaban separados", () => {
+    // Sustituir la etiqueta por vacio en vez de por un espacio juntaria el
+    // final de un parrafo con el principio del siguiente: "RequisitosUno".
+    expect(textoPlanoDeDescripcion("<h2>Requisitos</h2><p>Uno</p>")).toBe(
+      "Requisitos Uno",
+    );
+  });
+
+  it("colapsa los espacios que deja el marcado", () => {
+    expect(textoPlanoDeDescripcion("<p>Uno</p>\n\n  <p>Dos</p>")).toBe(
+      "Uno Dos",
+    );
+  });
+
+  it("descifra las entidades, que si no se leerian crudas", () => {
+    expect(
+      textoPlanoDeDescripcion("<p>Menos de 200&nbsp;000 &amp; algo</p>"),
+    ).toBe("Menos de 200 000 & algo");
+  });
+
+  it("deja intacta una entidad que no reconoce", () => {
+    // Inventarse un caracter para algo que no esta en la lista seria peor que
+    // mostrarlo tal cual: la descripcion diria algo que nadie escribio.
+    expect(textoPlanoDeDescripcion("<p>&copy; 2026</p>")).toBe("&copy; 2026");
+  });
+
+  it("recorta por palabra completa y marca el corte", () => {
+    const largo = `<p>${"palabra ".repeat(40)}</p>`;
+    const recorte = textoPlanoDeDescripcion(largo, 30);
+
+    // El corte cae en el ultimo espacio que cabe, asi que sale por debajo del
+    // maximo: lo que no puede es pasarse ni partir una palabra.
+    expect(recorte.length).toBeLessThanOrEqual(31);
+    expect(recorte).toBe("palabra palabra palabra…");
+  });
+
+  it("no recorta lo que ya cabe", () => {
+    expect(textoPlanoDeDescripcion("<p>Corto</p>", 30)).toBe("Corto");
+  });
+
+  it("una descripcion sin texto queda vacia, no en espacios", () => {
+    expect(textoPlanoDeDescripcion("<p></p><br>")).toBe("");
   });
 });

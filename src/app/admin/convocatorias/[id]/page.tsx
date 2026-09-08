@@ -1,19 +1,27 @@
 import { forbidden, notFound, redirect } from "next/navigation";
 import { Badge } from "@churchofjesuschrist/eden-badge";
 import { H1, H4 } from "@churchofjesuschrist/eden-headings";
-import { Text2 } from "@churchofjesuschrist/eden-text";
+import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import AccionesDeConvocatoria from "@/components/AccionesDeConvocatoria";
 import FormularioConvocatoria from "@/components/FormularioConvocatoria";
+import LotesDeConvocatoria, {
+  type LoteEnPantalla,
+  type VehiculoDisponible,
+} from "@/components/LotesDeConvocatoria";
 import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
-import { aCampoLocal, desdeIso } from "@/lib/domain/fechas";
+import { aCampoLocal, desdeIso, formatearFechaHora } from "@/lib/domain/fechas";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
+import { listarVehiculos } from "@/lib/vehiculos/listarVehiculos";
+import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
+import type { Vehiculo } from "@/types/vehiculo";
 import "../pagina.css";
 
 /**
- * Detalle de una convocatoria — pantallas 4.3 y 4.4.
+ * Detalle de una convocatoria — pantallas 4.3 y 4.4, y la vista de dictamen de
+ * la pantalla 5.
  *
  * Dinamica: el estatus cambia con cada accion del ciclo y la pantalla es de
  * trabajo. No entra en cache estatica.
@@ -21,6 +29,12 @@ import "../pagina.css";
  * **Los campos se rellenan en hora de negocio.** Lo que se guarda es UTC; lo
  * que se teclea y se lee es hora de Ciudad de Mexico (regla 9), y la conversion
  * ocurre aqui, en el servidor.
+ *
+ * **Es tambien la pantalla del aprobador.** El dictamen no tiene ruta propia:
+ * las acciones se derivan de la maquina de estados y del permiso de quien mira,
+ * asi que quien puede aprobar ve aqui sus dos botones sobre exactamente los
+ * mismos datos que vera quien administra. Dos vistas del mismo dictamen se
+ * separarian al primer cambio.
  */
 export const dynamic = "force-dynamic";
 
@@ -31,6 +45,10 @@ const enCampos = (iso: string): { fecha: string; hora: string } => {
   const [fecha = "", hora = ""] = aCampoLocal(instante).split("T");
   return { fecha, hora };
 };
+
+/** Como se nombra un vehiculo en una lista. */
+const rotulo = (vehiculo: Vehiculo): string =>
+  `${vehiculo.marca} ${vehiculo.version} ${String(vehiculo.modelo)}`;
 
 const DetalleDeConvocatoria = async ({
   params,
@@ -57,6 +75,48 @@ const DetalleDeConvocatoria = async ({
     convocatoria.estatus === "BORRADOR" &&
     sesion.permisos.has("Autob_Administrar_Convocatorias");
 
+  // Una lectura por lote. Son los vehiculos de **esta** convocatoria, que se
+  // cuentan por decenas: `listarVehiculos` traeria el catalogo entero para
+  // quedarse con unos pocos, y ademas no encontraria un vehiculo ya vendido.
+  const vehiculosDelLote = new Map<string, Vehiculo>();
+  const lecturas = await Promise.all(
+    convocatoria.lotes.map(async (lote) => obtenerVehiculo(lote.vehiculoId)),
+  );
+  for (const vehiculo of lecturas) {
+    if (vehiculo.ok)
+      vehiculosDelLote.set(vehiculo.data.vehiculoId, vehiculo.data);
+  }
+
+  const lotes: LoteEnPantalla[] = convocatoria.lotes.map((lote) => {
+    const vehiculo = vehiculosDelLote.get(lote.vehiculoId);
+    return {
+      loteId: lote.loteId,
+      vehiculoId: lote.vehiculoId,
+      // El identificador es el respaldo si el vehiculo no se pudo leer: sin el,
+      // la fila apareceria sin nada en la primera columna y no habria forma de
+      // saber de cual se trata.
+      vehiculo: vehiculo ? rotulo(vehiculo) : lote.vehiculoId,
+      precio: lote.precio,
+      estatus: lote.estatus,
+      puedeRetirarse: lote.contadorTurnos === 0,
+      ...(lote.motivoRetiro ? { motivoRetiro: lote.motivoRetiro } : {}),
+    };
+  });
+
+  // El catalogo de disponibles solo hace falta si se puede incluir algo.
+  let disponibles: VehiculoDisponible[] = [];
+  if (editable) {
+    const catalogo = await listarVehiculos({ estatus: ["DISPONIBLE"] });
+    if (catalogo.ok) {
+      disponibles = catalogo.data.map((vehiculo) => ({
+        vehiculoId: vehiculo.vehiculoId,
+        etiqueta: rotulo(vehiculo),
+      }));
+    }
+  }
+
+  const creadoEn = desdeIso(convocatoria.creadoEn);
+
   return (
     <main className="convocatorias">
       <header className="convocatorias__encabezado">
@@ -65,6 +125,12 @@ const DetalleDeConvocatoria = async ({
           <Badge color="info">
             {diccionario.estatusConvocatoria[convocatoria.estatus]}
           </Badge>
+          {/* Quien dictamina necesita saber quien la creo: R-05 le impide
+              aprobar la suya, y sin este dato no sabria por que. */}
+          <Text4 renderAs="p">
+            {`${diccionario.convocatorias.creadaPor}: ${convocatoria.creadoPor}` +
+              (creadoEn ? ` — ${formatearFechaHora(creadoEn)}` : "")}
+          </Text4>
         </div>
       </header>
 
@@ -82,6 +148,15 @@ const DetalleDeConvocatoria = async ({
         }}
       />
 
+      <LotesDeConvocatoria
+        convocatoriaId={convocatoria.convocatoriaId}
+        lotes={lotes}
+        disponibles={disponibles}
+        editable={editable}
+        diccionario={diccionario}
+        idioma={idioma}
+      />
+
       <section>
         <H4 renderAs="h2">{diccionario.acciones.titulo}</H4>
         {convocatoria.estatus === "OCULTA" &&
@@ -95,6 +170,7 @@ const DetalleDeConvocatoria = async ({
           estatus={convocatoria.estatus}
           diccionario={diccionario}
           permisos={[...sesion.permisos]}
+          esCreador={convocatoria.creadoPor === sesion.participanteId}
         />
       </section>
     </main>

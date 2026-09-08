@@ -24,6 +24,16 @@ import type { Convocatoria } from "@/types/convocatoria";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 import type { Vehiculo } from "@/types/vehiculo";
 
+/**
+ * Posicion del centinela de R-10 dentro de la transaccion.
+ *
+ * `ejecutarTransaccion` informa **que item** cancelo, y esa posicion es lo unico
+ * que distingue "el vehiculo ya esta en otra convocatoria" de las otras dos
+ * condiciones que tambien devuelven `invalid_state`. Si el centinela deja de ir
+ * primero hay que mover esta constante; hay prueba que lo comprueba.
+ */
+const INDICE_DEL_CENTINELA = 0;
+
 export type EntradaIncluirVehiculo = {
   /** La convocatoria tal como se leyo para decidir el permiso. */
   convocatoria: Convocatoria;
@@ -196,6 +206,17 @@ export const incluirVehiculo = async (
     { cliente },
   );
 
-  if (!resultado.ok) return fallo(resultado.error);
+  if (!resultado.ok) {
+    // El centinela es el **primer** item, y que sea el que cancela tiene una
+    // causa concreta que la pantalla puede explicar: el vehiculo entro en otra
+    // convocatoria activa entre que se pinto la lista y se envio el formulario.
+    // Sin este detalle, quien captura recibe el mismo `invalid_state` generico
+    // que produciria una convocatoria que dejo de estar en borrador, y no tiene
+    // como saber cual de las dos cosas paso.
+    if (resultado.indice === INDICE_DEL_CENTINELA) {
+      return fallo("invalid_state", { vehiculo: "en_otra_convocatoria" });
+    }
+    return fallo(resultado.error);
+  }
   return exito({ loteId });
 };

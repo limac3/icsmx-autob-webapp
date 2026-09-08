@@ -1,0 +1,30 @@
+/* Lotes de la convocatoria. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.lotes {
+  display: grid;
+  gap: 1rem;
+  padding: var(--unity-spacing16);
+}
+
+.lotes__tabla {
+  width: 100%;
+}
+
+.lotes__inclusion {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.lotes__retiro {
+  display: grid;
+  gap: 1rem;
+}
+
+.lotes__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}

@@ -1,11 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Error as AlertaError, Success } from "@churchofjesuschrist/eden-alert";
+import {
+  Error as AlertaError,
+  Success,
+  Warn,
+} from "@churchofjesuschrist/eden-alert";
 import { Danger, Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
 import { DialogModal } from "@churchofjesuschrist/eden-dialog-modal";
 import { Row } from "@churchofjesuschrist/eden-row";
-import { FormField, Input } from "@churchofjesuschrist/eden-form-parts";
+import { FormField, TextArea } from "@churchofjesuschrist/eden-form-parts";
 import { Text2 } from "@churchofjesuschrist/eden-text";
 import {
   aprobarConvocatoria,
@@ -117,12 +121,27 @@ const ACCIONES: Record<EventoConvocatoria, DefinicionDeAccion> = {
   },
 };
 
+/**
+ * Las dos acciones que exigen que dictamine alguien distinto de quien creo la
+ * convocatoria (R-05).
+ *
+ * Se listan aqui y no se deducen del permiso porque la separacion de funciones
+ * no es una cuestion de capacidad: quien aprueba **tiene** el permiso: lo que no
+ * puede es usarlo sobre lo suyo.
+ */
+const EXIGEN_OTRO_DICTAMINADOR: readonly EventoConvocatoria[] = [
+  "APROBAR",
+  "RECHAZAR",
+];
+
 export type AccionesDeConvocatoriaProps = {
   convocatoriaId: string;
   estatus: EstatusConvocatoria;
   diccionario: Diccionario;
   /** Permisos de quien mira, para no ofrecer lo que no puede ejecutar. */
   permisos: readonly string[];
+  /** `true` si quien mira creo esta convocatoria. R-05 le cierra el dictamen. */
+  esCreador?: boolean;
 };
 
 const AccionesDeConvocatoria = ({
@@ -130,6 +149,7 @@ const AccionesDeConvocatoria = ({
   estatus,
   diccionario,
   permisos,
+  esCreador = false,
 }: AccionesDeConvocatoriaProps) => {
   const [enProceso, iniciar] = useTransition();
   const [error, setError] = useState<CodigoError | undefined>(undefined);
@@ -142,8 +162,18 @@ const AccionesDeConvocatoria = ({
 
   const etiquetas = diccionario.acciones;
 
-  const disponibles = eventosDisponibles("convocatoria", estatus).filter(
+  const conPermiso = eventosDisponibles("convocatoria", estatus).filter(
     (evento) => permisos.includes(ACCIONES[evento].permiso),
+  );
+
+  // R-05. Se separan en vez de filtrarse y ya: quien creo la convocatoria y
+  // tiene el permiso de aprobacion necesita saber **por que** no ve el boton,
+  // o supondra que le falta el permiso y lo pedira.
+  const cerradasPorSerCreador = esCreador
+    ? conPermiso.filter((evento) => EXIGEN_OTRO_DICTAMINADOR.includes(evento))
+    : [];
+  const disponibles = conPermiso.filter(
+    (evento) => !cerradasPorSerCreador.includes(evento),
   );
 
   /** Ejecuta de verdad. Solo se llega aqui con la confirmacion ya resuelta. */
@@ -177,10 +207,18 @@ const AccionesDeConvocatoria = ({
     aplicar(evento);
   };
 
+  const avisoDeCreador =
+    cerradasPorSerCreador.length > 0 ? (
+      <Warn>
+        <Text2 renderAs="p">{etiquetas.noApruebasLoTuyo}</Text2>
+      </Warn>
+    ) : null;
+
   if (disponibles.length === 0) {
+    // Con el aviso puesto, "no hay acciones" sobra: la explicacion ya esta.
     return (
       <section className="acciones-convocatoria" aria-busy={enProceso}>
-        <Text2 renderAs="p">{etiquetas.sinAcciones}</Text2>
+        {avisoDeCreador ?? <Text2 renderAs="p">{etiquetas.sinAcciones}</Text2>}
       </section>
     );
   }
@@ -199,6 +237,8 @@ const AccionesDeConvocatoria = ({
         </Success>
       ) : null}
 
+      {avisoDeCreador}
+
       {disponibles.map((evento) => {
         const definicion = ACCIONES[evento];
         const Boton =
@@ -208,15 +248,22 @@ const AccionesDeConvocatoria = ({
               ? Primary
               : Secondary;
 
+        const faltaMotivo =
+          definicion.exigeMotivo && (motivos[evento] ?? "").trim() === "";
+
         return (
           <div key={evento} className="acciones-convocatoria__accion">
             {definicion.exigeMotivo ? (
+              // `TextArea` y no `Input`: el motivo va a la bitacora y lo lee
+              // quien audite meses despues, asi que hay que poder escribir una
+              // frase entera y verla completa antes de enviar.
               <FormField
                 label={etiquetas.motivo}
                 description={etiquetas.motivoAyuda}
               >
-                <Input
+                <TextArea
                   name={`motivo-${evento}`}
+                  required
                   value={motivos[evento] ?? ""}
                   onChange={(cambio) => {
                     setMotivos((previos) => ({
@@ -228,9 +275,13 @@ const AccionesDeConvocatoria = ({
               </FormField>
             ) : null}
 
+            {/* El boton espera al motivo en vez de aceptar y quejarse: es una
+                accion irreversible, y `required` en el campo ya explica que
+                falta. La guarda de `intentar` se queda igualmente, porque un
+                boton deshabilitado no es una validacion. */}
             <Boton
               type="button"
-              disabled={enProceso}
+              disabled={enProceso || faltaMotivo}
               onClick={() => {
                 intentar(evento);
               }}

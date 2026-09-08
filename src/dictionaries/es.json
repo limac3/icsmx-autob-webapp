@@ -214,7 +214,26 @@
     "campoHorasLiquidacion": "Horas para liquidar el pago",
     "horasLiquidacionAyuda": "Horas naturales desde la adjudicación, no días hábiles.",
     "subcampoFecha": "Fecha",
-    "subcampoHora": "Hora"
+    "subcampoHora": "Hora",
+    "seccionLotes": "Vehículos incluidos",
+    "sinLotes": "Todavía no hay vehículos incluidos.",
+    "columnaVehiculo": "Vehículo",
+    "columnaPrecio": "Precio",
+    "columnaAcciones": "Acciones",
+    "incluirVehiculo": "Incluir vehículo",
+    "campoVehiculo": "Vehículo disponible",
+    "elegirVehiculo": "Elige un vehículo",
+    "campoPrecio": "Precio de venta",
+    "precioAyuda": "Cifra cerrada en pesos, sin centavos.",
+    "sinDisponibles": "No hay vehículos disponibles para incluir.",
+    "incluido": "Vehículo incluido en la convocatoria.",
+    "retirarDeConvocatoria": "Retirar",
+    "retiradoDeConvocatoria": "Vehículo retirado de la convocatoria.",
+    "motivoRetiroLote": "Motivo del retiro",
+    "motivoRetiroLoteAyuda": "Queda en la bitácora. Es obligatorio.",
+    "loteConFila": "No se puede retirar: ya hay participantes formados.",
+    "enOtraConvocatoria": "Ese vehículo entró en otra convocatoria activa. Actualiza la lista y elige otro.",
+    "creadaPor": "Creada por"
   },
   "validacionConvocatoria": {
     "requerido": "Este dato es obligatorio",
@@ -251,6 +270,18 @@
     "hecho_CONCLUIR": "Convocatoria concluida.",
     "continuar": "Continuar",
     "cancelar": "Cancelar",
-    "titulo": "Acciones"
+    "titulo": "Acciones",
+    "noApruebasLoTuyo": "No puedes aprobar una convocatoria que tú creaste."
+  },
+  "aprobaciones": {
+    "titulo": "Aprobaciones",
+    "descripcion": "Convocatorias que esperan dictamen.",
+    "sinPendientes": "No hay convocatorias esperando dictamen.",
+    "pendientes": "Convocatorias por dictaminar",
+    "columnaConvocatoria": "Convocatoria",
+    "columnaCreadaPor": "Creada por",
+    "columnaEnviada": "En espera desde",
+    "columnaPeriodo": "Periodo de venta",
+    "dictaminar": "Dictaminar"
   }
 }
