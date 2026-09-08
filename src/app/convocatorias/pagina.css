@@ -1,0 +1,13 @@
+/* Pantallas de catalogo del participante. Solo layout; la apariencia la ponen
+   los componentes de Eden (regla 10). */
+
+.catalogo {
+  display: grid;
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.catalogo__encabezado {
+  display: grid;
+  gap: 0.5rem;
+}

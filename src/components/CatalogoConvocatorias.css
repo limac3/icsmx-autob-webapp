@@ -1,0 +1,10 @@
+/* Catalogo de convocatorias del participante. Solo layout; la apariencia la
+   ponen los componentes de Eden (regla 10). */
+
+.catalogo-convocatorias__tabla {
+  width: 100%;
+}
+
+.catalogo-convocatorias__cerrada {
+  opacity: 0.6;
+}

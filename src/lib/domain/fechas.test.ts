@@ -8,6 +8,7 @@ import {
   desplazamientoEnMinutos,
   diaDeNegocio,
   esInstanteValido,
+  formatearCuentaRegresiva,
   formatearEspera,
   formatearFecha,
   formatearFechaHora,
@@ -428,5 +429,46 @@ describe("formatearEspera", () => {
     // Una fecha mal capturada no debe leerse como una espera larga.
     const futuro = new Date(ahora.getTime() + 2 * HORA);
     expect(formatearEspera(futuro, ahora, "es")).toBe("dentro de 2 horas");
+  });
+});
+
+describe("formatearCuentaRegresiva", () => {
+  const MINUTO = 60;
+  const HORA = 60 * MINUTO;
+  const DIA = 24 * HORA;
+
+  it("muestra dias y horas cuando faltan mas de 24 horas", () => {
+    expect(formatearCuentaRegresiva(2 * DIA + 4 * HORA, "es")).toBe("2 d 4 h");
+  });
+
+  it("muestra horas y minutos por debajo de un dia", () => {
+    expect(formatearCuentaRegresiva(5 * HORA + 30 * MINUTO, "es")).toBe(
+      "5 h 30 min",
+    );
+  });
+
+  it("muestra solo minutos por debajo de una hora", () => {
+    expect(formatearCuentaRegresiva(45 * MINUTO, "es")).toBe("45 min");
+  });
+
+  it("cambia de unidad justo en el limite de un dia", () => {
+    expect(formatearCuentaRegresiva(DIA, "es")).toBe("1 d 0 h");
+    expect(formatearCuentaRegresiva(DIA - 1, "es")).toBe("23 h 59 min");
+  });
+
+  it("nunca es negativo: un objetivo ya pasado se trata como cero", () => {
+    expect(formatearCuentaRegresiva(-30, "es")).toBe("0 min");
+  });
+
+  it("trunca segundos sueltos en vez de redondear hacia arriba", () => {
+    // 59 segundos no deben adelantar la cuenta a "1 min": mostrar un minuto
+    // que en realidad todavia no se cumple invitaria a actuar antes de tiempo.
+    expect(formatearCuentaRegresiva(59, "es")).toBe("0 min");
+  });
+
+  it("traduce al idioma que se le pide", () => {
+    expect(formatearCuentaRegresiva(2 * DIA + 4 * HORA, "en")).toBe(
+      "2 days 4 hr",
+    );
   });
 });

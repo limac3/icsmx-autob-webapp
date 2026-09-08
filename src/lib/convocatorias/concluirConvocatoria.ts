@@ -9,12 +9,15 @@ import "server-only";
 // primero dejaria lotes cuya copia sigue diciendo `PUBLICADA` y que por tanto
 // el paso 1 de T1 aceptaria comprar, bajo una convocatoria ya concluida.
 //
-// **Lo que esta version no hace todavia: cerrar las filas (R-18).** Al concluir,
-// las solicitudes `EN_FILA` y `CONGELADA` pasan a `NO_ADJUDICADA`, mientras que
-// una adjudicacion vigente sobrevive y conserva su plazo. Esas solicitudes no
-// existen hasta la Etapa 8 —no hay motor de fila que las cree—, asi que
-// escribir ese cierre ahora seria codigo que ninguna prueba puede ejercitar.
-// Queda declarado en `plan-ejecucion.md`, en la Etapa 8.
+// **Y cierra las filas (R-18), desde la Etapa 8.** Las solicitudes `EN_FILA` y
+// `CONGELADA` pasan a `NO_ADJUDICADA`; una adjudicacion `ADJUDICADA` o
+// `EN_VERIFICACION` sobrevive con su plazo intacto. El cierre va **despues** de
+// cerrar los lotes: un lote que ya no admite solicitudes ni adjudicaciones
+// garantiza que la fila que se cierra a continuacion es la definitiva.
+//
+// Se recorren **todos** los lotes, no solo los que se cierran aqui: detras de
+// un lote `ADJUDICADO` —o de uno `VENDIDO`— puede quedar gente formada, y esa
+// fila tampoco va a avanzar ya.
 
 import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -23,6 +26,7 @@ import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { MAXIMO_ITEMS_POR_TRANSACCION } from "@/lib/data/transacciones";
 import { transicion } from "@/lib/domain/transiciones";
+import { cerrarFilaDelLote } from "@/lib/fila/cerrarFilaDelLote";
 import type { ActorUsuario } from "@/types/auditoria";
 import type {
   ConvocatoriaConLotes,
@@ -45,6 +49,8 @@ export type ResultadoDeConclusion = {
   estatus: EstatusConvocatoria;
   vendidos: number;
   noVendidos: number;
+  /** Solicitudes que pasaron a `NO_ADJUDICADA` al cerrar las filas (R-18). */
+  filasCerradas: number;
 };
 
 /**
@@ -116,13 +122,25 @@ export const concluirConvocatoria = async (
     }
   }
 
+  // R-18: las filas se cierran con los lotes ya cerrados, para que nadie pueda
+  // formarse en una fila que se acaba de cerrar.
+  let filasCerradas = 0;
+  for (const lote of actual.lotes) {
+    const cierre = await cerrarFilaDelLote(
+      { lote, actor: entrada.actor },
+      deps,
+    );
+    if (!cierre.ok) return cierre;
+    filasCerradas += cierre.data;
+  }
+
   const transicionDeLaConvocatoria = await aplicarTransicion(
     {
       actual,
       evento: "CONCLUIR",
       tipoDeEvento: "CONVOCATORIA_CONCLUIDA",
       actor: entrada.actor,
-      datos: { vendidos, noVendidos: sinVender.length },
+      datos: { vendidos, noVendidos: sinVender.length, filasCerradas },
     },
     deps,
   );
@@ -132,6 +150,7 @@ export const concluirConvocatoria = async (
     estatus: transicionDeLaConvocatoria.data.estatus,
     vendidos,
     noVendidos: sinVender.length,
+    filasCerradas,
   });
 };
 

@@ -52,6 +52,13 @@ reconstruye con una sola `Query` en orden cronologico**, sin unir nada.
 
 Es la consulta que el auditor hace mas veces, y la que sostiene las preguntas 1, 2 y 3.
 
+> **Los nueve eventos de la fila se anclan al lote, sin excepcion** (Etapa 8). Incluye
+> `SOLICITUD_CREADA`, que podria parecer de la solicitud: la pregunta "reconstruir la fila" de la
+> seccion 5 es exactamente "los `SOLICITUD_CREADA` **del lote**, ordenados por turno", y anclarlos
+> a `AUDIT#SOLICITUD#<id>` obligaria a una consulta por participante para responderla. Cada
+> evento lleva ademas `solicitudId`, asi que la historia de una solicitud concreta se filtra sin
+> perder nada.
+
 ### 2.2 `correlacionId`
 
 Los eventos escritos en la misma transaccion comparten `correlacionId`. Un vencimiento con

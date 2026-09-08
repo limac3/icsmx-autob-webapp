@@ -3,13 +3,17 @@
 Aplicacion web para la **venta de vehiculos obsoletos de flotilla** mediante convocatorias
 de venta con fila de adjudicacion por orden de llegada (FIFO) y trazabilidad auditable.
 
-> Estado: **etapas 0 a 6 completadas**, mas el prototipo concurrente de la fila. Hay identidad y
-> autorizacion por permisos, infraestructura Amplify Gen2 desplegable, las reglas puras de
-> dominio con la capa de acceso a datos, el motor de fila validado contra DynamoDB real —turnos
-> unicos, orden estricto y un solo ganador bajo concurrencia—, el **catalogo de vehiculos
-> administrable** con su galeria de fotografias servida por CloudFront con URL firmada, y el
-> **ciclo completo de la convocatoria**: borrador, inclusion de vehiculos como lotes, aprobacion
-> por alguien distinto de quien la creo, publicacion, ocultamiento y conclusion.
+> Estado: **etapas 0 a 8 completadas**. Hay identidad y autorizacion por permisos,
+> infraestructura Amplify Gen2 desplegable, las reglas puras de dominio con la capa de acceso a
+> datos, el **catalogo de vehiculos administrable** con su galeria servida por CloudFront con URL
+> firmada, el **ciclo completo de la convocatoria** —borrador, lotes, aprobacion por alguien
+> distinto de quien la creo, publicacion, ocultamiento y conclusion—, el **catalogo del
+> participante** con gating triple en servidor, y el **motor de fila**: turno por contador
+> atomico, adjudicacion por escritura condicional, una sola adjudicacion activa por participante,
+> cancelacion con reasignacion y cierre de filas al concluir. Su prueba de concurrencia corre
+> **contra DynamoDB real dentro de la compuerta** — turnos unicos, orden estricto y un solo
+> ganador, con solicitud y adjudicacion entrelazadas.
+> Falta el cobro: comprobante, tesoreria, vencimientos y correo (etapas 9 a 12).
 > El plan de ejecucion vive en [agent_files/plan-ejecucion.md](agent_files/plan-ejecucion.md).
 
 ---

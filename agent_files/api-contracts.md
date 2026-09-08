@@ -147,10 +147,29 @@ cadenas ocurre en un solo sitio. Dos conversiones cargan con una trampa concreta
 
 | Action | Entrada | Salida | Permiso | Errores | Eventos |
 | --- | --- | --- | --- | --- | --- |
-| `solicitarCompra` | `{ loteId }` | `MiLugarDTO` | `solicitud:crear` | `invalid_state`, `already_in_queue`, `lote_no_disponible`, `conflicto_concurrencia` | `SOLICITUD_CREADA` (+ `LOTE_ADJUDICADO` si adjudica) |
-| `cancelarSolicitud` | `{ solicitudId, motivo? }` | `{ estatus }` | `solicitud:cancelar` | `invalid_state`, `not_owner` | `SOLICITUD_CANCELADA_POR_PARTICIPANTE` (+ reasignacion) |
-| `consultarMiLugar` | `{ loteId }` | `MiLugarDTO \| null` | `solicitud:ver-mi-lugar` | — | — |
-| `listarMisSolicitudes` | — | `MiSolicitudDTO[]` | `solicitud:ver-mis-solicitudes` | — | — |
+| `solicitarCompra` | `{ convocatoriaId, loteId }` | `MiLugarDTO` | `solicitud:crear` | `invalid_state`, `already_in_queue`, `lote_no_disponible`, `conflicto_concurrencia`, `not_found` | `SOLICITUD_CREADA` (+ `LOTE_ADJUDICADO` si adjudica) |
+| `cancelarSolicitud` | `{ convocatoriaId, loteId, motivo? }` | `{ estatus }` | `solicitud:cancelar` | `invalid_state`, `not_found` | `SOLICITUD_CANCELADA_POR_PARTICIPANTE` (+ reasignacion) |
+
+> **Dos ajustes de firma al implementar la Etapa 8, y los dos por seguridad.**
+>
+> **Entra `convocatoriaId`.** La clave de un lote es `CONV#<convocatoriaId> / LOTE#<loteId>`, y
+> no hay indice que resuelva un lote suelto. Aceptar el par no abre nada: el servidor lee esa
+> pareja y **gatea contra la convocatoria que leyo**, asi que un par inventado no encuentra nada.
+>
+> **`cancelarSolicitud` no recibe `solicitudId`.** Se parte del centinela de fila
+> `LOTE#<loteId> / PART#<participanteId>`, indexado por el participante **de la sesion**: alcanzar
+> la solicitud de otro deja de ser una guarda que alguien pueda olvidar y pasa a ser una clave que
+> no se puede construir. La guarda `esPropio` se aplica igual, como segunda linea.
+
+**Las lecturas no son actions.** `consultarMiLugar` y `listarMisSolicitudes` viven en
+`src/lib/fila/` y las invocan los Server Components directamente, como el resto de las lecturas
+de la aplicacion: una action de lectura seria un viaje de ida y vuelta para algo que el servidor
+ya tiene en la mano. El permiso se comprueba igual, en la pagina.
+
+| Lectura | Entrada | Salida | Permiso |
+| --- | --- | --- | --- |
+| `consultarMiLugar` | `{ loteId, participanteId }` | `MiLugarDTO \| null` | `solicitud:ver-mi-lugar` |
+| `consultarTamanoFila` | `{ loteId }` | `number` | el de la pantalla que lo muestra |
 
 ### 4.1 `MiLugarDTO` — la proyeccion mas delicada del sistema
 

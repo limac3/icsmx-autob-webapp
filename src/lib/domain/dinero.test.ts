@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { formatearPrecio, MONEDA_DE_NEGOCIO } from "./dinero";
+import { formatearEntero, formatearPrecio, MONEDA_DE_NEGOCIO } from "./dinero";
 
 describe("formatearPrecio", () => {
   it("agrupa los miles con coma, como se lee en Mexico", () => {
@@ -27,5 +27,16 @@ describe("formatearPrecio", () => {
 
   it("formatea el maximo sin notacion cientifica", () => {
     expect(formatearPrecio(99_999_999, "es")).toBe("$99,999,999");
+  });
+});
+
+describe("formatearEntero", () => {
+  it("agrupa los miles con coma, como el kilometraje se lee en Mexico", () => {
+    // Mismo problema que `formatearPrecio`: "es" a secas escribiria "100.000".
+    expect(formatearEntero(100_000, "es")).toBe("100,000");
+  });
+
+  it("no depende de la moneda: no antepone ningun simbolo", () => {
+    expect(formatearEntero(100_000, "es")).not.toContain("$");
   });
 });

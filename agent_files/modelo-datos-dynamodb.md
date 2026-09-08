@@ -266,14 +266,23 @@ Ordena entre `PART#` y `SOL#`, asi que ninguna consulta de la fila la ve.
 
 ### 5.1 El gating triple es una consulta, no un filtro
 
-PA-05 aplica las tres condiciones de R-01 **dentro** de la lectura:
+PA-05 aplica las tres condiciones de R-01 **dentro** de la lectura
+(`listarConvocatoriasVisibles`, Etapa 7):
 
 - `estatus = PUBLICADA` → esta en la clave de particion del GSI2.
-- `publicadaEn <= ahora` → condicion de rango sobre `GSI2SK`.
-- Tipo compatible → `FilterExpression` derivado de los **permisos de venta de la sesion**.
+- `publicadaEn <= ahora` → condicion de rango sobre `GSI2SK`, con
+  `gsi2.cotaSuperiorPorFecha(ahora)` como limite superior — **no el valor de `ahora` a
+  secas**. `GSI2SK` es `<fecha>#<id>`, y comparar contra la fecha sola excluye por error un
+  item publicado en el mismo instante: la cadena con sufijo ordena despues que su propio
+  prefijo (`desafios-implementacion.md` 29).
+- Tipo compatible → filtro **en memoria**, despues de `aConvocatoria`, contra los
+  **permisos de venta de la sesion** ya resueltos en `tiposDeConvocatoriaPermitidos`. Igual que
+  la busqueda de `listarVehiculos`: un `FilterExpression` se aplicaria igual despues de leer, sin
+  ahorrar nada, y filtrar el tipo ya deserializado evita construir una expresion dinamica para
+  uno o dos valores.
 
-Lo que no se recupera no puede filtrarse mal despues. El tipo va como filtro y no como clave
-porque un `EMPLEADO` necesita ambos tipos en una sola pantalla; el volumen es pequeno y el
+Lo que no se recupera no puede filtrarse mal despues. El tipo se descarta despues y no en la
+clave porque un `EMPLEADO` necesita ambos tipos en una sola pantalla; el volumen es pequeno y el
 descarte, marginal.
 
 ### 5.2 `miPosicion` y `tamanoFila`
@@ -425,21 +434,40 @@ veces**. Una prueba con esa forma habria pasado en verde con el defecto presente
 ### T2 — Adjudicar
 
 Una sola `TransactWriteItems`, con bucle de candidatos por fuera.
+Implementada en `src/lib/fila/adjudicarLote.ts` (Etapa 8).
 
 ```
 1. Update lote        SET adjudicacionActual = :solicitudId, adjudicadoEn, venceEn,
                           turnoAdjudicado, estatus = ADJUDICADO
                       CONDITION attribute_not_exists(adjudicacionActual)      <- regla 6
+                            AND estatus = EN_OFERTA
 2. Update solicitud   SET estatus = ADJUDICADA, adjudicadoEn, venceEn,
                           GSI4PK = VENCE#<dia>, GSI4SK = <venceEn>
                       CONDITION estatus = EN_FILA
 3. Put centinela      PART#<id> / ADJUDICACION_ACTIVA
                       CONDITION attribute_not_exists(SK)                      <- R-09
-4. Put evento         LOTE_ADJUDICADO
+4. Update vehiculo    -> RESERVADO          CONDITION estatus = EN_CONVOCATORIA
+5. Put evento         LOTE_ADJUDICADO
                       CONDITION attribute_not_exists(PK)
 ```
 
 `venceEn = adjudicadoEn + horasLiquidacion` en horas naturales (R-13).
+
+> **Dos correcciones al escribir la Etapa 8.**
+>
+> **`estatus = EN_OFERTA` en la condicion del item 1.** Con solo
+> `attribute_not_exists(adjudicacionActual)`, un lote `NO_VENDIDO` pasa la condicion: al concluir
+> la convocatoria el lote cierra **sin** `adjudicacionActual`, asi que una adjudicacion en vuelo
+> podria entregarlo despues del cierre. Un lote `VENDIDO` ya quedaba excluido por conservar su
+> adjudicacion; `NO_VENDIDO` y `RETIRADO` no.
+>
+> **El item 4, que lleva el vehiculo a `RESERVADO`.** T2 no lo mencionaba, pero la maquina de
+> estados del vehiculo (`proyecto.md` 5.2) solo admite `AVALAR_PAGO` desde `RESERVADO`: sin este
+> item, `RESERVADO` seria inalcanzable y T4 no tendria transicion valida al vender. No
+> reintroduce la contencion de R18 —el vehiculo se toca una vez por adjudicacion, no una vez por
+> solicitud— y R-10 garantiza que ningun otro lote activo lo comparte. Su fallo se trata como
+> "el lote no es adjudicable", no como "prueba con el siguiente candidato": el problema no es
+> del turno que se esta evaluando.
 
 **Nunca se lee el lote para comprobar si esta libre.** La condicion del item 1 es la unica
 autoridad. Ante N intentos simultaneos, DynamoDB deja pasar exactamente uno.
@@ -464,11 +492,20 @@ no contradice la regla 6.
 **Bucle de candidatos:** se recorre PA-07 en orden de turno. Para cada solicitud `EN_FILA` se
 intenta la transaccion.
 
-- Falla el item 1 → otro proceso ya adjudico el lote. **Se aborta**, no se reintenta.
+- Falla el item 1 o el item 4 → el problema es del lote, no del candidato. **Se aborta**, no se
+  reintenta: probar con el turno siguiente daria N fracasos identicos.
 - Falla el item 3 → el candidato ya tiene una adjudicacion activa. Se marca `CONGELADA` y se
-  continua con el turno siguiente.
-- Falla el item 2 → la solicitud cambio de estado. Se continua con la siguiente.
-- Se agota la fila → R-17: el lote queda `EN_OFERTA`.
+  continua con el turno siguiente. Ese congelamiento va en **su propia transaccion, con dos
+  eventos**: `SOLICITUD_CONGELADA`, que explica el cambio de estado, y `SOLICITUD_OMITIDA`, que
+  explica en la historia del lote por que la adjudicacion siguio de largo con un turno mayor.
+  Sin el segundo, la comprobacion 2 de integridad veria una adjudicacion al turno 5 con los
+  turnos 3 y 4 vivos.
+- Falla el item 2 → la solicitud cambio de estado. Se continua con la siguiente, **sin evento**:
+  quien provoco ese cambio escribio el suyo, y una solicitud que ya no esta viva no es un turno
+  saltado.
+- Se agota la fila → R-17: el lote queda `EN_OFERTA` y se escribe `FILA_AGOTADA`. Es un evento
+  sin mutacion, y es correcto que lo sea: sin el, una fila con turnos vivos y un lote sin
+  adjudicar pareceria un proceso que dejo de correr.
 
 `TransactionCanceledException` trae `CancellationReasons` posicional; **hay que inspeccionar el
 indice** para saber cual condicion fallo. Tratar todas las cancelaciones igual haria imposible
@@ -533,6 +570,36 @@ Si el item 5 falla, se reintenta con el siguiente candidato. Si la fila se agota
 una variante reducida (items 1, 2, 6 mas `REMOVE adjudicacionActual` y `estatus = EN_OFERTA`).
 
 El **correo no participa**: se encola en el outbox (riesgo R8).
+
+#### T5b — Cancelacion voluntaria: liberar y **volver a adjudicar**, no un intercambio atomico
+
+La cancelacion de una solicitud `ADJUDICADA` (Etapa 8,
+`src/lib/fila/cancelarSolicitud.ts`) no usa la forma de T5. Libera en una transaccion —solicitud
+a `CANCELADA_POR_PARTICIPANTE`, centinela de fila fuera, centinela de adjudicacion fuera, lote a
+`EN_OFERTA` con `REMOVE adjudicacionActual`, vehiculo a `EN_CONVOCATORIA`, mas su evento— y
+**despues** llama a T2, el mismo camino que dispara cualquier solicitud nueva.
+
+La condicion `adjudicacionActual = :solicitudId` del item del lote es lo que la hace segura: si
+otro proceso ya reasigno, la transaccion se cancela sin efectos y la cancelacion falla entera,
+en vez de arrebatarle el vehiculo a quien acaba de recibirlo.
+
+**Por que aqui si y en T5 no.** El barrido de T5 actua sobre un plazo vencido y no puede dejar
+el lote libre sin dueno si el proceso se cae a la mitad. La cancelacion, en cambio, la dispara
+una persona que esta mirando la pantalla, y reutilizar T2 con su abstencion por reservas, su
+congelamiento por R-09 y sus reintentos vale mas que replicar esa logica dentro de una
+transaccion. La ventana que abre —lote libre con fila viva— **ya existe en el diseno**: T1
+tampoco puede adjudicar dentro de su propia transaccion, porque `TransactWriteItems` no devuelve
+valores.
+
+> **Consecuencia para la Etapa 10.** Un lote libre con fila viva y sin nadie que dispare la
+> adjudicacion es un estado alcanzable —basta que el proceso muera entre las dos escrituras—, y
+> hoy solo lo resuelve la siguiente solicitud. El barrido deberia recogerlo junto con los
+> vencimientos.
+
+Al perder la adjudicacion, las solicitudes `CONGELADA` del participante vuelven a `EN_FILA` con
+su turno intacto (R-09), **una transaccion por solicitud y fuera de la que provoca la perdida**:
+son una cantidad no acotada y `TransactWriteItems` admite 100. Meterlas dentro convertiria una
+garantia de negocio en un limite tecnico.
 
 ### T6 — Rechazar pago (R-16)
 

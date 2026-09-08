@@ -12,6 +12,7 @@
 // reves. La igualdad de fronteras entre los dos esta cubierta por prueba.
 
 import type { EstatusConvocatoria } from "@/types/convocatoria";
+import { formatearFechaHora } from "./fechas";
 
 /**
  * Ventana de una convocatoria, ya deserializada.
@@ -119,6 +120,47 @@ export const faseDeVenta = (
  * es deliberada — una convocatoria en la que nadie se formo no tiene por que
  * esperar a su fecha de cierre.
  */
+/**
+ * Fase de venta con el dato que cada una necesita mostrar — pantallas 3.1 y
+ * 3.2. Es la unica pieza de `faseDeVenta` que dos pantallas distintas repiten,
+ * asi que se centraliza para que las dos lean la misma frontera.
+ *
+ * El formateo de fecha ocurre aqui, en el servidor, no en el componente
+ * cliente que lo pinta (regla 9: "formateo en servidor"). Solo la cuenta
+ * regresiva es responsabilidad del cliente, y por eso este tipo entrega
+ * segundos y no un texto: `CuentaRegresiva` decrementa el numero.
+ */
+export type EstadoDeVentaUi =
+  | { fase: "PUBLICADA_SIN_ABRIR"; segundosParaAbrir: number }
+  | { fase: "VENTA_ABIERTA"; cierraFormateado: string }
+  | { fase: "VENTA_CERRADA" };
+
+export const calcularEstadoDeVentaUi = (
+  ventana: VentanaDeConvocatoria,
+  ahora: Date,
+): EstadoDeVentaUi => {
+  const fase = faseDeVenta(ventana, ahora);
+
+  if (fase === "PUBLICADA_SIN_ABRIR") {
+    return {
+      fase,
+      segundosParaAbrir: Math.round(
+        (ventana.inicioVenta.getTime() - ahora.getTime()) / 1000,
+      ),
+    };
+  }
+
+  if (fase === "VENTA_ABIERTA") {
+    return { fase, cierraFormateado: formatearFechaHora(ventana.finVenta) };
+  }
+
+  // `NO_VISIBLE` no deberia llegar aqui: las dos pantallas que llaman a esta
+  // funcion ya pasaron el gating triple, que exige `publicadaEn <= ahora`.
+  // Tratarlo como "cerrada" es lo mas conservador que se puede mostrar sin
+  // inventar un dato ni forzar el tipo con un `as`.
+  return { fase: "VENTA_CERRADA" };
+};
+
 export const puedeConcluirse = (
   estatus: EstatusConvocatoria,
   finVenta: Date,

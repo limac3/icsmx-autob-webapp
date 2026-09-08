@@ -225,6 +225,36 @@ export const turnoDesdeClave = (sk: string): number | undefined => {
   return Number(digitos);
 };
 
+/**
+ * Identificador de negocio de una solicitud: `<loteId>-<turno>`.
+ *
+ * No es una clave, pero vive aqui por la misma razon que ellas: **es el
+ * `agregadoId` de la bitacora** (`AUDIT#SOLICITUD#<solicitudId>`), asi que no
+ * puede contener `#` y su forma tiene que ser una sola en todo el sistema. Un
+ * evento anclado a un identificador distinto del que usa la pantalla deja la
+ * historia de esa solicitud partida en dos, y como la bitacora es append-only,
+ * partida para siempre.
+ *
+ * Se **deriva** del lote y del turno en vez de generarse: los dos ya
+ * identifican la solicitud sin ambiguedad —hay un solo turno por lote (D-5)— y
+ * un identificador derivado no puede desincronizarse de su clave.
+ */
+export const identificadorDeSolicitud = (
+  loteId: string,
+  turno: number,
+): string =>
+  `${exigirIdentificador(loteId, "loteId")}-${String(
+    conCerosVerificado(turno),
+  )}`;
+
+/** El turno de un identificador de solicitud debe ser un entero no negativo. */
+const conCerosVerificado = (turno: number): number => {
+  if (!Number.isInteger(turno) || turno < 0) {
+    throw new RangeError(`turno debe ser un entero no negativo, no ${turno}`);
+  }
+  return turno;
+};
+
 // --- Indices secundarios ----------------------------------------------------
 
 /** GSI1 — identidad alterna. PA-01: `oktaSub` -> `participanteId`. */
@@ -277,6 +307,20 @@ export const gsi2 = {
   ): { GSI2PK: string } => ({
     GSI2PK: `${tipo}_ESTATUS#${exigirIdentificador(estatus, "estatus")}`,
   }),
+
+  /**
+   * Cota superior para PA-05: el mayor `GSI2SK` posible con fecha `<= fecha`.
+   *
+   * `GSI2SK` es `<fecha>#<id>`, asi que comparar `GSI2SK <= fecha` a secas
+   * excluiria por error los items publicados en el mismo instante:
+   * `"...Z#01AB" <= "...Z"` es falso, porque la cadena con sufijo ordena
+   * despues que su propio prefijo. El sufijo agregado es U+FFFF, mayor que
+   * cualquier caracter del alfabeto de ULID (Crockford: digitos y mayusculas
+   * sin I/L/O/U, todo por debajo de `Z`), asi que ningun id real lo alcanza
+   * y la comparacion queda inclusiva en la fecha, tal como exige R-01.
+   */
+  cotaSuperiorPorFecha: (fecha: string): string =>
+    `${exigirIdentificador(fecha, "fecha")}#${String.fromCharCode(0xffff)}`,
 
   /** PA-13 — bitacora cronologica global. `dia` viene de `diaDeNegocio`. */
   bitacoraDelDia: (

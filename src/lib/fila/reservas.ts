@@ -1,0 +1,146 @@
+import "server-only";
+
+// Reserva de turno — el mecanismo que cierra R18
+// (`modelo-datos-dynamodb.md` 4.4, validado contra DynamoDB real por el
+// prototipo de la Etapa 4.1).
+//
+// **Que problema resuelve.** Entre el `ADD` que entrega el turno (paso 1 de T1)
+// y la transaccion que hace visible la solicitud (paso 2) hay una ventana en la
+// que el turno existe pero la fila no lo muestra. Sin marcarla, una adjudicacion
+// disparada en ese instante corona a un turno mayor y viola R-08. El prototipo
+// lo reproduce de forma determinista: con una pausa deliberada, el turno 2 gana
+// el vehiculo del turno 1 en **todas** las corridas.
+//
+// **Por que es un item propio y no un atributo del lote.** La diferencia se
+// midio. Anotar la reserva dentro del item del lote cierra la carrera igual,
+// pero obliga al paso 2 a escribir ese item — que comparten todas las
+// solicitudes simultaneas—, y DynamoDB no las serializa: las cancela con
+// `TransactionConflict`. De 10 solicitudes a la vez se perdian entre 5 y 9. Con
+// un item por intento no hay dos transacciones que compartan item
+// (`desafios-implementacion.md` 17).
+//
+// Vive entre `PART#` y `SOL#` en la particion del lote, asi que ninguna
+// consulta de la fila la ve.
+
+import { DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+
+import { clave, PREFIJO } from "@/lib/data/claves";
+import { nombreDeTabla } from "@/lib/data/cliente";
+import { clienteDe, type DepsDeServicio } from "@/lib/data/deps";
+import { esFalloDeCondicion } from "@/lib/data/transacciones";
+
+/**
+ * Cuanto se espera a una reserva antes de darla por muerta.
+ *
+ * **Acota la espera, no la correccion.** El paso 2 exige que su reserva siga
+ * viva (`attribute_exists(SK)`), asi que un proceso al que ya se le dio por
+ * muerto no puede escribir su solicitud tarde con un turno menor que el del
+ * ganador: pierde el turno y queda un hueco, que el diseno acepta de forma
+ * explicita.
+ *
+ * 15 s es dos ordenes de magnitud mas que el viaje de red que separa los dos
+ * pasos, y mucho menos que la paciencia de quien espera el resultado.
+ */
+export const UMBRAL_DE_RESERVA_MS = 15_000;
+
+/**
+ * La reserva sigue viva en el momento de retirarla.
+ *
+ * Sin esta condicion el mecanismo seria solo una espera cortes y R18 seguiria
+ * abierto, solo que mas dificil de reproducir.
+ */
+export const CONDICION_RESERVA_VIVA = "attribute_exists(SK)";
+
+/**
+ * Escribe la reserva. Va **antes** de pedir el turno, no despues: al reves
+ * quedaria abierta exactamente la ventana que se quiere cerrar. Al derecho, lo
+ * peor que puede pasar es una reserva huerfana que el umbral depura.
+ */
+export const anotarReserva = async (
+  entrada: { loteId: string; reservaId: string; ahora: Date },
+  deps: DepsDeServicio = {},
+): Promise<void> => {
+  await clienteDe(deps).send(
+    new PutCommand({
+      TableName: nombreDeTabla(),
+      Item: {
+        ...clave.reservaDeTurno(entrada.loteId, entrada.reservaId),
+        anotadaEn: entrada.ahora.toISOString(),
+      },
+    }),
+  );
+};
+
+/**
+ * Retira una reserva. Idempotente: que ya no exista es exito, no error.
+ *
+ * Compensa un paso 1 o un paso 2 fallidos, y depura las muertas desde la
+ * adjudicacion. Es de **mejor esfuerzo**: la correccion no depende de ella,
+ * solo la espera.
+ */
+export const liberarReserva = async (
+  entrada: { loteId: string; reservaId: string },
+  deps: DepsDeServicio = {},
+): Promise<void> => {
+  try {
+    await clienteDe(deps).send(
+      new DeleteCommand({
+        TableName: nombreDeTabla(),
+        Key: clave.reservaDeTurno(entrada.loteId, entrada.reservaId),
+      }),
+    );
+  } catch (error) {
+    if (esFalloDeCondicion(error)) return;
+    throw error;
+  }
+};
+
+/**
+ * Cuenta las reservas vigentes de un lote y retira las muertas.
+ *
+ * La lectura es **fuertemente consistente** y decide unicamente si abstenerse.
+ * No concede nada: quien gana el lote lo sigue decidiendo la escritura
+ * condicional del item 1 de T2 (regla 6). Una lectura que solo puede detener
+ * nunca puede autorizar de mas.
+ *
+ * Retirar las muertas es lo que impide que un proceso caido bloquee el lote
+ * para siempre; su paso 2, si algun dia llega, fallara por la condicion.
+ */
+export const depurarYContarReservas = async (
+  entrada: { loteId: string; ahora: Date; umbralMs?: number },
+  deps: DepsDeServicio = {},
+): Promise<number> => {
+  const umbral = entrada.umbralMs ?? UMBRAL_DE_RESERVA_MS;
+
+  const salida = await clienteDe(deps).send(
+    new QueryCommand({
+      TableName: nombreDeTabla(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefijo)",
+      ExpressionAttributeValues: {
+        // El identificador de relleno solo construye la particion del lote; las
+        // claves se siguen armando en un unico lugar.
+        ":pk": clave.reservaDeTurno(entrada.loteId, "x").PK,
+        ":prefijo": PREFIJO.reservaDeTurno,
+      },
+      ConsistentRead: true,
+    }),
+  );
+
+  let vigentes = 0;
+  for (const item of salida.Items ?? []) {
+    const reservaId = String(item.SK).slice(PREFIJO.reservaDeTurno.length);
+    const edad = entrada.ahora.getTime() - Date.parse(String(item.anotadaEn));
+
+    // Una fecha ilegible se trata como vigente y **no** se depura: en la duda,
+    // abstenerse retrasa una adjudicacion; depurar de mas la entrega al turno
+    // equivocado.
+    if (!Number.isFinite(edad) || edad <= umbral) {
+      vigentes += 1;
+      continue;
+    }
+
+    await liberarReserva({ loteId: entrada.loteId, reservaId }, deps);
+  }
+
+  return vigentes;
+};

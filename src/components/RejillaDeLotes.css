@@ -1,0 +1,19 @@
+/* Rejilla de vehiculos de una convocatoria. Solo layout; la apariencia la
+   ponen los componentes de Eden (regla 10). */
+
+.rejilla-lotes__enlace {
+  display: block;
+  text-decoration: none;
+  height: 100%;
+}
+
+.rejilla-lotes__tarjeta {
+  height: 100%;
+  padding: var(--unity-spacing16, 1rem);
+}
+
+.rejilla-lotes__foto {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}

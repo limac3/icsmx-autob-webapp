@@ -39,3 +39,12 @@ export const formatearPrecio = (precio: number, idioma: string): string =>
     currency: MONEDA_DE_NEGOCIO,
     maximumFractionDigits: 0,
   }).format(precio);
+
+/**
+ * Formatea un entero de negocio que no es dinero —el kilometraje de un
+ * vehiculo—, con la misma region fija. El problema es identico al de
+ * `formatearPrecio`: `es` a secas escribe `100.000`, que un lector mexicano
+ * lee como cien.
+ */
+export const formatearEntero = (valor: number, idioma: string): string =>
+  new Intl.NumberFormat(`${idioma}-${REGION_DE_NEGOCIO}`).format(valor);

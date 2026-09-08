@@ -11,7 +11,7 @@
 > motor de fila— se verifica leyendo el archivo antes de afirmarlo o de editarlo. Ver
 > `CLAUDE.md`, seccion "Grafo de Codigo — Consulta, No Evidencia".
 >
-> Sincronizado con: `3ebeb6f` (rama `main`, 2026-09-07), Etapa 6 cerrada. Los headings de
+> Sincronizado con: `e4d8408` (rama `main`, 2026-09-08), Etapas 7 y 8 cerradas. Los headings de
 > `agent_files/*.md` ya estan indexados como nodos `Section` — consultables con
 > `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`. Este ADR no los duplica.
 >
@@ -69,7 +69,8 @@ Anclas: `src/lib/data/claves.ts`, `src/lib/data/transacciones.ts::ejecutarTransa
 Descartado: la fila sobre el vehiculo.
 Razon: un vehiculo se reoferta en varias convocatorias. Con la fila sobre el lote, cada
 reoferta empieza limpia sin arrastrar historia, y el auditor conserva las dos por separado.
-Anclas: `src/lib/data/claves.ts::lote`, `src/lib/fila/prototipoDeFila.ts`.
+Anclas: `src/lib/data/claves.ts::lote`, `src/lib/fila/solicitarCompra.ts`,
+`src/lib/fila/adjudicarLote.ts`.
 
 ### D-4 — TypeScript strict
 Descartado: JavaScript con JSDoc, como el proyecto hermano.
@@ -82,7 +83,8 @@ Anclas: `tsconfig.json`, `src/types/`.
 Descartado: guardar `turno` como atributo y ordenar al leer.
 Razon: con `SOL#<turno:010d>` la fila llega **ya ordenada**. No existe punto del codigo donde
 se pueda ordenar mal, porque nunca se ordena. Propiedad estructural, no convencion a recordar.
-Anclas: `src/lib/data/claves.ts`, `src/lib/fila/prototipoDeFila.ts::registrarSolicitud`.
+Anclas: `src/lib/data/claves.ts::solicitud`, `::turnoDesdeClave`,
+`src/lib/fila/solicitarCompra.ts::pedirTurno`.
 
 ### D-6 — Correo por outbox
 Descartado: enviar el correo dentro del flujo de adjudicacion.
@@ -142,15 +144,26 @@ Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
 | Ventana de venta **desnormalizada** en el lote | Permite condicionar la escritura a "la venta esta abierta" sin leer la convocatoria; sin la copia habria que leer-y-decidir, que es justo lo prohibido |
 | Items **centinela** para unicidad | `attribute_not_exists` sobre un item dedicado convierte reglas de negocio en garantias de la base de datos |
 | Eventos de auditoria en la **misma tabla** | Unico modo de escribirlos en la misma `TransactWriteItems` que la mutacion |
+| T2 condiciona ademas `estatus = EN_OFERTA` | Un lote `NO_VENDIDO` cierra **sin** `adjudicacionActual`: con la condicion original, una adjudicacion en vuelo podia entregarlo despues de concluida la convocatoria |
+| T2 lleva el vehiculo a `RESERVADO` en la misma transaccion | Sin ese item `RESERVADO` es inalcanzable y T4 no tiene transicion valida al vender. No reintroduce la contencion de R18: el vehiculo se toca una vez por adjudicacion, no una por solicitud |
+| La cancelacion libera y **vuelve a llamar a T2**, sin intercambio atomico | T5 debe ser atomico porque lo dispara un barrido sobre un plazo vencido; la cancelacion reutiliza el camino ya probado de la adjudicacion. La ventana que abre ya existe: T1 tampoco puede adjudicar dentro de su transaccion |
+| Los nueve eventos de la fila se anclan a `AUDIT#LOTE#<loteId>` | "Reconstruir la fila" es una `Query` por lote; anclar `SOLICITUD_CREADA` a la solicitud obligaria a una consulta por participante |
 
 Centinelas: vehiculo activo (R-10), fila (R-07), adjudicacion activa (R-09), reserva de turno
 (R18). Transacciones criticas T1–T8 en `modelo-datos-dynamodb.md` seccion 6 (linea 258).
 
 **R18 — la carrera entre el turno y su visibilidad** quedo cerrada con evidencia
-(`modelo-datos-dynamodb.md` linea 351; commit `c1dabfc`). El motor de fila vive hoy en
-`src/lib/fila/prototipoDeFila.ts` — es prototipo verificado contra el sandbox, **no** el
-servicio de produccion. Prueba de concurrencia en
-`src/lib/fila/prototipoDeFila.integracion.test.ts::carreraControlada`.
+(`modelo-datos-dynamodb.md` linea 351; commit `c1dabfc`). El prototipo que la decidio sigue en
+`src/lib/fila/prototipoDeFila.ts`, detras de `PROTOTIPO_R18=1`: es el registro reproducible de
+la decision, no codigo de produccion.
+
+**El motor de fila de produccion es la Etapa 8**, en `src/lib/fila/`: `solicitarCompra.ts` (T1,
+tres escrituras con la reserva antes del contador), `adjudicarLote.ts` (T2, escritura
+condicional con abstencion por reservas y congelamiento por R-09), `cancelarSolicitud.ts`,
+`descongelarSolicitudes.ts`, `cerrarFilaDelLote.ts` (R-18) y `consultarMiLugar.ts` (DTO sin
+identidades, R-12). La regresion permanente de la regla 16 es
+`src/lib/fila/fila.integracion.test.ts`, que **si vive en la compuerta** y corre contra DynamoDB
+real asumiendo el rol de computo SSR.
 
 ## Decisiones de negocio registradas
 
@@ -166,6 +179,8 @@ Fuente: `agent_files/proyecto.md` seccion 8 (linea 373).
 | El lote es la entidad de la fila | Fila a nivel de vehiculo | Reofertar sin arrastrar historia previa |
 | 404 en lugar de 403 para lo no visible (R-01) | 403 explicito | No revelar la existencia de convocatorias no publicadas |
 | La vista de dictamen es la pantalla de detalle; `/aprobaciones` es solo la bandeja | Una ruta `/aprobaciones/[id]` con su propia vista | Las acciones se derivan de la maquina de estados y del permiso de quien mira, asi que la pantalla de detalle ya **es** la de dictamen. Dos vistas del mismo dictamen se separarian al primer cambio |
+| El descongelamiento de R-09 se implementa con la cancelacion (Etapa 8), no con el barrido (Etapa 10) | Dejarlo para la Etapa 10, como decia el plan | La cancelacion tambien hace perder una adjudicacion: enviar la mitad congeladora de la regla sin la que la deshace dejaria a esos participantes fuera de sus otras filas para siempre |
+| `cancelarSolicitud` no recibe `solicitudId` | Aceptarlo del cliente, como decia el contrato | Se parte del centinela de fila, indexado por el participante de la sesion: cancelar la de otro deja de ser una guarda que se pueda olvidar y pasa a ser una clave que no se puede construir |
 
 ## Catalogo de permisos
 
@@ -227,7 +242,11 @@ permite el cliente falso `src/utils/clienteDynamoFalso.ts` en pruebas.
   y escribe `185.000 MXN`, donde el punto es lo que un lector mexicano toma por decimales.
   Ancla: `src/lib/domain/dinero.ts::formatearPrecio`.
 - Nada sin publicar entra a cache estatica: las rutas dependen de `publicadaEn`; `Suspense` con
-  lectura dinamica o `cacheLife` corto con `revalidateTag` disparado por la publicacion.
+  lectura dinamica o `cacheLife` corto con `revalidateTag` disparado por la publicacion. Las
+  rutas de participante de las Etapas 7 y 8 son `dynamic = "force-dynamic"`.
+- La cuenta regresiva la calcula el servidor y el cliente solo decrementa; al llegar a cero
+  revalida contra el servidor y nunca habilita nada con el reloj del navegador (R-04).
+  Ancla: `src/components/CuentaRegresiva.tsx`.
 - URLs firmadas de CloudFront: firmar en SSR, nunca persistir en base de datos ni generar
   dentro de un bloque `"use cache"`.
 Anclas de gating: `src/lib/domain/gating.ts::evaluarVisibilidad`,
@@ -251,6 +270,12 @@ Procedimiento cuando cambia `agent_files/`, `CLAUDE.md` o `AGENTS.md`:
 Despues de **cualquier** `index_repository`, aunque no haya cambiado la documentacion, repetir
 el paso 3 o el ADR queda perdido en el grafo. Verificar con `manage_adr(mode="sections")`: si
 devuelve `[]`, se borro.
+
+> **El reindexado no ve el trabajo sin commit.** El grafo se ancla al `head_sha`, asi que
+> `index_repository` sobre un arbol con cambios sin confirmar devuelve el mismo conteo de nodos
+> y los simbolos nuevos no aparecen — medido en la Etapa 8: 2143 nodos antes y despues de
+> agregar dieciocho archivos. Reindexar **despues** de confirmar; hasta entonces, el grafo
+> describe el commit anterior y hay que leer el archivo.
 
 El hook `.claude/hooks/adr-doc-sync` avisa al editar estos documentos. El avance de
 `plan-ejecucion.md` no toca el ADR: aqui van decisiones, no progreso.

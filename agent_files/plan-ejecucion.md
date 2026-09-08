@@ -3,12 +3,15 @@
 Fuente de verdad del avance del proyecto. Cada etapa se marca `[x]` solo cuando **todos** sus
 entregables estan hechos y su compuerta de calidad pasa en verde.
 
-> Ultima actualizacion: 2026-09-07 — **Etapas 0 a 6 completadas**, incluida la Etapa 2.1 de
+> Ultima actualizacion: 2026-09-08 — **Etapas 0 a 8 completadas**, incluida la Etapa 2.1 de
 > correcciones (autorizacion por permisos, guardas cerradas por omision, CSP y bitacora), el
 > **prototipo concurrente de la fila**, que cierra el riesgo **R18** y corrige T1, T2 y T8 del
-> modelo de datos, la **Etapa 5 (administracion de vehiculos)** y la **Etapa 6 (convocatorias:
-> ciclo completo de borrador a publicada, con lotes y aprobacion)**. Siguiente: **Etapa 7 —
-> Catalogo para participantes**.
+> modelo de datos, la **Etapa 5 (administracion de vehiculos)**, la **Etapa 6 (convocatorias:
+> ciclo completo de borrador a publicada, con lotes y aprobacion)**, la **Etapa 7 (catalogo de
+> participante, gating triple siempre 404, sin cache estatica)** y la **Etapa 8 (motor de fila:
+> turno por contador atomico, adjudicacion por escritura condicional, R-07, R-09, R-17 y R-18,
+> con prueba de concurrencia permanente contra DynamoDB real)**. Siguiente: **Etapa 9 —
+> Comprobante de pago y tesoreria**.
 
 ---
 
@@ -561,42 +564,86 @@ el sandbox, que depende de credenciales.
 
 ---
 
-> **Pendiente heredado de la Etapa 6:** la descripcion de participacion se guarda como HTML del
-> editor enriquecido, validado contra lista de permitidos en el servidor. Para mostrarla hace
-> falta `eden-html-fragment`, que renderiza HTML como componentes React sin
-> `dangerouslySetInnerHTML`. **No filtra** —se midio, ver `desafios-implementacion.md` 27—, pero
-> con la lista de permitidos aplicada al guardar, lo almacenado ya es seguro. Se instala aqui,
-> cuando exista la pantalla que lo use.
+> **Pendiente heredado de la Etapa 6, cerrado en la Etapa 7.** La descripcion de participacion se
+> guarda como HTML del editor enriquecido, validado contra lista de permitidos en el servidor.
+> `eden-html-fragment` la renderiza sin `dangerouslySetInnerHTML` en `/convocatorias/[id]`. **No
+> filtra** —se midio, ver `desafios-implementacion.md` 27—, pero con la lista de permitidos
+> aplicada al guardar, lo almacenado ya es seguro.
 
-## Etapa 7 — Catalogo para participantes
+## Etapa 7 — Catalogo para participantes ✅
 
 **Objetivo:** que un participante vea exactamente lo que le corresponde ver, y nada mas.
 
 **Dependencias:** Etapa 6.
 
-- [ ] Listado de convocatorias visibles con **gating triple en servidor** (regla 8):
-      `estatus = PUBLICADA`, `publicadaEn <= ahora`, y tipo `EMPLEADOS` solo para `EMPLEADO`
-- [ ] Detalle de convocatoria con la hora de inicio de venta en zona horaria de negocio
-- [ ] Detalle de vehiculo con galeria de fotografias (`eden-media-thumbnail-gallery`)
-- [ ] Cuenta regresiva a la apertura de venta, calculada contra hora de servidor
-- [ ] Mobile-first: CardView en movil, tabla en desktop (regla 12)
-- [ ] Etiquetas por diccionario, sin ENUMs crudos (regla 11)
-- [ ] Sin cache estatica en rutas que dependen de `publicadaEn` (regla 14)
-- [ ] Tests de gating: sin `Autob_Venta_a_empleados` **no** se ve una convocatoria de empleados aunque se conozca
-      la URL directa
+- [x] Listado de convocatorias visibles con **gating triple en servidor** (regla 8):
+      `estatus = PUBLICADA`, `publicadaEn <= ahora`, y tipo `EMPLEADOS` solo para `EMPLEADO`.
+      `listarConvocatoriasVisibles` (PA-05): `Query` GSI2 con `gsi2.cotaSuperiorPorFecha` como
+      cota superior inclusiva (`desafios-implementacion.md` 29) y tipo filtrado en memoria
+- [x] Detalle de convocatoria con la hora de inicio de venta en zona horaria de negocio
+      (`/convocatorias/[id]`), descripcion completa con `eden-html-fragment` (pendiente
+      heredado de la Etapa 6)
+- [x] Detalle de vehiculo con galeria de fotografias (`eden-media-thumbnail-gallery`) —
+      `/convocatorias/[id]/lotes/[loteId]`, con `GaleriaPublica` y URLs firmadas en SSR
+- [x] Cuenta regresiva a la apertura de venta, calculada contra hora de servidor —
+      `CuentaRegresiva`: el servidor calcula los segundos iniciales, el cliente solo decrementa,
+      y al llegar a cero revalida con `router.refresh()` (nunca habilita nada localmente)
+- [x] Mobile-first: `CardView` en movil, tabla en desktop (regla 12) en el listado; la rejilla
+      de lotes usa `eden-grid` (1/2/3 columnas por breakpoint), que ya es mobile-first por diseno
+- [x] Etiquetas por diccionario, sin ENUMs crudos (regla 11) — seccion `catalogo` nueva en
+      `es.json`/`en.json`
+- [x] Sin cache estatica en rutas que dependen de `publicadaEn` (regla 14) — las tres rutas
+      nuevas usan `dynamic = "force-dynamic"`, igual que las pantallas administrativas
+- [x] Tests de gating: sin `Autob_Venta_a_empleados` **no** se ve una convocatoria de empleados
+      aunque se conozca la URL directa — cubierto por la invariante 4 de
+      `permission-matrix.md` (ya probada desde la Etapa 2.1) mas los tests nuevos de
+      `listarConvocatoriasVisibles`. Las paginas nuevas no discriminan por codigo de error:
+      **cualquier** fallo de `exigirPermiso` termina en `notFound()`, nunca en `forbidden()`
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Acceso directo por URL a una convocatoria no publicada devuelve 404, no el contenido
-- [ ] Ninguna respuesta incluye datos de convocatorias que el usuario no deberia ver
-- [ ] Revision de accesibilidad con axe sin violaciones
+- [x] Compuerta de calidad completa en verde — 1308 pruebas, `typecheck` y `build` limpios
+- [x] Acceso directo por URL a una convocatoria no publicada devuelve 404, no el contenido —
+      por construccion: las paginas de detalle solo comprueban `permiso.ok`, nunca la razon
+- [x] Ninguna respuesta incluye datos de convocatorias que el usuario no deberia ver — el
+      gating ocurre **dentro** de la consulta (PA-05), nunca como filtro posterior
+- [x] Revision de accesibilidad con axe sin violaciones — `genericTests` en los cinco
+      componentes nuevos (`CatalogoConvocatorias`, `RejillaDeLotes`, `GaleriaPublica`,
+      `FichaTecnicaVehiculo`, `CuentaRegresiva`)
 
-**Salida esperada:** catalogo navegable y correctamente restringido.
+**Salida esperada:** catalogo navegable y correctamente restringido. **Cumplida.**
+
+**Decisiones que se tomaron aqui y no estaban en el plan:**
+
+- **El bloque de accion de la pantalla 3.3 no se construye en esta etapa.** "Solicitar
+  compra", el lugar en la fila y el plazo de pago (`ui-ux-requerimientos.md` 3.4) dependen de
+  `MiLugarDTO` y de `solicitarCompra`, que la Etapa 8 no ha escrito todavia. Antes de esa etapa
+  no existe ninguna solicitud, asi que ese bloque habria sido botones que siempre responden
+  `invalid_state` o un estado vacio sin nada que probar — el mismo argumento que dejo fuera la
+  vista administrativa del lote en la Etapa 6. Lo que si se construyo —galeria, identificacion,
+  ficha tecnica y el aviso de fase de venta— no depende de la fila y ya es util hoy
+- **`tamanoFila` se lee con la misma `Query` `Select: COUNT` que usara la Etapa 8**
+  (`consultarTamanoFila`, PA-07), no con un `0` fijo. Antes de la Etapa 8 no existe ningun item
+  `SOL#`, asi que hoy siempre cuenta cero — pero es la lectura real, no un valor de relleno que
+  habria que recordar reemplazar despues
+- **El conteo de lotes del listado (`cantidadDeLotes`) se resuelve con una lectura por
+  convocatoria** (`obtenerConvocatoria`, PA-04), igual que el detalle administrativo hace con los
+  vehiculos de sus lotes. No hay un contador desnormalizado en la convocatoria: el volumen es el
+  mismo "decenas" que ya acepta `modelo-datos-dynamodb.md` para el listado administrativo
+- **`gsi2.cotaSuperiorPorFecha`** se agrego a `claves.ts` porque `GSI2SK <= ahora` a secas
+  excluye por error un item publicado en el mismo instante (`desafios-implementacion.md` 29):
+  `GSI2SK` es `<fecha>#<id>` y la cadena con sufijo ordena despues que su propio prefijo
+- **`eden-accordion`, `eden-media-thumbnail-gallery` y `eden-html-fragment`** se instalaron en
+  esta etapa: son los tres paquetes que la pantalla 3.3 exigia y que no tenian consumidor hasta
+  ahora. `eden-html-fragment` cierra ademas el pendiente heredado de la Etapa 6 (mostrar la
+  descripcion enriquecida sin `dangerouslySetInnerHTML`)
+
+**Pendiente heredado por el operador:** ninguno nuevo. El recorrido de punta a punta contra el
+sandbox sigue las mismas credenciales que ya bloquean las Etapas 5 y 6.
 
 ---
 
-## Etapa 8 — Motor de fila y adjudicacion
+## Etapa 8 — Motor de fila y adjudicacion ✅
 
 > **Etapa de mayor riesgo tecnico del proyecto.** Aqui vive la equidad del sistema.
 > Se recomienda trabajarla con el modelo mas capaz disponible.
@@ -610,7 +657,7 @@ el sandbox, que depende de credenciales.
       (`npm run prototipo:fila`, 20 pruebas). Reprodujo el defecto de forma determinista,
       descarto el mecanismo que este plan proponia y valido el que lo sustituye. **T1 quedo
       reescrito**; los tres hallazgos estan en `desafios-implementacion.md` seccion 17
-- [ ] **Cerrar las filas al concluir (R-18)** — lo que la Etapa 6 dejo declarado.
+- [x] **Cerrar las filas al concluir (R-18)** — lo que la Etapa 6 dejo declarado.
       `concluirConvocatoria` ya cierra los lotes, libera los centinelas y devuelve los vehiculos
       a `DISPONIBLE`, pero **no toca las solicitudes**: en la Etapa 6 no existen todavia, asi que
       ese codigo no habria tenido ninguna prueba que lo ejercitara. Falta que las `EN_FILA` y
@@ -618,77 +665,122 @@ el sandbox, que depende de credenciales.
       `EN_VERIFICACION` **sobreviva con su plazo intacto** — quien gano antes del cierre tiene
       derecho a terminar de pagar. Sin esto, concluir deja participantes en una fila que ya no
       va a avanzar
-- [ ] `src/lib/fila/solicitarCompra.ts` — en **tres escrituras**, segun T1 de
+- [x] `src/lib/fila/solicitarCompra.ts` — en **tres escrituras**, segun T1 de
       `modelo-datos-dynamodb.md` ya corregido por el prototipo:
-  - [ ] `Put` de la reserva de turno `LOTE#<id>/RESERVA#<reservaId>` **antes** del contador.
+  - [x] `Put` de la reserva de turno `LOTE#<id>/RESERVA#<reservaId>` **antes** del contador.
         El orden es la garantia: al reves queda abierta la ventana de R18
-  - [ ] `ADD` atomico al contador de turnos **del lote** para obtener `turno` (regla 3).
+  - [x] `ADD` atomico al contador de turnos **del lote** para obtener `turno` (regla 3).
         No puede ir en la transaccion: `TransactWriteItems` **no devuelve valores**, asi que el
         turno que produce un `ADD` no se puede usar como clave de un `Put` de la misma
         transaccion
-  - [ ] Condicion del `ADD`: `(estatus = EN_OFERTA OR estatus = ADJUDICADO)` mas la ventana de
+  - [x] Condicion del `ADD`: `(estatus = EN_OFERTA OR estatus = ADJUDICADO)` mas la ventana de
         venta. **No exigir `EN_OFERTA` a secas**: cerraria la fila en la primera adjudicacion y
         haria inalcanzable R-17
-  - [ ] Item de solicitud con `turno`, `solicitadoEn` informativo y estado `EN_FILA`
-  - [ ] Condicion de unicidad: el participante no puede tener dos solicitudes en el mismo lote
-  - [ ] `Delete` de la reserva dentro de la transaccion, con `attribute_exists(SK)`
-  - [ ] **Sin `ConditionCheck` sobre la convocatoria**: cancelaba entre 5 y 7 de cada 10
+  - [x] Item de solicitud con `turno`, `solicitadoEn` informativo y estado `EN_FILA`
+  - [x] Condicion de unicidad: el participante no puede tener dos solicitudes en el mismo lote
+  - [x] `Delete` de la reserva dentro de la transaccion, con `attribute_exists(SK)`
+  - [x] **Sin `ConditionCheck` sobre la convocatoria**: cancelaba entre 5 y 7 de cada 10
         solicitudes concurrentes. La publicacion parcial se cierra en T8, por orden de
         propagacion
-  - [ ] Evento de auditoria en la misma transaccion, con `attribute_not_exists(PK)` (regla 4)
-  - [ ] Compensacion de mejor esfuerzo: si el paso 1 o el paso 2 fallan, borrar la reserva
-- [ ] `src/lib/fila/adjudicar.ts` — adjudicacion por **escritura condicional**
+  - [x] Evento de auditoria en la misma transaccion, con `attribute_not_exists(PK)` (regla 4)
+  - [x] Compensacion de mejor esfuerzo: si el paso 1 o el paso 2 fallan, borrar la reserva
+- [x] `src/lib/fila/adjudicar.ts` — adjudicacion por **escritura condicional**
       `attribute_not_exists(adjudicacionActual)`, jamas leer-y-decidir (regla 6)
-  - [ ] Abstencion previa por reservas vigentes (R18), leyendo **las reservas antes que la
+  - [x] Abstencion previa por reservas vigentes (R18), leyendo **las reservas antes que la
         fila**. Esa lectura solo puede detener, nunca conceder
-  - [ ] Depuracion de reservas mas viejas que el umbral
-  - [ ] Reintento con jitter ante `TransactionConflict` sobre el item del lote: no dice quien
+  - [x] Depuracion de reservas mas viejas que el umbral
+  - [x] Reintento con jitter ante `TransactionConflict` sobre el item del lote: no dice quien
         gano, asi que decidir seria adivinar
-- [ ] Regla de una sola adjudicacion activa por participante: item de control y condicion
+- [x] Regla de una sola adjudicacion activa por participante: item de control y condicion
       adicional en la transaccion; las demas solicitudes del ganador pasan a `CONGELADA`
-- [ ] `src/lib/fila/consultarMiLugar.ts` — DTO que expone **unicamente** `miTurno`,
+- [x] `src/lib/fila/consultarMiLugar.ts` — DTO que expone **unicamente** `miTurno`,
       `miPosicion` y `tamanoFila` (regla 7)
-- [ ] Cancelacion voluntaria del participante y su efecto sobre la fila
-- [ ] Pantalla de fila con el lugar propio y el tamano de la fila
-- [ ] **Vista administrativa del lote** `/admin/convocatorias/[id]/lotes/[loteId]/fila`
+- [x] Cancelacion voluntaria del participante y su efecto sobre la fila
+- [x] Pantalla de fila con el lugar propio y el tamano de la fila
+- [x] **Vista administrativa del lote** `/admin/convocatorias/[id]/lotes/[loteId]/fila`
       (`ui-ux-requerimientos.md` 4.5), que la Etapa 6 dejo fuera a proposito: todo lo que muestra
       —adjudicacion vigente, `venceEn`, `tamanoFila`— lo escribe el motor de fila, y antes de
       esta etapa habria sido una pantalla de campos vacios sin nada que probar. Muestra
       **agregados, nunca identidades**: la fila completa es exclusiva del auditor
       (`permission-matrix.md` seccion 4)
-- [ ] `src/app/actions/fila.ts`
+- [x] `src/app/actions/fila.ts`
 
 **Pruebas obligatorias de esta etapa** (regla 16):
 
-- [ ] **Concurrencia:** N solicitudes simultaneas sobre el mismo lote producen turnos
+- [x] **Concurrencia:** N solicitudes simultaneas sobre el mismo lote producen turnos
       **unicos y estrictamente crecientes**. Los huecos son legitimos: un turno consumido por
       una transaccion que despues falla no se reutiliza (ver seccion 6 de
       `modelo-datos-dynamodb.md`). La equidad depende del orden relativo, no de la contiguidad
-- [ ] **Adjudicacion unica:** N intentos simultaneos de adjudicacion producen exactamente
+- [x] **Adjudicacion unica:** N intentos simultaneos de adjudicacion producen exactamente
       **un** ganador
-- [ ] **Orden:** el ganador es siempre el de `turno` menor, nunca el de `solicitadoEn` menor
+- [x] **Orden:** el ganador es siempre el de `turno` menor, nunca el de `solicitadoEn` menor
       (probar con timestamps deliberadamente desordenados)
-- [ ] **Intercalacion (R18):** la prueba debe entrelazar solicitud y adjudicacion, no adjudicar
+- [x] **Intercalacion (R18):** la prueba debe entrelazar solicitud y adjudicacion, no adjudicar
       despues de que todas las solicitudes terminaron. Con esa segunda forma la carrera no se
       ejerce y el defecto pasa. **Confirmado por medicion:** en once rondas de rafaga contra el
       diseno defectuoso, la adjudicacion la gano el turno 1 todas las veces. La prueba de esta
       etapa debe incluir una pausa deliberada entre las escrituras, como hace el prototipo
-- [ ] **Sin rechazos por contencion:** N solicitudes simultaneas entran **las N**. Un
+- [x] **Sin rechazos por contencion:** N solicitudes simultaneas entran **las N**. Un
       participante rechazado con `conflicto_concurrencia` en `inicioVenta` es un defecto de
       diseno, no una carrera aceptable (desafios-implementacion.md seccion 17)
-- [ ] **Fila abierta con el lote adjudicado (R-17):** quien solicita despues de la primera
+- [x] **Fila abierta con el lote adjudicado (R-17):** quien solicita despues de la primera
       adjudicacion obtiene turno y entra a la fila
-- [ ] **Privacidad:** test que **falla** si el DTO de fila contiene `participanteId`, correo o
+- [x] **Privacidad:** test que **falla** si el DTO de fila contiene `participanteId`, correo o
       nombre de un tercero
-- [ ] **Auditoria:** cada solicitud y cada adjudicacion tiene su evento correspondiente
-- [ ] **Atomicidad:** si el evento de auditoria no se puede escribir, la mutacion no ocurre
+- [x] **Auditoria:** cada solicitud y cada adjudicacion tiene su evento correspondiente
+- [x] **Atomicidad:** si el evento de auditoria no se puede escribir, la mutacion no ocurre
+
+Las diez viven en `src/lib/fila/fila.integracion.test.ts`, **contra DynamoDB real y sobre el
+codigo de produccion**, y corren en la compuerta —no detras de una bandera como el prototipo—.
+Un doble del cliente no puede decidir ninguna de ellas: solo comprobaria que el doble coincide
+consigo mismo.
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Las pruebas de concurrencia corren repetidamente sin resultados intermitentes
+- [x] Compuerta de calidad completa en verde — 1441 pruebas, `typecheck` y `build` limpios
+- [x] Las pruebas de concurrencia corren repetidamente sin resultados intermitentes — cinco
+      corridas completas del archivo de integracion, 20 de 20 cada vez. La duracion si varia
+      (45 s a 143 s) porque la tabla bajo demanda estrangula la primera rafaga cuando lleva rato
+      fria; el limite de la prueba se puso holgado para que esa lentitud no se lea como un fallo
+- [x] Las dos rondas de rafaga usan participantes distintos, y eso importa: reusarlos hacia que
+      R-09 congelara al ganador de la ronda anterior — el sistema acertaba y la prueba mentia
+      (`desafios-implementacion.md` 30)
 
-**Salida esperada:** motor de fila demostrablemente justo bajo concurrencia.
+**Salida esperada:** motor de fila demostrablemente justo bajo concurrencia. **Cumplida.**
+
+**Decisiones que se tomaron aqui y no estaban en el plan:**
+
+- **T2 gano dos items.** La condicion del lote incluye `estatus = EN_OFERTA`, porque un lote
+  `NO_VENDIDO` cierra sin `adjudicacionActual` y la condicion original lo habria dejado adjudicar
+  despues de concluida la convocatoria. Y la transaccion lleva el vehiculo a `RESERVADO`: sin ese
+  item ese estatus era inalcanzable y T4 no tendria transicion valida al vender
+  (`modelo-datos-dynamodb.md` T2).
+- **El congelamiento por R-09 escribe dos eventos**, no uno: `SOLICITUD_CONGELADA` explica el
+  cambio de estado y `SOLICITUD_OMITIDA` explica, en la historia del lote, por que la
+  adjudicacion siguio con un turno mayor. Sin el segundo, la comprobacion 2 de integridad veria
+  un salto injustificado.
+- **La cancelacion no usa la forma atomica de T5.** Libera en una transaccion y despues llama a
+  T2, el mismo camino de cualquier solicitud nueva. T5 tiene que ser atomico porque lo dispara un
+  barrido sobre un plazo vencido; aqui reutilizar T2 —con su abstencion, su congelamiento y sus
+  reintentos— vale mas que replicar esa logica. La ventana que abre ya existe en el diseno
+  (`modelo-datos-dynamodb.md` T5b).
+- **El descongelamiento de R-09 se implemento aqui y no en la Etapa 10.** El plan lo situaba
+  alla, pero la cancelacion —que es de esta etapa— tambien hace perder una adjudicacion: dejarlo
+  para despues habria significado enviar la mitad congeladora de la regla sin la mitad que la
+  deshace. `descongelarSolicitudes` lo reusaran T5 y T6.
+- **`cancelarSolicitud` no recibe `solicitudId`.** Parte del centinela de fila, indexado por el
+  participante de la sesion: cancelar la de otro deja de ser una guarda que alguien pueda olvidar
+  y pasa a ser una clave que no se puede construir (`api-contracts.md` 4).
+- **Las lecturas de la fila no son Server Actions.** `consultarMiLugar` y `consultarTamanoFila`
+  los llaman los Server Components directamente, como el resto de las lecturas del sistema.
+- **`identificadorDeSolicitud` vive en `claves.ts`.** No es una clave, pero es el `agregadoId` de
+  la bitacora: si dos sitios lo derivaran distinto, la historia de una solicitud quedaria partida
+  en dos, y como la bitacora es append-only, partida para siempre.
+
+**Fuera de esta etapa a proposito:** `/mis-solicitudes` (`ui-ux-requerimientos.md` 3.5) y la
+subida de comprobante. La pantalla del participante muestra `EN_VERIFICACION`, `VENDIDA` y el
+plazo porque el DTO ya los distingue, pero **el boton de subir comprobante es de la Etapa 9**,
+con tesoreria.
 
 ---
 
@@ -730,7 +822,16 @@ el sandbox, que depende de credenciales.
 - [ ] Barrido programado **idempotente**: ejecutarlo dos veces no produce doble efecto
 - [ ] **Verificacion perezosa**: al leer una fila, si la adjudicacion vigente ya vencio, se
       resuelve en ese momento; el barrido es red de seguridad, no unica defensa (riesgo R6)
-- [ ] Descongelamiento de las solicitudes `CONGELADA` del participante que perdio su adjudicacion
+- [x] Descongelamiento de las solicitudes `CONGELADA` del participante que perdio su adjudicacion
+      — **adelantado a la Etapa 8**: la cancelacion tambien hace perder una adjudicacion, y
+      enviar la mitad congeladora de R-09 sin la que la deshace habria dejado a esos
+      participantes fuera de sus otras filas para siempre. `src/lib/fila/descongelarSolicitudes.ts`
+      lo reusan T5 y T6 sin cambios
+- [ ] **Recoger los lotes libres con fila viva.** T1 y la cancelacion no pueden adjudicar dentro
+      de su propia transaccion —`TransactWriteItems` no devuelve valores—, asi que un proceso
+      que muera entre las dos escrituras deja un lote `EN_OFERTA` con candidatos y sin nadie que
+      dispare la adjudicacion. Hoy lo resuelve la siguiente solicitud; el barrido deberia
+      recogerlo junto con los vencimientos (`modelo-datos-dynamodb.md` T5b)
 - [ ] `src/lib/correo/` — patron **outbox**: el correo se encola, nunca participa en la
       transaccion critica (riesgo R8)
 - [ ] Correo de adjudicacion con los datos de pago y el plazo

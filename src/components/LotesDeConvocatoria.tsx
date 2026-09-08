@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import Link from "next/link";
 import { Error as AlertaError, Success } from "@churchofjesuschrist/eden-alert";
 import { Badge } from "@churchofjesuschrist/eden-badge";
 import { Danger, Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
@@ -233,6 +234,14 @@ const LotesDeConvocatoria = ({
                     </Badge>
                   </TD>
                   <TD>
+                    {/* La fila del lote se consulta desde que existe el motor
+                        que la escribe (Etapa 8). Muestra agregados, nunca
+                        identidades. */}
+                    <Link
+                      href={`/admin/convocatorias/${convocatoriaId}/lotes/${lote.loteId}/fila`}
+                    >
+                      {diccionario.filaAdministrativa.titulo}
+                    </Link>
                     {!editable ||
                     lote.estatus === "RETIRADO" ? null : lote.puedeRetirarse ? (
                       <Danger

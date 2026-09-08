@@ -383,6 +383,39 @@ describe("GSI2 — particion de un estatus completo", () => {
   });
 });
 
+describe("GSI2 — cota superior de PA-05", () => {
+  it("incluye un item publicado exactamente en el instante de la cota", () => {
+    // El caso que un `GSI2SK <= ahora` a secas se equivocaria: la fecha exacta
+    // con cualquier id debe seguir siendo `<=` que la cota.
+    const ahora = "2026-09-10T14:00:00.000Z";
+    const sk = gsi2.porEstatus("CONV", "PUBLICADA", ahora, "C1").GSI2SK;
+    expect(sk <= gsi2.cotaSuperiorPorFecha(ahora)).toBe(true);
+  });
+
+  it("excluye un item publicado un milisegundo despues", () => {
+    const sk = gsi2.porEstatus(
+      "CONV",
+      "PUBLICADA",
+      "2026-09-10T14:00:00.001Z",
+      "C1",
+    ).GSI2SK;
+    expect(sk <= gsi2.cotaSuperiorPorFecha("2026-09-10T14:00:00.000Z")).toBe(
+      false,
+    );
+  });
+
+  it("es mayor que cualquier id del alfabeto de ULID a esa fecha", () => {
+    const ahora = "2026-09-10T14:00:00.000Z";
+    const cota = gsi2.cotaSuperiorPorFecha(ahora);
+    for (const letra of "0123456789ABCDEFGHJKMNPQRSTVWXYZ") {
+      expect(
+        gsi2.porEstatus("CONV", "PUBLICADA", ahora, letra.repeat(26)).GSI2SK <=
+          cota,
+      ).toBe(true);
+    }
+  });
+});
+
 describe("GSI3 — mis solicitudes", () => {
   it("agrupa por participante y ordena por fecha", () => {
     expect(

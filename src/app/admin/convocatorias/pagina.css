@@ -14,3 +14,21 @@
   gap: 1rem;
   justify-content: space-between;
 }
+
+/* Vista administrativa de la fila de un lote (pantalla 4.5). */
+.fila-lote__datos {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.fila-lote__datos div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.fila-lote__datos dd {
+  margin: 0;
+}

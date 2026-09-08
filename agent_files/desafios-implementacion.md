@@ -1608,3 +1608,104 @@ de apoyar una decision de correccion —que se envia, que se compara— en el va
 de un control de terceros, comprobar en el DOM que ese valor es el que se
 escribio. Vale para cualquier caso en que el valor "vacio", "cero" o "falso"
 tenga significado propio: es donde los `||` de una libreria hacen dano.
+
+## 29) `GSI2SK <= ahora` excluye por error los items publicados en el mismo instante
+
+### Problema
+
+PA-05 (Etapa 7, catalogo de participante) necesita `GSI2SK <= ahora` para la
+segunda pata del gating triple: `publicadaEn <= ahora`, inclusiva (R-01,
+`yaPublicada`).
+
+### Sintoma
+
+Al escribir la condicion de rango del `Query`, comparar directamente contra
+`ahora.toISOString()` excluye una convocatoria cuyo `publicadaEn` es
+exactamente igual a `ahora`. La condicion `yaPublicada` en memoria (`ventanas.ts`)
+dice que si deberia verse; la consulta de DynamoDB, que no.
+
+### Causa raiz
+
+`GSI2SK` no es la fecha sola: es `<fecha>#<id>` (`gsi2.porEstatus`). Comparar
+`"2026-09-10T14:00:00.000Z#01AB..." <= "2026-09-10T14:00:00.000Z"` es **falso**:
+la cadena con sufijo es lexicograficamente mayor que su propio prefijo, porque
+cualquier caracter despues del final de la mas corta la hace "mayor". El
+espejo en memoria (`ventanas.test.ts`) nunca iba a detectar esto: prueba
+`Date.getTime()`, no la comparacion de cadenas que hace DynamoDB.
+
+### Solucion aplicada
+
+`gsi2.cotaSuperiorPorFecha(fecha)` en `claves.ts` devuelve `"<fecha>#￿"`.
+`￿` es mayor que cualquier caracter del alfabeto de ULID (Crockford:
+digitos y mayusculas sin I/L/O/U, todo por debajo de `Z`), asi que ningun `id`
+real supera esa cota y la comparacion queda inclusiva en la fecha:
+
+```ts
+KeyConditionExpression: "GSI2PK = :pk AND GSI2SK <= :cota",
+ExpressionAttributeValues: {
+  ":cota": gsi2.cotaSuperiorPorFecha(ahoraIso),
+},
+```
+
+Prueba de frontera en `claves.test.ts`: un item publicado en el instante exacto
+de la cota queda incluido; uno un milisegundo despues, excluido.
+
+### Regla para futuro
+
+**Una condicion de rango sobre una `SK` compuesta (`<fecha>#<id>`) nunca compara
+contra la fecha sola si se quiere inclusividad en la fecha.** Hace falta una
+cota que domine cualquier sufijo posible, no el valor sin sufijo. Aplica a
+cualquier GSI de este modelo con la misma forma —`GSI4SK` de vencimientos
+incluido, el dia en que necesite un limite superior inclusivo.
+
+## 30) El centinela de adjudicacion sobrevive a la prueba que lo creo
+
+### Problema
+
+La prueba de concurrencia de la Etapa 8 corre contra el sandbox y purga al
+terminar las particiones que creo: la convocatoria, el vehiculo y el lote.
+
+### Sintoma
+
+La primera corrida pasaba entera. **La segunda fallaba**, y de una forma que
+parecia un defecto grave del motor de fila: la reasignacion devolvia
+`fila_agotada` teniendo candidatos vivos, y en la rafaga ganaba el turno 2 con
+el turno 1 en la fila. La tercera volvia a fallar igual.
+
+### Causa raiz
+
+El centinela de adjudicacion activa vive en `PART#<participanteId> /
+ADJUDICACION_ACTIVA`, **fuera de las particiones del lote** — tiene que estar
+ahi, es lo que hace que R-09 valga entre lotes distintos—. La purga no lo
+borraba y los identificadores de participante de la prueba eran fijos
+(`e8-cancela`, `e8-part0`...), asi que la corrida siguiente encontraba a esos
+participantes con una adjudicacion activa **de la corrida anterior** y los
+congelaba.
+
+El sistema estaba haciendo exactamente lo correcto. La prueba era la que
+mentia. El mismo defecto aparecio dos veces: entre corridas del proceso y entre
+las dos rondas de la rafaga dentro de la misma corrida, porque las dos usaban
+los mismos nombres.
+
+### Solucion aplicada
+
+Identificadores de participante unicos por corrida **y por ronda**, y registro
+de `PART#<id>` entre las particiones a purgar:
+
+```ts
+const CORRIDA = randomUUID().slice(0, 8);
+
+const participante = (nombre: string): string => {
+  const id = `e8-${nombre}-${CORRIDA}`;
+  particionesCreadas.add(clave.centinelaAdjudicacion(id).PK);
+  return id;
+};
+```
+
+### Regla para futuro
+
+**Una prueba de integracion que crea estado con garantias que cruzan agregados
+no puede reutilizar identidades.** Antes de culpar al codigo por un fallo que
+solo aparece en la segunda corrida, revisar que items quedaron vivos de la
+primera: los centinelas son, por diseno, los que mas sobreviven. Vale igual
+para `VEH#<id> / ACTIVO` (R-10) y para `LOTE#<id> / PART#<id>` (R-07).

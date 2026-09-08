@@ -351,3 +351,39 @@ export const formatearEspera = (
   }
   return relativo.format(-Math.trunc(transcurrido / MINUTO_EN_MS), "minute");
 };
+
+/**
+ * Cuenta regresiva a un instante futuro, en dias y horas o en horas y minutos.
+ *
+ * **Solo dos unidades**, las mas significativas: "2 d 4 h" o "4 h 30 min", no
+ * "2 d 4 h 12 min 5 s". Es una cuenta regresiva de pantalla, no un cronometro;
+ * mostrar el segundo obligaria a decrementarla cada segundo tambien en la
+ * pared del reloj y no aporta nada que el participante vaya a actuar sobre eso.
+ *
+ * El formato de cada unidad sale de `Intl`, igual que `formatearPrecio` y
+ * `formatearEspera`: no hay una palabra en espanol ni en ingles escrita a mano
+ * en este archivo. Recibe **segundos ya calculados** y no dos `Date`, porque
+ * quien la llama es un componente cliente que decrementa un contador propio
+ * (regla de UX: "el cliente solo decrementa"; el servidor decide con su propio
+ * reloj cuando la venta abre de verdad).
+ */
+export const formatearCuentaRegresiva = (
+  segundosRestantes: number,
+  idioma: string,
+): string => {
+  const segundos = Math.max(0, Math.trunc(segundosRestantes));
+  const dias = Math.floor(segundos / 86_400);
+  const horas = Math.floor((segundos % 86_400) / 3_600);
+  const minutos = Math.floor((segundos % 3_600) / 60);
+
+  const unidad = (valor: number, unit: "day" | "hour" | "minute"): string =>
+    new Intl.NumberFormat(idioma, {
+      style: "unit",
+      unit,
+      unitDisplay: "short",
+    }).format(valor);
+
+  if (dias > 0) return `${unidad(dias, "day")} ${unidad(horas, "hour")}`;
+  if (horas > 0) return `${unidad(horas, "hour")} ${unidad(minutos, "minute")}`;
+  return unidad(minutos, "minute");
+};

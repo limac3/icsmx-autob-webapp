@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { desdeIso } from "./fechas";
 import {
+  calcularEstadoDeVentaUi,
   faseDeVenta,
   fechasCoherentes,
   puedeConcluirse,
@@ -149,6 +150,40 @@ describe("faseDeVenta", () => {
     expect(faseDeVenta(sinEspera, instante(INICIO_VENTA))).toBe(
       "VENTA_ABIERTA",
     );
+  });
+});
+
+describe("calcularEstadoDeVentaUi", () => {
+  it("antes de abrir, entrega los segundos restantes para la apertura", () => {
+    const ahora = new Date(instante(INICIO_VENTA).getTime() - 3_600_000);
+    const estado = calcularEstadoDeVentaUi(ventana, ahora);
+    expect(estado).toEqual({
+      fase: "PUBLICADA_SIN_ABRIR",
+      segundosParaAbrir: 3_600,
+    });
+  });
+
+  it("con la venta abierta, entrega la fecha de cierre ya formateada", () => {
+    const estado = calcularEstadoDeVentaUi(ventana, instante(INICIO_VENTA));
+    expect(estado.fase).toBe("VENTA_ABIERTA");
+    expect(estado).toHaveProperty("cierraFormateado");
+    if (estado.fase === "VENTA_ABIERTA") {
+      expect(typeof estado.cierraFormateado).toBe("string");
+      expect(estado.cierraFormateado.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("despues de cerrar, no entrega ningun dato extra", () => {
+    const estado = calcularEstadoDeVentaUi(ventana, unMsDespues(FIN_VENTA));
+    expect(estado).toEqual({ fase: "VENTA_CERRADA" });
+  });
+
+  it("nunca devuelve NO_VISIBLE: se trata como cerrada", () => {
+    // Las dos pantallas que la llaman ya pasaron el gating triple, asi que
+    // este caso no deberia ocurrir en produccion; el valor de respaldo no
+    // puede ser una fase que la union del tipo no admite.
+    const estado = calcularEstadoDeVentaUi(ventana, unMsAntes(PUBLICADA_EN));
+    expect(estado).toEqual({ fase: "VENTA_CERRADA" });
   });
 });
 

@@ -1,0 +1,18 @@
+/* Bloque de accion del detalle de lote. Solo layout; la apariencia la ponen
+   los componentes de Eden (regla 10). */
+
+.bloque-lote {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.bloque-lote__lugar {
+  font-weight: bold;
+}
+
+.bloque-lote__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}

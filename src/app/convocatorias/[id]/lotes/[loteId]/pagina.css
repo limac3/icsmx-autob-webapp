@@ -1,0 +1,17 @@
+/* Detalle del vehiculo de un lote. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.detalle-lote {
+  display: grid;
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.detalle-lote__identificacion {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.detalle-lote__precio {
+  font-weight: bold;
+}
