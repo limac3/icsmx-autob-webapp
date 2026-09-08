@@ -27,7 +27,16 @@ entregables estan hechos y su compuerta de calidad pasa en verde.
 > recalculada desde el evento crudo y contrastada contra el estado vigente de la tabla, y
 > exportacion a CSV auditada en el momento de la descarga; riesgo **R20** evaluado y diferido con
 > justificacion, no cerrado)**.
-> Siguiente: **Etapa 12 — Endurecimiento y despliegue**.
+>
+> La **Etapa 12 queda parcial, y su division es limpia**: lo que es codigo, configuracion o
+> analisis esta hecho y probado —observabilidad con trazas por `correlacionId`, seis alarmas de
+> CloudWatch verificadas por sintesis (que **cierran R6**), cabeceras de seguridad con la CSP ya
+> revisada en lugar de diferida, inventario de accesibilidad, revision de costos y capacidad de
+> DynamoDB, y el arnes de la prueba de carga—; lo que consiste en *mirar la aplicacion corriendo*
+> —navegador, AWS desplegado, correo entregado, cada runbook ejecutado una vez— sigue
+> **`[OPERADOR]`**, bloqueado por las mismas credenciales que bloquean la verificacion visual de
+> las Etapas 5 a 11.
+> Siguiente: **cerrar los puntos `[OPERADOR]` de la Etapa 12** — ninguno es codigo.
 
 ---
 
@@ -1153,29 +1162,176 @@ los permisos.
 
 ---
 
-## Etapa 12 — Endurecimiento y despliegue
+## Etapa 12 — Endurecimiento y despliegue — **parcial**
 
 **Objetivo:** listo para produccion.
 
 **Dependencias:** Etapa 11.
 
-- [ ] Accesibilidad: axe sin violaciones en todas las pantallas
-- [ ] Responsividad verificada en movil, tableta y escritorio
-- [ ] Cabeceras de seguridad y CSP
-- [ ] Observabilidad: registro estructurado, metricas y trazas de las operaciones criticas
-- [ ] Alarmas: barrido de vencimientos fallido, correos no entregados, errores de transaccion
-- [ ] Revision de costos y capacidad de DynamoDB
-- [ ] `runbooks.md` verificado ejecutando cada procedimiento al menos una vez
-- [ ] Diccionarios completos, sin claves faltantes
-- [ ] Despliegue a produccion y prueba de humo
+> **Lo que puede cerrarse aqui esta cerrado; el resto exige un entorno real y queda
+> `[OPERADOR]`.** La etapa se divide de forma limpia en dos mitades y conviene no confundirlas:
+> lo que es codigo, configuracion o analisis esta hecho y probado; lo que consiste en *mirar la
+> aplicacion corriendo* —navegador, AWS desplegado, correo entregado— no se puede hacer sin
+> credenciales que este entorno no tiene. Marcar esos puntos como hechos seria justamente el
+> tipo de suposicion que la cabecera de `runbooks.md` prohibe.
+
+- [x] Accesibilidad: axe sin violaciones en **todos los componentes**, mas el inventario que lo
+      mantiene asi — `src/components/accesibilidad.test.ts`
+- [ ] **[OPERADOR]** Accesibilidad de las **pantallas** completas: axe sobre `/auditoria`,
+      `/convocatorias/[id]` y el resto, en navegador con sesion real
+- [ ] **[OPERADOR]** Responsividad verificada en movil, tableta y escritorio
+- [x] Cabeceras de seguridad y CSP — `next.config.ts`, `src/proxy.ts`, `next.config.test.ts`
+- [x] Observabilidad: registro estructurado, trazas de las operaciones criticas y diagnostico de
+      cancelacion de transacciones — `src/lib/observabilidad/`
+- [x] Alarmas: seis, en `amplify/alarmas.ts`, verificadas por sintesis de la pila
+- [ ] **[OPERADOR]** Disparar una alarma de verdad y confirmar que el aviso llega
+      (`runbooks.md` R-11 paso 6)
+- [x] Revision de costos y capacidad de DynamoDB — `modelo-datos-dynamodb.md` 8.1 y 8.2
+- [x] Diccionarios completos, sin claves faltantes — ya garantizado por dos mecanismos; se
+      verifico y se documento cual cubre que
+- [ ] **[OPERADOR]** `runbooks.md` verificado ejecutando cada procedimiento al menos una vez
+- [ ] **[OPERADOR]** Despliegue a produccion y prueba de humo
 
 **Verificacion:**
 
-- [ ] Compuerta de calidad completa en verde
-- [ ] Prueba de carga sobre la apertura de una convocatoria con fila concurrente
-- [ ] Cada runbook ejecutado y corregido si su procedimiento no coincide con la realidad
+- [x] Compuerta de calidad completa en verde — `typecheck`, `lint`, `build` y 1861 pruebas
+- [x] **Prueba de carga ejecutada contra el sandbox real** — `npm run carga:apertura`. 100
+      solicitudes concurrentes sobre 10 lotes: **100 aceptadas, 0 rechazadas, exactamente 10
+      adjudicaciones** (una por lote, siempre al turno menor). En caliente: p50 965 ms,
+      p95 1 296 ms, 62 solicitudes/s; en frio, diez veces mas lento por los apretones de manos
+      TLS y no por DynamoDB
+- [ ] **[OPERADOR]** Repetir la carga desde el entorno desplegado y **calibrar
+      `UMBRAL_CONFLICTOS_POR_PERIODO`** con la metrica `TransactionConflict` de CloudWatch — ver
+      la nota de abajo sobre por que esta corrida no alcanza para calibrarlo
+- [ ] **[OPERADOR]** Cada runbook ejecutado y corregido si su procedimiento no coincide con la
+      realidad
+
+**Lo que se hizo, y por que asi:**
+
+1. **Observabilidad** (`src/lib/observabilidad/`). `registro.ts` escribe una linea por operacion
+   con el `correlacionId` que comparte con la bitacora; `traza.ts` envuelve las tres operaciones
+   criticas mas el barrido y el outbox con su desenlace y su duracion. Dos propiedades salen de
+   que el registro **no** es la bitacora: nunca lanza —perder una linea no puede tumbar la
+   adjudicacion que describia— y nunca escribe identidad de personas. `participanteId` si se
+   escribe, porque es un ULID interno y sin el el runbook R-8 no se puede ejecutar.
+
+2. **Trazas propias en lugar de X-Ray**, decidido y no omitido. X-Ray responde "donde se fue el
+   tiempo entre servicios"; aqui hay un proceso hablando con DynamoDB y la pregunta es "que le
+   paso a esta solicitud". El `correlacionId` ya la responde, sin SDK, sin permiso de IAM y sin
+   costo por traza.
+
+3. **Alarmas repartidas entre metrica nativa y filtro de log, segun lo que cada una tenga que
+   sobrevivir.** Lo que hay que detectar *aunque el codigo este roto* va a metrica nativa: si el
+   `handler` del barrido lanza antes de la primera linea, un filtro de log no ve nada y **calla**,
+   que es exactamente el fallo que R6 existe para gritar. Por eso "el barrido no se ejecuta" trata
+   la ausencia de datos como fallo (`BREACHING`), contra el valor por omision de CloudWatch.
+
+4. **La contencion se vigila con `TransactionConflict` y no con `ConditionalCheckFailedRequests`**,
+   que es la metrica que parece obvia. En este sistema una condicion que falla es el mecanismo
+   normal: la adjudicacion se gana con escritura condicional (regla 6), asi que en cada lote N-1
+   intentos fallan su condicion **por diseno** y esa alarma estaria disparada siempre.
+
+5. **Ninguna metrica lleva `loteId` como dimension.** CloudWatch cobra por combinacion de
+   dimensiones y `loteId` es de cardinalidad ilimitada y creciente: "solicitudes por lote" como
+   metrica crearia una serie por cada lote que haya existido, para siempre. Eso vive en la linea
+   de registro y se consulta con Logs Insights, que no se cobra por serie. Las consultas quedaron
+   escritas en `runbooks.md`.
+
+6. **La CSP se reviso y `style-src 'unsafe-inline'` se queda**, cerrando el pendiente del
+   2026-09-04 con evidencia en lugar de con otra postergacion: Eden no publica ningun `.css` —cada
+   componente monta su hoja con `<style href precedence>` de React 19, sin nonce que pasarle— y
+   ademas usa atributos `style={{...}}` en `eden-table`, `eden-form-parts` y `eden-grid`. Las dos
+   cosas exigen el permiso, y partir la directiva no ganaria nada. El endurecimiento real fue por
+   otro lado: `X-Frame-Options`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` y
+   `Cross-Origin-Resource-Policy`, cada una con prueba.
+
+7. **La revision de costos concluye no estrechar los GSIs**, revirtiendo la expectativa que este
+   plan traia desde el 2026-09-04. DynamoDB cobra la escritura en bloques de 1 KB redondeando
+   hacia arriba, asi que el ahorro de `INCLUDE` es **cero** sobre los items de alto volumen
+   —solicitudes (~600 B) y eventos (~400 B), ya bajo el minimo facturable— y solo aparece en
+   vehiculos y convocatorias, que se escriben unas pocas veces al mes. Cambiar una decision
+   irreversible —la proyeccion de un GSI no se puede modificar, hay que recrear el indice y
+   durante esa ventana PA-05 y PA-11 dejan de responder— por menos de un centavo al mes no es una
+   optimizacion.
+
+8. **La cota de una corrida del barrido queda medida y documentada** (8.2). `leerVencidasDelDia` y
+   `leerPendientes` leen una sola pagina de `Query`, y eso es un retraso y no trabajo perdido:
+   GSI4 es disperso, las dos leen de lo mas viejo a lo mas nuevo y el barrido es idempotente cada
+   5 minutos, asi que la corrida siguiente empieza donde la anterior dejo de ver. La cota es de
+   unas 1 700 solicitudes por corrida.
+
+9. **Accesibilidad: lo que faltaba no eran violaciones sino el inventario.** Cada componente ya
+   pasaba por axe via `genericTests`; lo que no existia era lo que impide que llegue un componente
+   nuevo sin esa comprobacion. Una prueba que cubre 26 de 27 componentes pasa en verde, y el que
+   falta es justo el que nadie revisara. Ahora la ausencia de prueba **es** el fallo, con tres
+   excepciones declaradas y razonadas (los Server Components asincronos, que jsdom no puede
+   montar).
+
+10. **Diccionarios: ya estaba garantizado, y se documento por que.** La garantia son dos
+    mecanismos y ninguno bastaba solo: las pruebas de catalogo cubren las etiquetas que salen de
+    un `as const` runtime, y `npm run typecheck` cubre todo lo demas, porque los JSON se importan
+    con sus tipos literales y indexarlos con una union obliga a TypeScript a comprobar cada
+    variante. Se verifico quitando `acciones.hecho_PUBLICAR`: `tsc` responde TS7053. El segundo
+    mecanismo es silencioso y se desactivaria por completo anotando los diccionarios como
+    `Record<string, ...>`, asi que se anadio un `@ts-expect-error` que rompe la compuerta si eso
+    pasa.
+
+11. **La prueba de carga es un arnes nuevo, no una repeticion de la de la Etapa 8.** Aquella
+    responde una pregunta de correccion sobre **un** lote y vive en la compuerta. Esta abre L
+    lotes a la vez —que es lo que ocurre en `inicioVenta`— y mide latencia, contencion y
+    solicitudes por segundo, reafirmando las invariantes a esa escala.
+
+    **Corrio contra el sandbox real y el resultado de correccion es limpio:** 100 solicitudes
+    concurrentes sobre 10 lotes, 100 aceptadas, cero rechazadas, exactamente una adjudicacion
+    por lote y siempre al turno menor de su fila. Es diez veces la escala de la prueba de la
+    Etapa 8, con diez particiones compitiendo a la vez, y la reserva de R18 aguanta: las 7
+    abstenciones son la respuesta correcta ante turnos en vuelo.
+
+    **Encontro un defecto real de produccion**, que era su otra razon de ser: el `ADD` del paso 1
+    de T1 escribe **fuera** de transaccion sobre un item que si participa en otras —el lote, en
+    T2—, y `TransactionConflictException` escapaba de `solicitarCompra` como excepcion sin
+    atrapar en vez de responder `conflicto_concurrencia`. El SDK lo reintenta solo, asi que nunca
+    se habia visto; con contencion sostenida los tres intentos tambien se agotan y el
+    participante recibiria un 500 en el peor momento.
+
+    Al revisar el resto aparecieron **dos sitios mas con el mismo agujero**, y peores en un
+    sentido: `liberarReserva` y `incrementarIntento` estan documentados como "de mejor esfuerzo"
+    —su fallo no deberia importar— y sin embargo dejaban escapar la excepcion. El primero se
+    invoca en cada ronda de `adjudicarLote`, asi que una limpieza opcional podia tumbar una
+    adjudicacion; el segundo abortaba el resto del outbox por no poder escribir un contador de
+    reintentos. Los tres corregidos, con pruebas, y `reservas.ts` estrena archivo de prueba
+    (`desafios-implementacion.md` 41).
+
+12. **La misma prueba, dos veces seguidas, dio numeros diez veces distintos — y ese contraste es
+    el hallazgo.** Mismo escenario, mismo sandbox: en frio p95 de 15,5 s y 6,4 solicitudes/s; en
+    caliente p95 de 1,3 s y 62 solicitudes/s. Lo que cambio no fue DynamoDB sino los apretones de
+    manos TLS: con la inspeccion corporativa de por medio (riesgo R11), abrir trescientas
+    conexiones domina la primera corrida y la segunda reusa el agente HTTPS. El factor de nueve
+    entre p50 y p95 en frio es la firma de una cola de conexiones. Ninguna de las dos es la
+    latencia de produccion, pero la segunda esta mucho mas cerca — y la primera se parece a lo
+    que pagara un arranque en frio de Lambda.
+
+    Y **`UMBRAL_CONFLICTOS_POR_PERIODO` sigue sin calibrar** por una razon distinta: el informe
+    reporta cero rechazos por conflicto, porque los reintentos del SDK los absorbieron antes de
+    llegar a la aplicacion. Los conflictos si ocurrieron —el diagnostico de la seccion 41 los
+    vio— pero solo la metrica nativa `TransactionConflict` de CloudWatch sabe cuantos. Calibrarlo
+    exige mirar esa metrica despues de una carga en el entorno desplegado, que es el punto
+    `[OPERADOR]` de la verificacion.
+
+    Tres corridas fallidas antes de esta, y **ninguna por culpa del sistema**: cupo de sockets,
+    una configuracion de cliente que no era la de produccion, y una asercion que comparaba el
+    turno de quien solicitaba contra el turno adjudicado —dos campos distintos con nombres
+    parecidos— y por tanto fallaba con el motor de fila funcionando bien
+    (`desafios-implementacion.md` 42).
 
 **Salida esperada:** aplicacion en produccion, operable y auditable.
+
+> **Lo que falta para produccion no es codigo.** Son cinco pasos de operador, y tres de ellos
+> estan bloqueados por lo mismo que bloquea las Etapas 5 a 11: no hay sesion de Okta ni entorno
+> desplegado en esta maquina. El cuarto —`ALARMAS_CORREO` y confirmar la suscripcion de SNS— es
+> el que mas facil pasa inadvertido, porque su modo de fallo es el silencio: alarmas que
+> funcionan y no avisan a nadie (`runbooks.md` R-13). El quinto es la aprobacion de CES, que
+> sigue siendo R17 y no depende de esta etapa.
 
 ---
 
@@ -1255,7 +1411,8 @@ politica IAM del rol de la aplicacion, mas prueba de integracion que confirma el
 
 ### R6 — Barrido de vencimientos caido — **cerrado**
 
-**Probabilidad:** media · **Impacto:** alto · **Estado:** cerrado en la Etapa 10
+**Probabilidad:** media · **Impacto:** alto · **Estado:** cerrado — mitigacion en la Etapa 10,
+alarma en la Etapa 12
 
 Si el barrido no corre, la fila se congela y nadie avanza.
 
@@ -1263,7 +1420,24 @@ Si el barrido no corre, la fila se congela y nadie avanza.
 **verificacion perezosa** al leer la fila (`consultarMiLugar.ts`) para que el sistema se
 autocorrija sin depender del barrido. `detectadoPor` en `SOLICITUD_VENCIDA` distingue cual de
 los dos caminos resolvio cada vencimiento, que es lo que permite medir si el barrido esta
-cumpliendo su funcion. Falta la alarma de infraestructura (observabilidad, fuera del codigo).
+cumpliendo su funcion.
+
+> **La alarma que faltaba se construyo en la Etapa 12** (`amplify/alarmas.ts`), y son dos
+> distintas porque detectan cosas distintas:
+>
+> - `barrido-sin-ejecutar` mira `AWS/Lambda` `Invocations` con `TreatMissingData.BREACHING`. La
+>   metrica es **nativa** a proposito: si el `handler` lanza antes de escribir su primera linea,
+>   un filtro sobre los logs no ve nada y **calla**, que es precisamente este fallo. Y el trato
+>   de la ausencia de datos va contra el valor por omision de CloudWatch, porque un barrido que
+>   no corre no publica ceros: no publica nada, y `INSUFFICIENT_DATA` es indistinguible de "todo
+>   bien" para quien no esta mirando.
+> - `vencimientos-sin-resolver` mira `errores` del barrido —las vencidas que **encontro y no
+>   pudo resolver**—, que es el sintoma de que los dos caminos de D-7 fallaron. No mira
+>   `vencimientosAbstenidos`: abstenerse ante turnos en vuelo es correcto (R18) y la corrida
+>   siguiente lo resuelve.
+>
+> Queda `[OPERADOR]` poner `ALARMAS_CORREO` y **confirmar la suscripcion de SNS**: sin ese paso
+> las alarmas cambian de estado y no avisan a nadie (`runbooks.md` R-13).
 
 **Senal de alerta:** adjudicaciones con vencimiento pasado que siguen vigentes.
 
@@ -1520,8 +1694,8 @@ comprobacion 5 de `verificarIntegridad` en `incumple` sin que ninguna otra expli
 | 2026-09-04 | Mantener `@churchofjesuschrist/festack-scripts` pese a su deprecacion reciente | Migrar de inmediato a eslint/prettier/stylelint/vitest directos, pese a que el costo hoy es minimo (riesgo R16) |
 | 2026-09-04 | `typescript` fijado a `6.0.3` exacto | Ultima version publicada (`7.0.2`): rompe `typescript-eslint@8.69` (`peerDependency typescript: >=4.8.4 <6.1.0`), confirmado ademas por el propio changelog de festack-scripts 27.0.7 |
 | 2026-09-04 | `participanteId` = `oktaSub` hasta la Etapa 4 | Construir el *upsert* en DynamoDB ahora, adelantando parte de la Etapa 4 dentro de la Etapa 2 (rompe la separacion de capas de `CLAUDE.md`) |
-| 2026-09-04 | CSP con nonce por peticion en `script-src`; `style-src` con `unsafe-inline` | `style-src` con nonce tambien: mas estricto, pero arriesga romper visualmente componentes Eden cuyo uso de estilos en linea no se pudo verificar (sin acceso al MCP de Eden en este entorno) |
-| 2026-09-04 | GSIs 2, 3 y 4 con proyeccion `ALL` | `INCLUDE` con lista de atributos: mas barato, pero la proyeccion de un GSI **no se puede modificar** despues de creado y las pantallas que la consumen aun no existen. Estrechar es una optimizacion para la Etapa 12 |
+| 2026-09-04 | CSP con nonce por peticion en `script-src`; `style-src` con `unsafe-inline` — **confirmado en la Etapa 12, ver abajo** | `style-src` con nonce tambien: mas estricto, pero arriesga romper visualmente componentes Eden cuyo uso de estilos en linea no se pudo verificar (sin acceso al MCP de Eden en este entorno) |
+| 2026-09-04 | GSIs 2, 3 y 4 con proyeccion `ALL` — **confirmado en la Etapa 12, ver abajo** | `INCLUDE` con lista de atributos: mas barato, pero la proyeccion de un GSI **no se puede modificar** despues de creado y las pantallas que la consumen aun no existen. Estrechar es una optimizacion para la Etapa 12 |
 | 2026-09-04 | Rol de computo SSR creado en la pila, adjuntado a mano en la consola | Crearlo tambien a mano: dejaria el `Deny` de la bitacora fuera del repositorio, en un procedimiento que se puede omitir |
 | 2026-09-04 | `esbuild` como dependencia directa de desarrollo | Depender de Docker Desktop para empaquetar el Lambda del barrido, que en una maquina corporativa puede no existir |
 | 2026-09-04 | Llave **publica** de CloudFront versionada en el repositorio | Inyectarla por variable de entorno: los PEM multilinea en variables son fragiles, y rotar la llave invalidaria todas las URLs firmadas vigentes |
@@ -1538,3 +1712,14 @@ comprobacion 5 de `verificarIntegridad` en `incumple` sin que ninguna otra expli
 | 2026-09-05 | Publicacion parcial cerrada por **orden de propagacion** en T8: convocatoria primero al publicar, lotes primero al ocultar | El `ConditionCheck` sobre la convocatoria en T1 (decidido el 2026-09-04): correcto, pero el item lo comparten todas las solicitudes de la convocatoria y un `ConditionCheck` lo retiene igual que una escritura — cancelaba entre 5 y 7 de cada 10 |
 | 2026-09-05 | El paso 1 admite fila con el lote `EN_OFERTA` **o** `ADJUDICADO` | Exigir `EN_OFERTA`, como decia el modelo de datos: cierra la fila en la primera adjudicacion, que ocurre a los segundos de `inicioVenta`, y vuelve inalcanzables R-17, R-15, `miPosicion` y `tamanoFila` |
 | 2026-09-05 | El prototipo se **omite** en la compuerta, tras la bandera `PROTOTIPO_R18` | Dejarlo en `verify:rapido`: son dos minutos contra AWS en cada iteracion, que deshace la decision que creo `verify:rapido`. No es prueba de regresion sino registro reproducible de una decision; la regresion permanente la aporta la Etapa 8 |
+| 2026-09-08 | Las alarmas viven en una **tercera pila**, `AutobAlarmas` | Ponerlas en `AutobRecursos`, que es donde parece que corresponden: una metrica dimensionada por `FunctionName` es una referencia a la pila de la funcion, y esa pila ya toma `AUTOB_TABLE_NAME` de `AutobRecursos` — cierra un ciclo entre pilas y `ampx` falla al sintetizar |
+| 2026-09-08 | Cada alarma toma su senal de **metrica nativa** cuando existe; de filtro de log solo lo que unicamente el dominio sabe contar | Derivarlas todas de los logs de la aplicacion, que es mas uniforme: si el `handler` del barrido lanza antes de su primera linea, un filtro no ve nada y **calla**, que es exactamente el fallo que R6 existe para gritar |
+| 2026-09-08 | La contencion se vigila con `TransactionConflict` de DynamoDB | `ConditionalCheckFailedRequests`, que parece la metrica obvia: la adjudicacion se gana con escritura condicional (regla 6), asi que en cada lote N-1 intentos fallan su condicion **por diseno** y la alarma estaria disparada siempre |
+| 2026-09-08 | Trazas propias por `correlacionId` en lugar de **AWS X-Ray** | X-Ray: responde "donde se fue el tiempo entre servicios" y aqui hay un proceso hablando con DynamoDB. La pregunta real —"que le paso a esta solicitud"— la responde el `correlacionId` que ya comparte con la bitacora, sin SDK, sin permiso de IAM y sin costo por traza |
+| 2026-09-08 | `loteId` **no** es dimension de ninguna metrica; vive en la linea de registro | "Solicitudes por lote" como metrica dimensionada, que es lo que pedia `arquitectura-tecnica-aws.md` 7: CloudWatch cobra por combinacion de dimensiones y `loteId` es de cardinalidad ilimitada y creciente — seria una serie por cada lote que haya existido, para siempre. Logs Insights responde lo mismo sin cobrarse por serie |
+| 2026-09-08 | El registro operativo se **silencia dentro de Vitest**, comprobando `VITEST` | Una variable propia del tipo `REGISTRO_OPERATIVO=off`: seria una palanca para apagar todo el diagnostico en produccion sin que nada lo delate, justo el fallback silencioso que prohibe la regla 15. `VITEST` no se puede activar por error en un despliegue |
+| 2026-09-08 | `style-src 'unsafe-inline'` **se queda**, y el pendiente del 2026-09-04 se cierra como riesgo aceptado | Endurecerlo, que era la expectativa de la Etapa 12: Eden no publica ningun `.css` —monta cada hoja con `<style href precedence>` de React 19, sin nonce que pasarle— y ademas usa atributos `style={{...}}` en `eden-table`, `eden-form-parts` y `eden-grid`. Partir la directiva en `-elem` y `-attr` no gana nada: las dos necesitan el mismo permiso |
+| 2026-09-08 | Los GSIs se quedan en `ALL`; **no** se estrechan a `INCLUDE` | Estrecharlos, que era lo que este plan preveia para la Etapa 12: DynamoDB cobra la escritura en bloques de 1 KB redondeando hacia arriba, asi que el ahorro es **cero** en solicitudes (~600 B) y eventos (~400 B) —el volumen real— y solo aparece en vehiculos y convocatorias, que se escriben unas pocas veces al mes. Menos de un centavo al mes contra una decision irreversible que exige recrear el indice con PA-05 y PA-11 caidas |
+| 2026-09-08 | La prueba de carga es un **arnes aparte**, tras la bandera `CARGA_APERTURA` | Ampliar la prueba de concurrencia de la Etapa 8: responden preguntas distintas —aquella, correccion sobre un lote; esta, capacidad de la convocatoria entera— y meter cientos de escrituras contra AWS en la compuerta deshace la decision que creo `verify:rapido` |
+| 2026-09-08 | La prueba de carga mide **con los reintentos del SDK**, como produccion | Medir con `maxAttempts: 1`, que fue el primer intento: sin reintentos se mide una configuracion que el sistema no tiene, y la latencia que importa es la que percibe el participante. El modo sin reintentos se conserva tras `CARGA_SIN_REINTENTOS=1` porque como **diagnostico** si valio: descubrio el defecto de la seccion 41 |
+| 2026-09-08 | El paso 1 de T1 traduce `TransactionConflictException` a `conflicto_concurrencia` | Dejarla escapar, que era el comportamiento anterior: el SDK la reintenta y casi nunca llega, pero con contencion sostenida los tres intentos se agotan y el participante recibe un 500 en `inicioVenta` en lugar del "relee y reintenta" que el diseno define para una carrera perdida |

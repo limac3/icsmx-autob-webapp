@@ -15,6 +15,7 @@
     "verify": "festack-scripts verify",
     "verify:rapido": "node scripts/verify-rapido.mjs",
     "prototipo:fila": "node scripts/prototipo-fila.mjs",
+    "carga:apertura": "node scripts/carga-apertura.mjs",
     "format": "festack-scripts format",
     "typecheck": "tsc --noEmit && tsc --noEmit -p amplify/tsconfig.json",
     "upgrade": "festack-scripts upgrade",

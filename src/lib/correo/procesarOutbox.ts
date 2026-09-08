@@ -26,8 +26,10 @@ import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import {
   ejecutarTransaccion,
+  esConflictoDeTransaccion,
   esFalloDeCondicion,
 } from "@/lib/data/transacciones";
+import { conTraza } from "@/lib/observabilidad/traza";
 import type { MensajeDeCorreo } from "@/types/correo";
 import { enviarCorreo } from "./clienteCes";
 import { correoDeAdjudicacion } from "./plantillas";
@@ -44,16 +46,48 @@ export type ResultadoDeProcesarOutbox = {
   enviados: number;
   fallidosPermanentes: number;
   reintentaraDespues: number;
+  /**
+   * Antiguedad, en minutos, del pendiente mas viejo **al empezar** la corrida.
+   * `0` si no habia ninguno.
+   *
+   * Es el numero que pide la alarma "correos en el outbox mas antiguos que un
+   * umbral" (`arquitectura-tecnica-aws.md` 7). Se calcula aqui y no en la
+   * alarma porque los contadores no bastan: un CES caido deja
+   * `reintentaraDespues` en un valor pequeno y constante —los mismos mensajes,
+   * corrida tras corrida— que no distingue "cinco mensajes esperando dos
+   * minutos" de "cinco mensajes esperando dos dias". La antiguedad si.
+   */
+  antiguedadMaximaMin: number;
 };
+
+const MILISEGUNDOS_POR_MINUTO = 60_000;
 
 export const procesarOutbox = async (
   deps: DepsDeServicio = {},
+): Promise<ResultadoDeProcesarOutbox> =>
+  conTraza(
+    "procesarOutbox",
+    {},
+    async () => ejecutarOutbox(deps),
+    (resultado) => ({
+      // Un fallo permanente es un correo que **nadie** va a recibir: el
+      // adjudicado no se entera de que gano y su plazo corre igual (R-13). Es
+      // lo unico de esta corrida que exige que alguien mire.
+      desenlace: resultado.fallidosPermanentes > 0 ? "rechazado" : "ok",
+      ...resultado,
+    }),
+  );
+
+const ejecutarOutbox = async (
+  deps: DepsDeServicio,
 ): Promise<ResultadoDeProcesarOutbox> => {
+  const { ahora } = resolver(deps);
   const pendientes = await leerPendientes(deps);
   const resultado: ResultadoDeProcesarOutbox = {
     enviados: 0,
     fallidosPermanentes: 0,
     reintentaraDespues: 0,
+    antiguedadMaximaMin: antiguedadEnMinutos(pendientes[0]?.creadoEn, ahora),
   };
 
   for (const mensaje of pendientes) {
@@ -61,6 +95,27 @@ export const procesarOutbox = async (
   }
 
   return resultado;
+};
+
+/**
+ * El primero de la lista es el mas viejo: `GSI4SK` es `creadoEn` y PA-14
+ * consulta con `ScanIndexForward: true`.
+ *
+ * Se acota por abajo a cero: un `creadoEn` en el futuro —reloj torcido, dato
+ * sembrado a mano— daria un negativo y una alarma de umbral nunca se
+ * dispararia con el.
+ */
+const antiguedadEnMinutos = (
+  creadoEn: string | undefined,
+  ahora: Date,
+): number => {
+  if (!creadoEn) return 0;
+  const creado = new Date(creadoEn).getTime();
+  if (Number.isNaN(creado)) return 0;
+  return Math.max(
+    0,
+    Math.round((ahora.getTime() - creado) / MILISEGUNDOS_POR_MINUTO),
+  );
 };
 
 /** PA-14: `Query` GSI4 `OUTBOX_PENDIENTE`, mas antiguos primero. */
@@ -281,7 +336,21 @@ const incrementarIntento = async (
       }),
     );
   } catch (error_) {
-    if (!esFalloDeCondicion(error_)) throw error_;
+    if (esFalloDeCondicion(error_)) return;
+    // El item del mensaje **si** participa en transacciones: `marcarEnviado` y
+    // `marcarFallido` lo tocan dentro de una. Si dos corridas del barrido se
+    // solapan —el horario es cada 5 min y el limite de ejecucion 300 s, asi que
+    // puede pasar— una puede estar resolviendo el mensaje por transaccion
+    // mientras la otra le anota el intento con este `UpdateItem` suelto, y
+    // DynamoDB rechaza el suelto con `TransactionConflictException`.
+    //
+    // Se ignora por la misma razon que el fallo de condicion: significa que
+    // otra corrida ya lo resolvio, que es justo lo que este helper declara
+    // tolerar. Dejarla escapar abortaria el resto del outbox de la corrida por
+    // no poder anotar un contador de reintentos
+    // (`desafios-implementacion.md` 41).
+    if (esConflictoDeTransaccion(error_)) return;
+    throw error_;
   }
 };
 

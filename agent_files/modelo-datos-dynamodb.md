@@ -143,8 +143,10 @@ existen. Y **la proyeccion de un GSI no se puede modificar despues de creado**: 
 borrar el indice y recrearlo, con una ventana en la que PA-05 y PA-11 dejan de responder. Los
 items del modelo son pequenos —las fotografias y los comprobantes son claves de S3, no datos—,
 asi que el sobrecosto de `ALL` es acotado y compra no tener que migrar indices cada vez que una
-pantalla pide un campo mas. Estrechar a `INCLUDE` es una optimizacion legitima para la Etapa 12,
-cuando el conjunto de atributos ya no se mueva.
+pantalla pide un campo mas.
+
+> **Revisado en la Etapa 12 y confirmado: no se estrecha.** Con las pantallas ya construidas se
+> hizo la cuenta, y el ahorro cae entero sobre los items que casi nunca se escriben. Ver 8.1.
 
 GSI1 se queda en `KEYS_ONLY` porque su unico trabajo es traducir `oktaSub` a `participanteId`;
 el perfil se lee luego de la tabla base.
@@ -812,3 +814,109 @@ aporta la prueba de concurrencia de la Etapa 8.
   la bitacora violaria R-20.
 - **`ConsistentRead` en las lecturas previas a una escritura condicional.** Las lecturas de
   presentacion pueden ser eventuales; las que alimentan un bucle de candidatos, no.
+
+### 8.1 Revision de costos (Etapa 12)
+
+La seccion 3 dejaba pendiente estrechar los GSIs de `ALL` a `INCLUDE` "cuando el conjunto de
+atributos ya no se mueva". Con las pantallas ya construidas, se reviso. **Decision: no se
+estrecha**, y la razon es aritmetica y no de comodidad.
+
+DynamoDB cobra la escritura **en bloques de 1 KB, redondeando hacia arriba**, y cobra el indice
+aparte de la tabla base. Eso reparte el ahorro de forma exactamente inversa al volumen:
+
+| Item | Tamano tipico | Indices que lleva | Ahorro de `INCLUDE` | Volumen |
+| --- | --- | --- | --- | --- |
+| Solicitud | ~600 B | GSI3, GSI4 | **ninguno** — ya esta bajo 1 KB, y 1 KB es el minimo facturable | el mas alto del sistema |
+| Evento `AUDIT#` | ~400 B | GSI2 | **ninguno** — misma razon | alto: uno por mutacion |
+| Mensaje de outbox | ~500 B | GSI4 | **ninguno** | uno por adjudicacion |
+| Vehiculo | hasta ~3 KB | GSI2 | ~2 unidades por escritura | decenas al mes |
+| Convocatoria | hasta ~8 KB | GSI2 | ~7 unidades por escritura | unas pocas al mes |
+
+Los items grandes son grandes por texto libre que **ninguna pantalla de listado muestra**
+—`condicionesMecanicas`, `detallesEsteticos` y `especificacionMecanica` del vehiculo (2.5 KB
+entre los tres) y `descripcionParticipacion` de la convocatoria (8 KB de HTML del editor)—, asi
+que en teoria son el caso ideal para `INCLUDE`. Pero son tambien los que casi nunca se escriben:
+el ahorro completo, sumando los dos, queda por debajo de un centavo al mes a los precios de
+`us-east-1`, y el almacenamiento duplicado de un catalogo de 10 000 vehiculos son 30 MB, menos
+de un centavo mas.
+
+Contra eso: **la proyeccion de un GSI no se puede modificar despues de creado.** Estrechar exige
+borrar el indice y recrearlo, y durante esa ventana PA-05 y PA-11 —el catalogo de
+administracion y la bandeja de tesoreria— dejan de responder. Cambiar una decision irreversible
+por centavos no es una optimizacion; es riesgo sin contrapartida. Si algun dia el catalogo de
+vehiculos crece dos ordenes de magnitud, la cuenta se rehace con datos reales.
+
+GSI1 se queda en `KEYS_ONLY` porque nunca necesito mas: traduce `oktaSub` a `participanteId` y
+el perfil se lee de la tabla base.
+
+### 8.2 Cota de una corrida del barrido
+
+`leerVencidasDelDia` (PA-10) y `leerPendientes` (PA-14) leen **una sola pagina** de `Query`, sin
+recorrer `LastEvaluatedKey`. Es deliberado, y la razon es que las dos consultas se apoyan en tres
+propiedades que ya estan en el diseno:
+
+1. **GSI4 es disperso.** Resolver un item le quita sus claves del indice, asi que lo atendido no
+   vuelve a aparecer.
+2. **Las dos leen de lo mas viejo a lo mas nuevo** (`ScanIndexForward` ascendente sobre `venceEn`
+   y sobre `creadoEn`).
+3. **El barrido corre cada 5 minutos y es idempotente.**
+
+Juntas convierten una pagina truncada en un retraso y no en trabajo perdido: la corrida
+siguiente empieza justo donde la anterior dejo de ver. La cota, con items de ~600 B y el limite
+de 1 MB por pagina, es de unas **1 700 solicitudes por corrida**, o unas 20 000 por hora.
+
+Alcanzarla exige que mas de 1 700 adjudicaciones venzan el **mismo dia** —una convocatoria de
+ese tamano no existe todavia— y aun asi el atraso se drena en dos o tres corridas. Recorrer las
+paginas dentro de una corrida acercaria el barrido a su limite de 300 s de ejecucion sin
+resolver mas trabajo del que la corrida siguiente ya resuelve.
+
+> Lo que **no** vale es agregar un `Limit` a `leerVencidasDelDia` para acotar el trabajo: hay un
+> `FilterExpression` de por medio y `Limit` acota items **leidos**, no items que pasan el filtro.
+> El comentario del propio archivo lo explica.
+
+La alarma `vencimientos-sin-resolver` de `amplify/alarmas.ts` no vigila esta cota, y no debe:
+mide `errores`, que son las vencidas que el barrido **encontro y no pudo resolver**. Una pagina
+truncada no produce errores, produce una corrida siguiente con mas trabajo.
+
+### 8.3 Lo que midio la prueba de carga
+
+`npm run carga:apertura` (Etapa 12) contra el sandbox real, 10 lotes con 10 participantes cada
+uno disparando `solicitarCompra` a la vez:
+
+| Medida | En frio | En caliente |
+| --- | --- | --- |
+| Solicitudes concurrentes | 100 (300 escrituras: tres por solicitud) | 100 |
+| Aceptadas / rechazadas | **100 / 0** | **100 / 0** |
+| Adjudicaciones | **10** — una por lote, siempre al turno menor de su fila | **10**, idem |
+| Abstenciones por reservas en vuelo | 7 | 13 |
+| Latencia p50 / p95 / maxima | 1 709 / 15 525 / 15 599 ms | **965 / 1 296 / 1 592 ms** |
+| Solicitudes por segundo | 6,4 | **62,3** |
+| Duracion total | 15,6 s | **1,6 s** |
+
+**Lo que estos numeros si dicen:** el mecanismo de la fila aguanta diez veces la escala de la
+prueba de la Etapa 8 y con diez particiones compitiendo a la vez, sin perder una sola solicitud
+por contencion y sin romper R-08 — en las dos corridas. Esa era la duda que solo la escala podia
+resolver.
+
+**Y el contraste entre las dos columnas es en si mismo el hallazgo.** Es el **mismo** escenario
+contra el **mismo** sandbox, con diez veces de diferencia. Lo que cambio no fue DynamoDB: fueron
+los apretones de manos TLS. Con la inspeccion corporativa de por medio (riesgo R11), abrir
+trescientas conexiones nuevas domina por completo la primera corrida; la segunda reusa el agente
+HTTPS del proceso. El factor de nueve entre p50 y p95 de la columna en frio es la firma de una
+cola de conexiones, no de una base de datos lenta.
+
+Conclusion practica: **ninguna de las dos columnas es la latencia de produccion**, pero la
+segunda esta mucho mas cerca. Un arranque en frio de Lambda pagara algo parecido a la primera; el
+estado estacionario, a la segunda. La medida que vale se toma desde el entorno desplegado.
+
+**Lo que hace falta para calibrar el umbral de contencion.** El informe reporta cero rechazos por
+conflicto, pero eso es porque los reintentos del SDK los absorbieron antes de llegar a la
+aplicacion; los conflictos si ocurrieron. Solo la metrica nativa `TransactionConflict` de
+CloudWatch dice cuantos, y de ahi sale el valor de `UMBRAL_CONFLICTOS_POR_PERIODO`
+(`amplify/alarmas.ts`), que hoy es una estimacion de 50 por periodo de cinco minutos.
+
+> La corrida sin reintentos del SDK —`CARGA_SIN_REINTENTOS=1`— es la que descubrio que el paso 1
+> de T1 dejaba escapar `TransactionConflictException` como excepcion sin atrapar
+> (`desafios-implementacion.md` 41). El `ADD contadorTurnos` es la unica escritura del sistema
+> fuera de transaccion sobre un item que si participa en otras, y conviene que siga siendo la
+> unica.

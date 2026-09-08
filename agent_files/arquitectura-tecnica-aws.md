@@ -344,19 +344,72 @@ amplio pasaria inadvertido).
 
 ## 7. Observabilidad
 
-| Senal | Uso |
-| --- | --- |
-| Registro estructurado | Una linea por operacion, con `correlacionId` compartido con la bitacora |
-| Metricas | Solicitudes por lote, adjudicaciones, vencimientos, correos fallidos, cancelaciones de transaccion |
-| Trazas | Operaciones criticas: solicitar, adjudicar, vencer |
+Implementada en la Etapa 12. `src/lib/observabilidad/` para la senal, `amplify/alarmas.ts` para
+las alarmas.
 
-**Alarmas:**
-
-- El barrido no se ejecuta (riesgo R6).
-- Correos en el outbox mas antiguos que un umbral.
-- Tasa de `TransactionCanceledException` por encima de lo normal — indica contencion inesperada.
-- Adjudicaciones con `venceEn` pasado que siguen vigentes: **si esta alarma se dispara, los dos
-  caminos de vencimiento fallaron**, y es el sintoma mas grave del sistema.
+| Senal | Como | Donde |
+| --- | --- | --- |
+| Registro estructurado | Una linea por operacion, con `correlacionId` compartido con la bitacora | `registro.ts` |
+| Trazas | Desenlace y duracion de las operaciones criticas: solicitar, adjudicar, vencer, mas el barrido y el outbox | `traza.ts` (`conTraza`) |
+| Diagnostico de transacciones | Solo en el fallo: codigo crudo de DynamoDB, posicion e intencion del item que cancelo | `data/transacciones.ts` |
+| Metricas y alarmas | Metricas nativas de Lambda y DynamoDB, mas filtros de metrica sobre el registro del barrido | `amplify/alarmas.ts` |
 
 El registro operativo es **distinto** de la bitacora de auditoria. Aquel es para depurar y
-caduca; esta es para probar y no caduca.
+caduca —un mes de retencion en la funcion de barrido—; esta es para probar y no caduca. De esa
+diferencia salen dos consecuencias que el codigo respeta: `registrar` **nunca lanza** (perder
+una linea no puede tumbar la adjudicacion que describia, al contrario de la regla 4), y **nunca
+escribe identidad de personas** (`redactar` sustituye `correo`, `nombre` y `destinatario`;
+`participanteId` si se escribe, porque es un ULID interno y sin el el runbook R-8 no se puede
+ejecutar).
+
+### 7.1 Trazas propias en lugar de X-Ray
+
+X-Ray sirve para descubrir **donde** se fue el tiempo entre varios servicios. Aqui hay un solo
+proceso hablando con DynamoDB, y la pregunta operativa es otra: **que le paso a esta solicitud**.
+Eso lo responde una linea por operacion con el `correlacionId` que ya comparte con la bitacora
+—el mismo identificador que el auditor tiene delante—, sin agregar el SDK, el permiso de IAM ni
+el costo por traza. Si algun dia hace falta el detalle por segmento, X-Ray se activa por
+configuracion de la funcion y este registro no estorba.
+
+### 7.2 Que va a metrica y que se queda en el registro
+
+Ninguna metrica lleva `loteId` como dimension, y no es un descuido. CloudWatch cobra por nombre
+y **combinacion de dimensiones**: `loteId` es de cardinalidad ilimitada y creciente, asi que
+"solicitudes por lote" como metrica dimensionada crearia una serie nueva por cada lote que haya
+existido, para siempre. Lo que se necesita de ese dato es responder preguntas puntuales —"que
+paso en el lote L7"—, y eso lo responde una consulta de Logs Insights sobre el registro, que no
+se cobra por serie. Las consultas concretas estan en `runbooks.md`.
+
+### 7.3 Alarmas, y por que cada una toma su senal de donde la toma
+
+Las metricas **nativas** las publica AWS y no dependen de que la aplicacion funcione. Las de
+**filtro de log** salen de las lineas que escribe la aplicacion, asi que un defecto en ese
+modulo las apaga. De ahi el reparto:
+
+| Alarma | Senal | Por que esa |
+| --- | --- | --- |
+| Barrido sin ejecutar (R6) | `AWS/Lambda` `Invocations`, nativa | Si el `handler` lanza antes de la primera linea, un filtro de log no ve nada y **calla**, que es justo el fallo que hay que gritar |
+| Barrido con errores | `AWS/Lambda` `Errors`, nativa | Igual: no depende del codigo de la aplicacion |
+| Vencimientos sin resolver | filtro sobre `errores` del barrido | Solo el dominio sabe contar "encontradas y no resueltas"; no existe metrica nativa |
+| Outbox retrasado | filtro sobre `antiguedadMaximaMin` | Idem. Los contadores no bastan: un CES caido deja un `reintentaraDespues` pequeno y constante, igual con dos minutos de retraso que con dos dias |
+| Correos fallidos | filtro sobre `fallidosPermanentes` | Un fallo permanente es un correo que **nadie** recibira (R-13) |
+| Contencion de transacciones | `AWS/DynamoDB` `TransactionConflict`, nativa | La contencion interesante ocurre en el SSR, cuyo grupo de logs lo crea Amplify Hosting y no esta pila: no hay a que colgarle un filtro. La metrica nativa cuenta lo mismo en los dos lados |
+
+**"El barrido no se ejecuta" trata la ausencia de datos como fallo** (`TreatMissingData.BREACHING`),
+al contrario del valor por omision de CloudWatch. Un barrido que no corre no publica ceros: no
+publica nada, y una alarma en `INSUFFICIENT_DATA` es indistinguible de "todo bien" para quien no
+la esta mirando.
+
+**No se alarma sobre `ConditionalCheckFailedRequests`**, que a primera vista parece la metrica
+obvia de contencion. En este sistema una condicion que falla es el mecanismo normal de
+funcionamiento: la adjudicacion se gana con escritura condicional (regla 6), asi que en cada
+lote N-1 intentos fallan su condicion **por diseno**. Esa alarma estaria disparada siempre.
+
+Los umbrales de `UMBRAL_OUTBOX_MIN` (60 min) y `UMBRAL_CONFLICTOS_POR_PERIODO` (50 por periodo
+de 5 min) son **valores de partida, no medidas**. La contencion legitima se concentra en
+`inicioVenta`, asi que "lo normal" no se sabe sin haber abierto una convocatoria real:
+`npm run carga:apertura` existe entre otras cosas para calibrarlos.
+
+Los avisos salen por un tema de SNS. **Sin `ALARMAS_CORREO` no hay suscriptor**: las alarmas se
+crean y cambian de estado igual —se ven en la consola— pero no avisan a nadie. Es lo deseable en
+un sandbox personal y lo que hay que llenar en un entorno vigilado.

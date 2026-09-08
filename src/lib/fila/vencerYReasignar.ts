@@ -38,6 +38,7 @@ import {
 import { diaDeNegocio } from "@/lib/domain/fechas";
 import { calcularVenceEn, estaVencido } from "@/lib/domain/plazos";
 import { transicion } from "@/lib/domain/transiciones";
+import { conTraza } from "@/lib/observabilidad/traza";
 import { itemsDeEncoladoAdjudicacion } from "@/lib/correo/outbox";
 import type { Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
@@ -94,6 +95,36 @@ const dormir = (ms: number): Promise<void> =>
 export const vencerYReasignar = async (
   entrada: EntradaDeVencimiento,
   deps: DepsDeServicio = {},
+): Promise<ResultadoDeVencimiento> =>
+  conTraza(
+    "vencerYReasignar",
+    {
+      loteId: entrada.lote.loteId,
+      turnoVencido: entrada.solicitudVencida.turno,
+      // Cual de los dos caminos de D-7 detecto el vencimiento. Es el dato que
+      // el runbook R-1 usa para decidir si el barrido esta cumpliendo su
+      // funcion o si todo lo esta resolviendo la verificacion perezosa.
+      detectadoPor: entrada.detectadoPor,
+    },
+    async () => ejecutarVencimiento(entrada, deps),
+    (resultado) => ({
+      desenlace:
+        resultado.estado === "reasignado" || resultado.estado === "no_vigente"
+          ? "ok"
+          : "rechazado",
+      estado: resultado.estado,
+      ...(resultado.estado === "reasignado"
+        ? { turno: resultado.turno, participanteId: resultado.participanteId }
+        : {}),
+      ...(resultado.estado === "abstenido"
+        ? { reservasVigentes: resultado.reservasVigentes }
+        : {}),
+    }),
+  );
+
+const ejecutarVencimiento = async (
+  entrada: EntradaDeVencimiento,
+  deps: DepsDeServicio,
 ): Promise<ResultadoDeVencimiento> => {
   const { ahora } = resolver(deps);
   const { solicitudVencida } = entrada;

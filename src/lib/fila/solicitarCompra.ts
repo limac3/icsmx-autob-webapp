@@ -27,10 +27,12 @@ import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import {
   CONDICION_CENTINELA_NUEVO,
   ejecutarTransaccion,
+  esConflictoDeTransaccion,
   esFalloDeCondicion,
 } from "@/lib/data/transacciones";
 import { ventaAbierta } from "@/lib/domain/ventanas";
 import { desdeIso } from "@/lib/domain/fechas";
+import { conTraza } from "@/lib/observabilidad/traza";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { Lote } from "@/types/lote";
 import {
@@ -103,6 +105,27 @@ export type SolicitudRegistrada = {
 export const solicitarCompra = async (
   entrada: EntradaSolicitarCompra,
   deps: DepsDeServicio = {},
+): Promise<Resultado<SolicitudRegistrada>> =>
+  conTraza(
+    "solicitarCompra",
+    { loteId: entrada.lote.loteId, participanteId: entrada.participanteId },
+    async () => ejecutarSolicitud(entrada, deps),
+    (resultado) =>
+      resultado.ok
+        ? {
+            desenlace: "ok",
+            turno: resultado.data.turno,
+            // El desenlace de la adjudicacion que dispara toda solicitud. Es
+            // lo que responde "entro a la fila, ¿y gano?" sin cruzar dos
+            // lineas de registro.
+            adjudicacion: resultado.data.adjudicacion.estado,
+          }
+        : { desenlace: "rechazado", error: resultado.error },
+  );
+
+const ejecutarSolicitud = async (
+  entrada: EntradaSolicitarCompra,
+  deps: DepsDeServicio,
 ): Promise<Resultado<SolicitudRegistrada>> => {
   const { ahora, nuevoId } = resolver(deps);
   const { lote } = entrada;
@@ -112,11 +135,12 @@ export const solicitarCompra = async (
   await anotarReserva({ loteId: lote.loteId, reservaId, ahora }, deps);
 
   // Paso 1 — el contador atomico entrega el turno.
-  const turno = await pedirTurno(lote, ahora, deps);
-  if (turno === undefined) {
+  const paso1 = await pedirTurno(lote, ahora, deps);
+  if ("rechazo" in paso1) {
     await liberarReserva({ loteId: lote.loteId, reservaId }, deps);
-    return fallo(motivoDelRechazo(lote, ahora));
+    return fallo(paso1.rechazo);
   }
+  const { turno } = paso1;
 
   // Paso 2 — la solicitud se hace visible, y la reserva se retira con ella.
   const registro = await registrarEnLaFila(
@@ -152,15 +176,27 @@ export const solicitarCompra = async (
 /**
  * Paso 1: `ADD contadorTurnos :uno` con `ReturnValues: UPDATED_NEW`.
  *
- * Devuelve `undefined` cuando la condicion no se cumple. El turno **es** el
- * valor nuevo del contador: atomico, sin lectura previa y sin forma de que dos
- * solicitudes reciban el mismo (regla 3).
+ * El turno **es** el valor nuevo del contador: atomico, sin lectura previa y
+ * sin forma de que dos solicitudes reciban el mismo (regla 3).
+ *
+ * Devuelve `{ rechazo }` en dos casos que **no** se pueden confundir, y por eso
+ * devuelve el codigo en lugar de un `undefined` que quien invoca tendria que
+ * interpretar:
+ *
+ *   - La condicion no se cumple: la venta cerro, el lote se retiro. Es un
+ *     rechazo de negocio y `motivoDelRechazo` dice cual.
+ *   - `TransactionConflictException`: el `ADD` choco con la transaccion de T2
+ *     sobre el mismo item del lote. Es `conflicto_concurrencia` — relee y
+ *     reintenta —, y decirle al participante "el lote no esta disponible"
+ *     seria falso.
  */
+type ResultadoDePaso1 = { turno: number } | { rechazo: CodigoError };
+
 const pedirTurno = async (
   lote: Lote,
   ahora: Date,
   deps: DepsDeServicio,
-): Promise<number | undefined> => {
+): Promise<ResultadoDePaso1> => {
   try {
     const salida = await clienteDe(deps).send(
       new UpdateCommand({
@@ -187,10 +223,26 @@ const pedirTurno = async (
       // una solicitud sin turno cierto romperia el orden de la fila.
       throw new Error(`El paso 1 no devolvio el turno del lote ${lote.loteId}`);
     }
-    return turno;
+    return { turno };
   } catch (error) {
-    if (!esFalloDeCondicion(error)) throw error;
-    return undefined;
+    if (esFalloDeCondicion(error)) {
+      return { rechazo: motivoDelRechazo(lote, ahora) };
+    }
+    // El `ADD` es la unica escritura del sistema que ocurre **fuera** de
+    // transaccion sobre un item que si esta en otras: el de T2. En
+    // `inicioVenta` los dos caminos se cruzan de forma rutinaria, y DynamoDB
+    // rechaza la operacion suelta con `TransactionConflictException`.
+    //
+    // El SDK lo reintenta por su cuenta (`maxAttempts` 3 por omision), asi que
+    // casi nunca llega hasta aqui. Cuando llega es porque la contencion agoto
+    // los intentos, y entonces lo unico correcto es tratarlo como la carrera
+    // perdida que es. Antes de la Etapa 12 escapaba como excepcion sin atrapar
+    // y el participante veia un error del servidor en lugar de un "reintenta"
+    // (`desafios-implementacion.md` 41).
+    if (esConflictoDeTransaccion(error)) {
+      return { rechazo: "conflicto_concurrencia" };
+    }
+    throw error;
   }
 };
 

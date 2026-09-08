@@ -34,10 +34,29 @@ const generarNonce = () => Buffer.from(crypto.randomUUID()).toString("base64");
 const FOUNDRY = "https://foundry.churchofjesuschrist.org";
 
 // Nonce estricto para script-src: es la superficie que de verdad importa
-// contra XSS. style-src conserva 'unsafe-inline' porque el uso de estilos en
-// linea de Eden no esta verificado todavia; endurecerlo sin poder revisar
-// visualmente cada componente es mas riesgo que beneficio. Revisar en la
-// Etapa 12 — ver agent_files/desafios-implementacion.md.
+// contra XSS.
+//
+// **style-src conserva 'unsafe-inline', y en la Etapa 12 se comprobo que no se
+// puede quitar.** La decision del 2026-09-04 lo dejo pendiente por falta de
+// evidencia; la evidencia esta en los paquetes instalados y son dos hechos
+// independientes, cada uno suficiente por si solo:
+//
+//   1. Eden no publica **ningun** archivo .css. Cada componente lleva su hoja
+//      como cadena y la monta con `<style href="..." precedence="eden">` —el
+//      izado de hojas de estilo de React 19—, que produce un elemento `<style>`
+//      en linea. Eden no acepta un nonce que pasarle, asi que `style-src-elem`
+//      exige 'unsafe-inline'. Se ve, por ejemplo, en
+//      `eden-table/lib/es/components/Table/Table.js`.
+//   2. Ademas hay atributos `style={{...}}` en componentes que esta aplicacion
+//      usa en casi toda pantalla: `TD`, `TH`, `TR` y `SortButton` de
+//      eden-table; `Hint`, `Select`, `FieldSet` y `SharedInput` de
+//      eden-form-parts; `Item` de eden-grid. Eso exige 'unsafe-inline' tambien
+//      en `style-src-attr`.
+//
+// Partir la directiva en `style-src-elem` y `style-src-attr` no gana nada:
+// ambas necesitarian el mismo permiso. Endurecerla romperia visualmente la
+// aplicacion sin que `next build` ni jsdom lo detecten, porque ninguno de los
+// dos aplica CSP. Queda como riesgo aceptado y documentado.
 const construirCsp = (nonce: string) => {
   const enDesarrollo = process.env.NODE_ENV === "development";
   const dominioCloudfront = process.env.CLOUDFRONT_DOMAIN;

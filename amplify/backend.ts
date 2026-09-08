@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
 import { defineBackend, secret } from "@aws-amplify/backend";
 import { CDKContextKey } from "@aws-amplify/platform-core";
+import { Duration } from "aws-cdk-lib";
+import { LogGroup, type ILogGroup } from "aws-cdk-lib/aws-logs";
 // Las extensiones `.ts` son obligatorias y literales. `ampx` ejecuta este archivo con el
 // *type stripping* nativo de Node, cuyo resolvedor ESM no completa extensiones **ni mapea
 // `.js` a `.ts`**: hay que nombrar el archivo que existe en disco.
+import { AlarmasAutob } from "./alarmas.ts";
 import { AlmacenamientoAutob } from "./almacenamiento.ts";
 import { barrido } from "./barrido/resource.ts";
 import { aplicarPermisosAutob, RolComputoSsr } from "./permisos.ts";
@@ -66,6 +69,43 @@ if (!funcionBarrido.role) {
 aplicarPermisosAutob(funcionBarrido, funcionBarrido.role, recursos);
 backend.barrido.addEnvironment("AUTOB_TABLE_NAME", tabla.tabla.tableName);
 
+/**
+ * El grupo de logs que Amplify crea para el barrido.
+ *
+ * `FunctionResources` solo expone `lambda: IFunction` y `cfnFunction`, y ni
+ * `IFunction` ni `defineFunction` dan acceso al grupo: Amplify lo construye
+ * como hermano de la funcion con el id `<id>-log-group` cuando —y solo
+ * cuando— se declara `logging.retention` (`backend-function/lib/factory.js`).
+ * Se busca en el arbol de constructos porque es el unico camino que hay.
+ *
+ * **No se recurre al nombre convencional `/aws/lambda/<funcion>`.** Ese grupo
+ * no existe aqui: al declarar uno propio, Amplify se lo pasa a la funcion por
+ * `LoggingConfig` y Lambda escribe en el, no en el de la convencion. Un filtro
+ * sobre el nombre convencional se desplegaria sin error y no coincidiria nunca.
+ *
+ * Si Amplify cambia ese id, **esto lanza al sintetizar** en vez de dejar
+ * alarmas mudas: `backend.test.ts` sintetiza la pila en la compuerta, asi que
+ * el fallo aparece en CI y no en produccion (regla 15, sin fallback
+ * silencioso).
+ */
+function grupoDeLogsDelBarrido(): ILogGroup {
+  const hermanos = funcionBarrido.node.scope?.node.children ?? [];
+  const grupo = hermanos.find(
+    (hijo): hijo is LogGroup => hijo instanceof LogGroup,
+  );
+
+  if (!grupo) {
+    throw new Error(
+      "No se encontro el grupo de logs del barrido junto a la funcion." +
+        " Amplify solo lo crea si `logging.retention` esta declarado en" +
+        " amplify/barrido/resource.ts; comprobar tambien que la version de" +
+        " @aws-amplify/backend-function sigue creandolo como hermano.",
+    );
+  }
+
+  return grupo;
+}
+
 // CES (Church Email Service) — el procesador del outbox de la Etapa 10.
 // `secret()` referencia un parametro de Secrets Manager por nombre; su
 // **valor** lo pone el operador con `ampx sandbox secret set` (o el equivalente
@@ -82,6 +122,45 @@ backend.barrido.addEnvironment(
   "APP_BASE_URL",
   process.env.APP_BASE_URL ?? "http://localhost:3000",
 );
+
+// Alarmas de la Etapa 12 — `arquitectura-tecnica-aws.md` 7. Se crean tambien en
+// un sandbox y no solo en las ramas compartidas: seis alarmas cuestan centavos
+// al mes, y el paso "cada runbook ejecutado al menos una vez" de la Etapa 12
+// exige poder disparar una de verdad en algun sitio antes de produccion.
+//
+// `ALARMAS_CORREO` queda vacia por omision. Sin ella las alarmas se crean y
+// cambian de estado igual —se ven en la consola—, pero no avisan a nadie: es la
+// diferencia entre un sandbox personal y un entorno vigilado, y la decide quien
+// despliega, no este archivo.
+//
+// **Pila propia, y no `pila`.** Es una restriccion de CloudFormation, no una
+// preferencia de organizacion. Las alarmas del barrido apuntan a metricas
+// dimensionadas por `FunctionName`, asi que la pila que las contenga
+// **referencia** la pila de la funcion; y la pila de la funcion ya referencia
+// `pila`, porque de ahi toma `AUTOB_TABLE_NAME`. Meter las alarmas en `pila`
+// cierra el ciclo `funcion -> recursos -> funcion` y `ampx` falla al
+// sintetizar, sin desplegar nada.
+//
+// Con una tercera pila las dependencias van en un solo sentido:
+//
+//   AutobAlarmas -> function (metricas y grupo de logs del barrido)
+//   AutobAlarmas -> AutobRecursos (metricas de la tabla)
+//   function     -> AutobRecursos (nombre de la tabla)
+export const pilaDeAlarmas = backend.createStack("AutobAlarmas");
+
+const alarmas = new AlarmasAutob(pilaDeAlarmas, "Alarmas", {
+  tabla: tabla.tabla,
+  logsDelBarrido: grupoDeLogsDelBarrido(),
+  invocacionesDelBarrido: funcionBarrido.metricInvocations({
+    period: Duration.minutes(15),
+  }),
+  erroresDelBarrido: funcionBarrido.metricErrors({
+    period: Duration.minutes(15),
+  }),
+  ...(process.env.ALARMAS_CORREO
+    ? { correoDeAvisos: process.env.ALARMAS_CORREO }
+    : {}),
+});
 
 backend.addOutput({
   custom: {
@@ -100,6 +179,9 @@ backend.addOutput({
       // Amplify Hosting no forma parte de `defineBackend`, asi que el rol se crea aqui pero
       // la asociacion es un paso de consola. Ver `runbooks.md`.
       rolComputoSsr: rolSsr.rol.roleArn,
+      // Para confirmar la suscripcion de correo, o para agregar mas
+      // destinatarios sin volver a desplegar (`runbooks.md` R-13).
+      temaDeAvisos: alarmas.tema.topicArn,
     },
   },
 });

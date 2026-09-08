@@ -33,6 +33,7 @@ import { clave, gsi4, NOMBRES_DE_INDICE, PREFIJO } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { diaDeNegocio } from "@/lib/domain/fechas";
+import { conTraza } from "@/lib/observabilidad/traza";
 import type { Solicitud } from "@/types/fila";
 import { adjudicarLote } from "./adjudicarLote";
 import { aSolicitud } from "./mapeo";
@@ -59,6 +60,30 @@ export type ResultadoDeBarrido = {
 export const barridoDeVencimientos = async (
   entrada: { diasHaciaAtras?: number } = {},
   deps: DepsDeServicio = {},
+): Promise<ResultadoDeBarrido> =>
+  conTraza(
+    "barridoDeVencimientos",
+    {},
+    async () => ejecutarBarrido(entrada, deps),
+    (resultado) => ({
+      // `errores` cuenta las vencidas que el barrido **encontro y no pudo
+      // resolver**: convocatoria ilegible, lote ausente, contencion agotada.
+      // Es el sintoma mas grave del sistema —"si esta alarma se dispara, los
+      // dos caminos de vencimiento fallaron" (`arquitectura-tecnica-aws.md`
+      // 7)—, porque una adjudicacion vencida que sigue vigente bloquea la fila
+      // entera de su lote.
+      //
+      // `vencimientosAbstenidos` no cuenta como rechazo: abstenerse es la
+      // respuesta correcta ante turnos en vuelo (R18) y la corrida siguiente
+      // lo resuelve.
+      desenlace: resultado.errores > 0 ? "rechazado" : "ok",
+      ...resultado,
+    }),
+  );
+
+const ejecutarBarrido = async (
+  entrada: { diasHaciaAtras?: number },
+  deps: DepsDeServicio,
 ): Promise<ResultadoDeBarrido> => {
   const { ahora } = resolver(deps);
   const dias = entrada.diasHaciaAtras ?? DIAS_HACIA_ATRAS;

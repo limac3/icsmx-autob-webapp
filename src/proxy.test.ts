@@ -45,6 +45,52 @@ describe("proxy", () => {
     expect(directiva("font-src")).toContain(foundry);
   });
 
+  it("style-src conserva unsafe-inline, porque Eden no deja alternativa", async () => {
+    // Etapa 12. No es un pendiente: es un limite comprobado en los paquetes
+    // instalados, y esta prueba existe para que nadie lo "endurezca" creyendo
+    // que era un descuido.
+    //
+    //   1. Eden no publica ningun .css. Cada componente monta su hoja con
+    //      `<style href precedence>` (izado de React 19), que es un elemento
+    //      `<style>` en linea sin nonce que podamos inyectar.
+    //   2. Y hay atributos `style={{...}}` en TD, TH, TR de eden-table, en
+    //      Hint, Select y FieldSet de eden-form-parts, y en Item de eden-grid.
+    //
+    // Quitarlo rompe la aplicacion visualmente sin que `next build` ni jsdom
+    // lo detecten: ninguno de los dos aplica CSP.
+    const csp =
+      (await proxy(crearRequest("/sesion"))).headers.get(
+        "Content-Security-Policy",
+      ) ?? "";
+
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    // Y script-src, que es la superficie que de verdad importa, sigue sin el.
+    const scriptSrc = csp
+      .split(";")
+      .map((parte) => parte.trim())
+      .find((parte) => parte.startsWith("script-src "));
+    expect(scriptSrc).not.toContain("unsafe-inline");
+  });
+
+  it("cierra las directivas que no tienen uso legitimo en esta aplicacion", async () => {
+    // Ninguna pantalla carga complementos, ni reescribe `<base>`, ni se deja
+    // enmarcar. Explicitarlas evita depender de que `default-src` cubra cada
+    // caso en cada version de navegador.
+    const csp =
+      (await proxy(crearRequest("/sesion"))).headers.get(
+        "Content-Security-Policy",
+      ) ?? "";
+
+    for (const directiva of [
+      "object-src 'none'",
+      "base-uri 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+    ]) {
+      expect(csp).toContain(directiva);
+    }
+  });
+
   it("genera un nonce distinto en cada peticion", async () => {
     const extraerNonce = (respuesta: NextResponse) =>
       respuesta.headers

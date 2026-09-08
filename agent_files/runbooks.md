@@ -300,6 +300,30 @@ Sin este paso la aplicacion desplegada no puede leer la tabla; con el, hereda ta
 Solo aplica a una app de Amplify Hosting ya creada — **un sandbox local no lo necesita**,
 porque ahi la aplicacion corre con las credenciales del operador.
 
+### Paso 6 — Confirmar la suscripcion de las alarmas · **[OPERADOR]**
+
+Solo en un entorno que alguien tenga que vigilar; un sandbox personal puede quedarse sin
+suscriptor a proposito.
+
+1. Antes de desplegar, poner `ALARMAS_CORREO` con la direccion que recibira los avisos. **Es lo
+   unico que este paso no puede arreglar despues sin redesplegar**: sin la variable, el tema de
+   SNS se crea vacio.
+2. Tras el despliegue, AWS manda un correo de confirmacion a esa direccion. **Hay que aceptarlo.**
+   Una suscripcion `PendingConfirmation` en la consola de SNS parece configurada y no entrega
+   nada — el modo de fallo mas peligroso de todo este paso, porque el silencio se confunde con
+   calma.
+3. Comprobar que las seis alarmas existen en CloudWatch y no estan en `ALARM`.
+   `barrido-sin-ejecutar` tarda hasta 15 minutos en salir de `INSUFFICIENT_DATA`; las que
+   dependen de un filtro de metrica no publican su primer punto hasta que el barrido corre y
+   produce una linea que coincida.
+4. **Ejecutar una de verdad al menos una vez**, que es lo que exige la Etapa 12 de todo runbook:
+   la forma barata es cambiar temporalmente el umbral de una alarma en la consola para que se
+   dispare, confirmar que el correo llega, y devolver el umbral. Asi se prueba el camino
+   completo —alarma, tema, suscripcion, buzon— sin provocar un incidente real.
+
+Para agregar destinatarios despues sin redesplegar, suscribirlos al tema cuyo ARN sale en
+`amplify_outputs.json` bajo `custom.autob.temaDeAvisos`.
+
 ---
 
 ## R-12 — Recorrer el flujo completo en local · **[AGENTE]** o **[OPERADOR]**
@@ -340,6 +364,44 @@ salir.
 
 ---
 
+## R-13 — Una alarma se disparo (o nunca avisa)
+
+**Sintoma:** llego un aviso de CloudWatch, o se sospecha que las alarmas no avisan a nadie.
+
+**Cada alarma lleva su runbook en la descripcion.** El nombre indica el sintoma y
+`AlarmDescription` remite al procedimiento; no hay que adivinar el mapeo:
+
+| Alarma | Lleva a |
+| --- | --- |
+| `...-barrido-sin-ejecutar` | R-1 |
+| `...-barrido-con-errores` | R-1 |
+| `...-vencimientos-sin-resolver` | R-4. **Es el sintoma mas grave del sistema**: los dos caminos de D-7 fallaron |
+| `...-outbox-retrasado` | R-2 |
+| `...-correos-fallidos` | R-2, y R-3 para reencolar un caso puntual |
+| `...-contencion-de-transacciones` | R-4, y las consultas de cancelacion de arriba |
+
+**Si no llega ningun aviso** — el caso mas peligroso, porque el silencio se confunde con calma:
+
+1. Comprueba que `ALARMAS_CORREO` estaba puesta al desplegar. **Sin ella el tema de SNS se crea
+   sin suscriptores**: las alarmas funcionan y cambian de estado, pero nadie se entera.
+2. Si estaba puesta, comprueba que la suscripcion este **confirmada**. AWS manda un correo de
+   confirmacion y no entrega nada hasta que se acepta. En la consola de SNS, una suscripcion
+   `PendingConfirmation` parece configurada y no lo esta.
+3. Para agregar destinatarios sin volver a desplegar, suscribelos al tema cuyo ARN sale en
+   `amplify_outputs.json` como `custom.autob.temaDeAvisos`.
+
+**Si una alarma quedo en `INSUFFICIENT_DATA`:** normal en las que dependen de un filtro de
+metrica hasta que el barrido corre por primera vez y produce una linea que coincida. La de
+`barrido-sin-ejecutar` **no** debe quedarse ahi: trata la ausencia de datos como fallo a
+proposito, asi que si aparece en ese estado revisa que la metrica de la funcion exista.
+
+**Si una alarma es puro ruido:** `UMBRAL_OUTBOX_MIN` y `UMBRAL_CONFLICTOS_POR_PERIODO` en
+`amplify/alarmas.ts` son valores de partida, no medidas. Calibralos con
+`npm run carga:apertura` o con el pico real de la primera convocatoria; ajustar un umbral con
+datos es preferible a convivir con una alarma que nadie cree.
+
+---
+
 ## Consultas de diagnostico frecuentes
 
 | Necesidad | Consulta |
@@ -351,6 +413,84 @@ salir.
 | Correos atorados | `Query` GSI4 `OUTBOX_PENDIENTE` |
 | Actividad de un participante | `Query` `PK=AUDIT#PART#<participanteId>` |
 | Todo lo de un dia | `Query` GSI2 `AUDIT#<yyyy-mm-dd>` |
+
+---
+
+## Consultas del registro operativo (CloudWatch Logs Insights)
+
+Complementan las de arriba y responden otra clase de pregunta. La tabla dice **en que estado
+esta** algo; el registro dice **que le paso y cuanto tardo**. El hilo entre los dos es el
+`correlacionId`: el mismo valor viaja en los eventos de la bitacora y en la linea de registro de
+la operacion que los escribio, asi que un hallazgo de auditoria se lleva al diagnostico tecnico
+y al reves.
+
+Los campos van bajo `message` porque la funcion emite con el formato JSON de Lambda. Grupos:
+`/aws/lambda/...` de la funcion de barrido, y el grupo de computo SSR que crea Amplify Hosting.
+
+**Que paso con un lote** (sustituye "solicitudes por lote" como metrica; ver
+`arquitectura-tecnica-aws.md` 7.2 para por que no es una metrica):
+
+```
+fields @timestamp, message.operacion, message.desenlace, message.estado, message.turno, message.duracionMs
+| filter message.loteId = "L7"
+| sort @timestamp asc
+```
+
+**Todo lo de una transaccion**, siguiendo el `correlacionId` que aparece en la bitacora:
+
+```
+fields @timestamp, message.operacion, message.desenlace, message.error, message.descripcion
+| filter message.correlacionId = "01J..."
+| sort @timestamp asc
+```
+
+**Por que se cancelan las transacciones** — R-4. `descripcion` es la intencion que le puso quien
+escribio la transaccion ("lote sin adjudicacion", "centinela de adjudicacion"), asi que dice
+**cual** condicion fallo y no solo que fallo alguna:
+
+```
+fields @timestamp, message.error, message.descripcion, message.codigos
+| filter message.operacion = "transaccion"
+| stats count() by message.descripcion, message.error
+```
+
+**Salud del barrido, corrida por corrida** — R-1. `errores` son las vencidas que encontro y no
+pudo resolver; `vencimientosAbstenidos` son las que dejo para la corrida siguiente por turnos en
+vuelo (R18), que es correcto y no un problema:
+
+```
+fields @timestamp, message.vencimientosResueltos, message.vencimientosAbstenidos, message.errores, message.lotesRecuperados
+| filter message.operacion = "barridoDeVencimientos"
+| sort @timestamp desc
+```
+
+**Cuanto lleva esperando el correo** — R-2:
+
+```
+fields @timestamp, message.antiguedadMaximaMin, message.enviados, message.fallidosPermanentes, message.reintentaraDespues
+| filter message.operacion = "procesarOutbox"
+| sort @timestamp desc
+```
+
+**Latencia de la fila bajo carga**, para comparar contra la prueba de carga:
+
+```
+filter message.operacion = "solicitarCompra"
+| stats count(), avg(message.duracionMs), pct(message.duracionMs, 95), max(message.duracionMs) by bin(5m)
+```
+
+**Cual de los dos caminos de vencimiento esta trabajando** — el dato que dice si el barrido esta
+cumpliendo su funcion o si todo lo resuelve la verificacion perezosa:
+
+```
+fields message.detectadoPor, message.estado
+| filter message.operacion = "vencerYReasignar"
+| stats count() by message.detectadoPor, message.estado
+```
+
+> **No busques correos ni nombres en el registro: no estan.** `redactar` sustituye `correo`,
+> `nombre`, `destinatario` y `telefono` por `[redactado]` antes de escribir. Para saber a quien
+> pertenece una solicitud, lleva el `participanteId` —ese si se registra— a la tabla.
 
 ---
 

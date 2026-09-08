@@ -38,6 +38,7 @@ import {
 } from "@/lib/data/transacciones";
 import { diaDeNegocio } from "@/lib/domain/fechas";
 import { calcularVenceEn } from "@/lib/domain/plazos";
+import { conTraza } from "@/lib/observabilidad/traza";
 import { itemsDeEncoladoAdjudicacion } from "@/lib/correo/outbox";
 import type { MotivoDeAdjudicacion } from "@/types/fila";
 import type { Lote } from "@/types/lote";
@@ -110,6 +111,33 @@ const dormir = (ms: number): Promise<void> =>
 export const adjudicarLote = async (
   entrada: EntradaDeAdjudicacion,
   deps: DepsDeServicio = {},
+): Promise<ResultadoDeAdjudicacion> =>
+  conTraza(
+    "adjudicarLote",
+    { loteId: entrada.lote.loteId, motivo: entrada.motivo },
+    async () => ejecutarAdjudicacion(entrada, deps),
+    (resultado) => ({
+      // `adjudicado` es el unico desenlace `ok`. Los demas son respuestas
+      // correctas y no errores —el comentario de `ResultadoDeAdjudicacion` lo
+      // explica—, pero si merecen `warn`: `en_conflicto` y `fila_agotada`
+      // sostenidos son justo lo que hay que poder buscar (runbook R-4).
+      desenlace: resultado.estado === "adjudicado" ? "ok" : "rechazado",
+      estado: resultado.estado,
+      ...(resultado.estado === "adjudicado"
+        ? { turno: resultado.turno, participanteId: resultado.participanteId }
+        : {}),
+      ...(resultado.estado === "abstenido"
+        ? { reservasVigentes: resultado.reservasVigentes }
+        : {}),
+      ...(resultado.estado === "fila_agotada"
+        ? { turnosRevisados: resultado.turnosRevisados }
+        : {}),
+    }),
+  );
+
+const ejecutarAdjudicacion = async (
+  entrada: EntradaDeAdjudicacion,
+  deps: DepsDeServicio,
 ): Promise<ResultadoDeAdjudicacion> => {
   const intentos = entrada.intentos ?? INTENTOS_DE_ADJUDICACION;
 

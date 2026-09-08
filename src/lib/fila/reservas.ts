@@ -27,7 +27,10 @@ import { DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { clave, PREFIJO } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, type DepsDeServicio } from "@/lib/data/deps";
-import { esFalloDeCondicion } from "@/lib/data/transacciones";
+import {
+  esConflictoDeTransaccion,
+  esFalloDeCondicion,
+} from "@/lib/data/transacciones";
 
 /**
  * Cuanto se espera a una reserva antes de darla por muerta.
@@ -91,6 +94,17 @@ export const liberarReserva = async (
     );
   } catch (error) {
     if (esFalloDeCondicion(error)) return;
+    // El item de la reserva **si** participa en transacciones: el paso 2 de T1
+    // lo borra dentro de la suya. Cuando `depurarYContarReservas` retira una
+    // reserva muerta que en ese instante esta siendo borrada por el paso 2 de
+    // su propia solicitud, DynamoDB rechaza esta operacion suelta con
+    // `TransactionConflictException`.
+    //
+    // Se ignora, porque significa exactamente lo que este helper ya declara
+    // tolerar: alguien mas la esta resolviendo. Dejarla escapar convertiria una
+    // limpieza de mejor esfuerzo en una adjudicacion fallida — `adjudicarLote`
+    // llama a `depurarYContarReservas` en cada ronda (`desafios-implementacion.md` 41).
+    if (esConflictoDeTransaccion(error)) return;
     throw error;
   }
 };

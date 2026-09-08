@@ -82,6 +82,26 @@ export const solicitarCompra = async (input: Entrada, deps: Deps = {}) => {
 `ahora` inyectable es lo que hace probables las fronteras de tiempo sin manipular el reloj del
 sistema. Patron tomado de `icsmx-camp-webapp`, donde ya esta en produccion.
 
+### 2.3 `src/lib/observabilidad/` es transversal, no una capa
+
+El registro operativo (Etapa 12) no encaja en la pila de 2 y no se le forzo un sitio: lo importan
+`src/lib/data` —`ejecutarTransaccion` deja constancia de por que se cancelo una transaccion— y
+`src/lib/<feature>` —`conTraza` envuelve las operaciones criticas—, que son dos capas distintas.
+
+Lo que **si** respeta es la unica frontera que importa aqui: **`src/lib/domain` no lo importa**.
+El dominio sigue siendo funciones puras sin efectos (P-2), y escribir una linea de registro es un
+efecto. Una regla que quisiera "dejar constancia" esta pidiendo que quien la invoca lo haga con
+su resultado.
+
+Es la misma clase de modulo que `src/lib/estadoAplicacion.ts`: utilidad transversal de un solo
+proposito, sin estado y sin I/O mas alla de la salida estandar.
+
+**No recibe el reloj por `deps`**, y es la excepcion que confirma 2.2: `conTraza` mide con
+`performance.now()`. El `ahora` inyectable esta **congelado** por invocacion a proposito —un
+instante por acto, para que el item y su evento cuenten la misma historia—, asi que medir una
+duracion con el daria siempre cero. Una duracion no es un dato de negocio y no tiene que ser
+reproducible.
+
 ---
 
 ## 3. Forma de retorno

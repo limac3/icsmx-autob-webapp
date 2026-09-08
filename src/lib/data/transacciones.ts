@@ -19,6 +19,7 @@ import "server-only";
 import {
   ConditionalCheckFailedException,
   TransactionCanceledException,
+  TransactionConflictException,
   type CancellationReason,
 } from "@aws-sdk/client-dynamodb";
 import {
@@ -27,6 +28,7 @@ import {
   type TransactWriteCommandInput,
 } from "@aws-sdk/lib-dynamodb";
 
+import { registrar } from "@/lib/observabilidad/registro";
 import type { CodigoError } from "@/types/resultado";
 import { nombreDeTabla, obtenerCliente } from "./cliente";
 import type { Clave } from "./claves";
@@ -156,10 +158,47 @@ export const ejecutarTransaccion = async (
     return { ok: true };
   } catch (error) {
     if (error instanceof TransactionCanceledException) {
-      return traducirCancelacion(error, items);
+      const traducido = traducirCancelacion(error, items);
+      registrarCancelacion(error, items, traducido);
+      return traducido;
     }
     throw error;
   }
+};
+
+/**
+ * Deja constancia operativa de **por que** se cancelo una transaccion.
+ *
+ * Se registra aqui y no en cada llamador porque este es el unico punto que ve
+ * las tres cosas a la vez: el codigo crudo de DynamoDB, la posicion del item
+ * que fallo y la `descripcion` que quien escribio la transaccion le puso. La
+ * traza de la operacion (`conTraza`) dice que la adjudicacion se rechazo; solo
+ * esta linea dice que fallo la condicion del item 0, "lote L7 libre".
+ *
+ * Solo en el fallo. Una linea por transaccion exitosa multiplicaria el volumen
+ * de CloudWatch por el de las escrituras del sistema sin agregar nada que la
+ * traza de la operacion no diga ya.
+ */
+const registrarCancelacion = (
+  error: TransactionCanceledException,
+  items: readonly ItemDeTransaccion[],
+  traducido: ResultadoDeTransaccion,
+): void => {
+  if (traducido.ok) return;
+
+  registrar("warn", "transaccion", {
+    error: traducido.error,
+    indice: traducido.indice,
+    descripcion: traducido.descripcion,
+    // Los codigos crudos, en el orden posicional en que los devuelve DynamoDB.
+    // `traducirCancelacion` se queda con el primero distinto de "None"; cuando
+    // fallan varias condiciones a la vez, esta cadena es lo unico que permite
+    // reconstruir si la eleccion fue la correcta.
+    codigos: (error.CancellationReasons ?? [])
+      .map((motivo) => motivo.Code ?? "?")
+      .join(","),
+    items: items.length,
+  });
 };
 
 const traducirCancelacion = (
@@ -240,3 +279,31 @@ const traducirCancelacion = (
  */
 export const esFalloDeCondicion = (error: unknown): boolean =>
   error instanceof ConditionalCheckFailedException;
+
+/**
+ * ¿Choco una escritura **suelta** contra una transaccion en curso sobre el
+ * mismo item?
+ *
+ * DynamoDB lanza `TransactionConflictException` cuando un `UpdateItem` o un
+ * `PutItem` normal toca un item que en ese instante participa en un
+ * `TransactWriteItems`. No es lo mismo que el codigo `TransactionConflict`
+ * dentro de `CancellationReasons`: aquel llega cuando **la transaccion** es la
+ * que pierde; este, cuando la que pierde es la operacion suelta.
+ *
+ * Existe por el paso 1 de T1, que es la unica escritura del sistema que ocurre
+ * fuera de transaccion sobre un item que si esta en otras: el `ADD
+ * contadorTurnos` sobre el lote compite con la transaccion de T2, que condiciona
+ * y escribe ese mismo item. En `inicioVenta` los dos caminos se cruzan de forma
+ * rutinaria.
+ *
+ * **Es reintentable y hay que tratarlo como tal.** El SDK reintenta por su
+ * cuenta —`maxAttempts` vale 3 por omision—, asi que casi nunca llega hasta
+ * aqui; cuando llega, es porque la contencion agoto los intentos, y la
+ * respuesta correcta es `conflicto_concurrencia` (relee y reintenta), no un
+ * error de negocio ni una excepcion sin atrapar.
+ *
+ * Lo detecto la prueba de carga de la Etapa 12: sin reintentos del SDK, la
+ * excepcion escapaba de `solicitarCompra` (`desafios-implementacion.md` 41).
+ */
+export const esConflictoDeTransaccion = (error: unknown): boolean =>
+  error instanceof TransactionConflictException;

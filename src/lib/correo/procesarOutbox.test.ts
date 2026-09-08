@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { TransactionConflictException } from "@aws-sdk/client-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -73,6 +74,8 @@ describe("procesarOutbox — exito", () => {
       enviados: 1,
       fallidosPermanentes: 0,
       reintentaraDespues: 0,
+      // `creadoEn` de la plantilla es una hora antes de `AHORA`.
+      antiguedadMaximaMin: 60,
     });
 
     const transaccion = itemsDe(falso, "TransactWriteCommand")[0]?.input
@@ -113,6 +116,7 @@ describe("procesarOutbox — fallo transitorio", () => {
       enviados: 0,
       fallidosPermanentes: 0,
       reintentaraDespues: 1,
+      antiguedadMaximaMin: 60,
     });
     expect(itemsDe(falso, "TransactWriteCommand")).toHaveLength(0);
     const update = itemsDe(falso, "UpdateCommand")[0];
@@ -124,6 +128,40 @@ describe("procesarOutbox — fallo transitorio", () => {
       ":intentos": 1,
       ":error": "timeout",
     });
+  });
+
+  it("un conflicto de transaccion al anotar el intento no aborta la corrida", async () => {
+    // El item del mensaje **si** participa en transacciones (`marcarEnviado` y
+    // `marcarFallido`), asi que dos corridas solapadas del barrido pueden
+    // chocar: una resolviendo el mensaje por transaccion, la otra anotandole el
+    // intento con este `UpdateItem` suelto. Dejar escapar la excepcion
+    // abortaria el resto del outbox por no poder escribir un contador.
+    enviar.mockResolvedValue({
+      ok: false,
+      error: "timeout",
+      reintentable: true,
+    });
+    const falso = crearClienteFalso({
+      responder: (comando) => {
+        if (comando.nombre === "QueryCommand") {
+          return { Items: [mensajeItem("M1")] };
+        }
+        if (comando.nombre === "UpdateCommand") {
+          throw new TransactionConflictException({
+            message: "Transaction is ongoing for the item",
+            $metadata: {},
+          });
+        }
+        return {};
+      },
+    });
+
+    const resultado = await procesarOutbox({
+      cliente: falso.cliente,
+      ahora: () => AHORA,
+    });
+
+    expect(resultado.reintentaraDespues).toBe(1);
   });
 
   it("al agotar MAXIMO_INTENTOS_CORREO, un fallo reintentable se vuelve permanente", async () => {
@@ -201,6 +239,68 @@ describe("procesarOutbox — varios mensajes", () => {
       enviados: 1,
       fallidosPermanentes: 0,
       reintentaraDespues: 1,
+      antiguedadMaximaMin: 60,
     });
+  });
+});
+
+describe("procesarOutbox — antiguedad del pendiente mas viejo", () => {
+  // Es el numero que alimenta la alarma "correos en el outbox mas antiguos que
+  // un umbral". Los contadores no sirven para eso: un CES caido deja
+  // `reintentaraDespues` en un valor pequeno y constante, igual con dos
+  // minutos de retraso que con dos dias.
+
+  it("mide desde el primero de la lista, que PA-14 devuelve como el mas viejo", async () => {
+    enviar.mockResolvedValue({
+      ok: false,
+      error: "timeout",
+      reintentable: true,
+    });
+    const falso = crearClienteFalso({
+      responder: conPendientes([
+        mensajeItem("M1", { creadoEn: "2026-10-06T15:00:00.000Z" }),
+        mensajeItem("M2", { creadoEn: "2026-10-08T14:30:00.000Z" }),
+      ]),
+    });
+
+    const resultado = await procesarOutbox({
+      cliente: falso.cliente,
+      ahora: () => AHORA,
+    });
+
+    expect(resultado.antiguedadMaximaMin).toBe(2 * 24 * 60);
+  });
+
+  it("sin pendientes, es cero y no NaN", async () => {
+    const falso = crearClienteFalso({ responder: conPendientes([]) });
+
+    const resultado = await procesarOutbox({
+      cliente: falso.cliente,
+      ahora: () => AHORA,
+    });
+
+    expect(resultado.antiguedadMaximaMin).toBe(0);
+  });
+
+  it("un creadoEn en el futuro se acota a cero, no a un negativo", async () => {
+    // Un negativo no dispararia jamas una alarma de umbral, asi que un reloj
+    // torcido o un dato sembrado a mano dejaria el outbox sin vigilancia.
+    enviar.mockResolvedValue({
+      ok: false,
+      error: "timeout",
+      reintentable: true,
+    });
+    const falso = crearClienteFalso({
+      responder: conPendientes([
+        mensajeItem("M1", { creadoEn: "2026-10-09T15:00:00.000Z" }),
+      ]),
+    });
+
+    const resultado = await procesarOutbox({
+      cliente: falso.cliente,
+      ahora: () => AHORA,
+    });
+
+    expect(resultado.antiguedadMaximaMin).toBe(0);
   });
 });

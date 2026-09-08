@@ -2021,3 +2021,388 @@ Cualquier logica que reconstruya "que paso primero" a partir de la bitacora tien
 por `correlacionId` antes de mirar el orden de la `SK`. El orden cronologico entre transacciones
 es real y hay que respetarlo; el orden entre eventos de la **misma** transaccion no lo es, y
 tratarlo como si lo fuera inventa carreras que la base de datos nunca tuvo.
+
+---
+
+## 38) Las alarmas en la pila de recursos cierran un ciclo entre pilas
+
+### Problema
+
+`AlarmasAutob` (Etapa 12) tenia que crear las alarmas del barrido en `AutobRecursos`, la pila
+propia del proyecto donde ya viven la tabla, el bucket y el rol de computo. Es donde parece que
+corresponden: son recursos de este sistema, no de Amplify.
+
+### Sintoma
+
+`ampx` —y `backend.test.ts`, que sintetiza la pila— fallaba antes de desplegar nada:
+
+```
+WARNING Resources/function1351588B: Circular Dependencies for resource function1351588B.
+Circular dependency with [function1351588B -> AutobRecursos78796E31 -> function1351588B]
+```
+
+Doce de catorce pruebas del archivo rompian de golpe, todas en `Template.fromStack`.
+
+### Causa raiz
+
+La alarma "el barrido no se ejecuta" cuelga de `funcionBarrido.metricInvocations()`, y esa
+metrica va dimensionada por `FunctionName`. Al resolverse produce un `Ref` a la funcion, que vive
+en la pila que Amplify crea para `defineFunction`. Es decir: **`AutobRecursos` pasa a referenciar
+la pila de la funcion**.
+
+Y la pila de la funcion ya referenciaba `AutobRecursos`, desde la Etapa 10:
+
+```ts
+backend.barrido.addEnvironment("AUTOB_TABLE_NAME", tabla.tabla.tableName);
+```
+
+Dos pilas que se referencian mutuamente son un ciclo que CloudFormation no puede ordenar.
+
+Lo importante es que **el diagnostico obvio es el equivocado**. Parece un problema del grupo de
+logs y de los filtros de metrica, porque son los recursos nuevos que cruzan la frontera. No lo
+es: con solo mover los filtros el ciclo persiste, porque basta cualquier referencia a la funcion
+—incluida una metrica nativa, que no crea ningun recurso— para cerrarlo.
+
+Tampoco sirve `pila.addDependency(Stack.of(funcion))`: eso declara explicitamente la arista que
+ya existia en el sentido contrario.
+
+### Solucion aplicada
+
+Una **tercera pila** para las alarmas, `backend.createStack("AutobAlarmas")`, con lo que las
+dependencias vuelven a ir en un solo sentido:
+
+```
+AutobAlarmas -> function        (metricas y grupo de logs del barrido)
+AutobAlarmas -> AutobRecursos   (metricas de la tabla)
+function     -> AutobRecursos   (nombre de la tabla)
+```
+
+Los `MetricFilter` se quedan aparte, en la pila del grupo de logs (`Stack.of(logs)`), porque un
+filtro en otra pila obligaria a exportar el nombre del grupo por CloudFormation sin ganar nada.
+Las alarmas si viven juntas en `AutobAlarmas`: una alarma referencia su metrica por espacio de
+nombres y nombre —dos cadenas—, no por recurso, asi que no crea dependencia ninguna.
+
+`backend.test.ts` lo comprueba sintetizando las tres pilas y contando en cual acaba cada cosa.
+
+### Regla para futuro
+
+Antes de crear en `AutobRecursos` cualquier recurso que apunte a la funcion de barrido, recordar
+que la funcion ya toma de ahi el nombre de la tabla. La direccion de las dependencias entre pilas
+de Amplify es un dato de diseno, no un detalle: **una metrica dimensionada es una referencia**,
+aunque no parezca un recurso. Y el sintoma senala el recurso nuevo, no el que cierra el ciclo.
+
+---
+
+## 39) Un filtro de metrica que no coincide con nada no da error: da silencio
+
+### Problema
+
+Las alarmas de "vencimientos sin resolver", "outbox retrasado" y "correos fallidos" (Etapa 12)
+cuentan datos que solo el dominio sabe calcular, asi que no existen como metrica nativa de AWS:
+salen de `MetricFilter` sobre las lineas que `src/lib/observabilidad` escribe en el grupo de logs
+del barrido.
+
+### Sintoma
+
+Ninguno, y ese es el problema. **Dos defectos distintos producen exactamente el mismo resultado
+—una alarma que nunca se dispara— y ninguno de los dos falla al desplegar.**
+
+### Causa raiz
+
+Son dos trampas independientes, y las dos se descubrieron leyendo el codigo de Amplify y del
+runtime de Lambda, no probando.
+
+**1. El grupo de logs no existe todavia.** `AWS::Logs::MetricFilter` exige que el grupo exista al
+crearse, y Lambda crea el suyo en la **primera invocacion**, no al desplegarse. Amplify solo
+declara el grupo como recurso de la pila cuando `defineFunction` recibe `logging.retention`
+(`backend-function/lib/factory.js`, `createLogGroup`); sin eso no hay a que colgar el filtro.
+
+Ademas, `FunctionResources` solo expone `lambda: IFunction` y `cfnFunction`, y en esta version de
+CDK `IFunction` no tiene `logGroup`, asi que el grupo hay que buscarlo en el arbol de
+constructos: Amplify lo crea como hermano de la funcion.
+
+**Y no vale recurrir al nombre convencional `/aws/lambda/<funcion>`.** Al declarar un grupo
+propio, Amplify se lo pasa a la funcion por `LoggingConfig` y Lambda escribe **ahi**, no en el de
+la convencion. Un filtro sobre el nombre convencional se despliega sin queja, apunta a un grupo
+vacio y no coincide nunca.
+
+**2. La ruta del campo esta un nivel mas arriba de lo que parece.** Con
+`logging: { format: "json" }` el runtime de Lambda **envuelve** lo que se pasa a `console.info`:
+
+```json
+{ "timestamp": "...", "level": "INFO", "requestId": "...", "message": { "operacion": "...", "errores": 2 } }
+```
+
+Un patron `{ $.errores > 0 }` es sintacticamente valido, se despliega y no coincide con nada. El
+correcto es `{ $.message.errores > 0 }`.
+
+### Solucion aplicada
+
+- `logging: { format: "json", level: "info", retention: "1 month" }` en
+  `amplify/barrido/resource.ts`. La retencion no es solo higiene de costo: es lo que hace existir
+  el grupo como recurso de la pila.
+- `grupoDeLogsDelBarrido()` en `backend.ts` busca el `LogGroup` hermano de la funcion y **lanza**
+  si no lo encuentra, con un mensaje que nombra las dos causas posibles. `ampx` no despliega y
+  `backend.test.ts` falla en la compuerta; lo que no puede pasar es quedarse con alarmas mudas
+  (regla 15).
+- Todos los patrones usan `$.message.<campo>`, y una prueba de `backend.test.ts` afirma que
+  **cada** filtro sintetizado tiene un `MetricValue` que empieza por `$.message.`.
+- Cada filtro lleva `defaultValue: 0`. Sin el, una corrida que no coincide no publica ningun punto
+  y la alarma oscila entre `OK` e `INSUFFICIENT_DATA` en vez de quedarse en `OK`.
+
+### Regla para futuro
+
+Un filtro de metrica se valida por sintaxis, nunca por coincidencia: hay que probarlo contra una
+linea real en la consola de CloudWatch antes de confiar en la alarma que lo usa. Y al elegir la
+senal de una alarma, preferir la **metrica nativa** siempre que exista: no depende de que el
+codigo funcione, que es justo de lo que la alarma esta ahi para dudar. "El barrido no se ejecuta"
+es el caso limite — si el `handler` lanza antes de la primera linea, un filtro de log calla.
+
+---
+
+## 40) `style-src 'unsafe-inline'` no es un pendiente de la CSP: es un limite de Eden
+
+### Problema
+
+La decision del 2026-09-04 dejo `style-src 'unsafe-inline'` en la CSP con una nota explicita de
+revisarlo en la Etapa 12. La razon registrada entonces era falta de evidencia: "arriesga romper
+visualmente componentes Eden cuyo uso de estilos en linea no se pudo verificar".
+
+### Sintoma
+
+Ninguno visible, y por eso importa: **ni `next build` ni jsdom aplican CSP**. Endurecer la
+directiva dejaria la compuerta entera en verde y la aplicacion se dibujaria sin estilos en
+produccion. La consola del navegador es el unico lugar donde se veria.
+
+### Causa raiz
+
+Se verifico contra los paquetes instalados, que es evidencia mas fuerte que la documentacion. Son
+**dos hechos independientes**, cada uno suficiente por si solo:
+
+1. **Eden no publica ningun archivo `.css`.** Cada componente lleva su hoja como cadena de
+   JavaScript y la monta con el izado de hojas de estilo de React 19:
+
+   ```jsx
+   jsx("style", { href: "eden-table-Table.css", precedence: "eden", children: Table_default })
+   ```
+
+   (`eden-table/lib/es/components/Table/Table.js`). Eso produce un elemento `<style>` en linea en
+   el `<head>`, y Eden no expone forma de pasarle un nonce: `style-src-elem` exige
+   `'unsafe-inline'`.
+
+2. **Hay atributos `style={{...}}`** en componentes que esta aplicacion usa en casi toda pantalla:
+   `TD`, `TH`, `TR` y `SortButton` de `eden-table`; `Hint`, `Select`, `FieldSet` y `SharedInput`
+   de `eden-form-parts`; `Item` de `eden-grid`. Eso exige `'unsafe-inline'` tambien en
+   `style-src-attr`.
+
+Partir la directiva en `style-src-elem` y `style-src-attr` —la salida elegante aparente— no gana
+nada: las dos necesitarian el mismo permiso.
+
+### Solucion aplicada
+
+Se deja `style-src 'self' 'unsafe-inline'` y se **cierra** el pendiente como riesgo aceptado y
+documentado, no como tarea diferida. `script-src`, que es la superficie que de verdad importa
+contra XSS, conserva el nonce con `'strict-dynamic'` y sin `'unsafe-inline'`.
+
+`src/proxy.test.ts` afirma las dos cosas a la vez —que `style-src` lleva `'unsafe-inline'` y que
+`script-src` no— para que nadie lo "endurezca" creyendo que era un descuido.
+
+El endurecimiento real de la Etapa 12 fue por otro lado, en cabeceras que si se pueden cerrar sin
+romper nada: `X-Frame-Options`, `Permissions-Policy`, `Cross-Origin-Opener-Policy` y
+`Cross-Origin-Resource-Policy`, todas con prueba en `next.config.test.ts`.
+
+### Regla para futuro
+
+Una prueba que afirma un **limite** vale tanto como una que afirma una capacidad, siempre que diga
+por que existe el limite. Y antes de endurecer cualquier directiva de CSP, comprobar el `dist` de
+la libreria y no su documentacion: aqui la respuesta estaba en una plantilla de JSX compilada, no
+en ninguna pagina de Eden.
+
+---
+
+## 41) El paso 1 de T1 choca con la transaccion de T2 y la excepcion escapaba
+
+### Problema
+
+El paso 1 de T1 (`pedirTurno` en `src/lib/fila/solicitarCompra.ts`) es un `UpdateItem` **suelto**:
+`ADD contadorTurnos :uno` sobre el item del lote, fuera de transaccion porque
+`TransactWriteItems` no devuelve valores y el turno del `ADD` haria falta como clave del `Put` de
+la misma transaccion.
+
+### Sintoma
+
+La prueba de carga de la Etapa 12, con 10 lotes y 10 participantes simultaneos, murio con una
+excepcion **sin atrapar** que atraveso `solicitarCompra`:
+
+```
+TransactionConflictException: Transaction is ongoing for the item
+ ❯ pedirTurno src/lib/fila/solicitarCompra.ts:187
+ ❯ ejecutarSolicitud src/lib/fila/solicitarCompra.ts:137
+```
+
+En produccion eso es un 500 para el participante, en el instante de maxima concurrencia, en lugar
+del `conflicto_concurrencia` que el diseno define como "carrera perdida: relee y reintenta".
+
+### Causa raiz
+
+DynamoDB lanza `TransactionConflictException` cuando una escritura **normal** toca un item que en
+ese instante participa en un `TransactWriteItems`. Y el item del lote es exactamente eso: T2 lo
+condiciona (`attribute_not_exists(adjudicacionActual)`) y lo escribe dentro de su transaccion,
+mientras el paso 1 de toda solicitud le hace `ADD`. En `inicioVenta` los dos caminos se cruzan de
+forma rutinaria — es el unico punto del sistema donde una escritura suelta comparte item con una
+transaccion.
+
+`pedirTurno` solo reconocia un fallo posible:
+
+```ts
+} catch (error) {
+  if (!esFalloDeCondicion(error)) throw error;   // <- todo lo demas escapa
+  return undefined;
+}
+```
+
+**Por que no se habia visto nunca.** El SDK de AWS reintenta `TransactionConflictException` por su
+cuenta: `maxAttempts` vale 3 por omision y tres intentos casi siempre bastan. La prueba de carga
+lo desactivo (`maxAttempts: 1`) y el defecto salio a la primera. No es un defecto inventado por la
+configuracion de la prueba: con contencion sostenida los tres intentos tambien se agotan, y
+entonces el participante recibe un error del servidor en el peor momento posible.
+
+### Solucion aplicada
+
+- `esConflictoDeTransaccion` en `src/lib/data/transacciones.ts`, junto a `esFalloDeCondicion`.
+  Vive ahi porque es el modulo que traduce errores de DynamoDB a errores de dominio, y porque hay
+  que distinguirlo de su homonimo: el codigo `TransactionConflict` dentro de
+  `CancellationReasons` llega cuando pierde **la transaccion**; `TransactionConflictException`,
+  cuando pierde la operacion **suelta**.
+- `pedirTurno` devuelve ahora `{ turno } | { rechazo: CodigoError }` en lugar de
+  `number | undefined`. El cambio de forma no es cosmetico: los dos motivos de rechazo exigen
+  respuestas distintas y `undefined` obligaba a quien invoca a suponer cual era. Condicion
+  fallida → `motivoDelRechazo` (negocio); conflicto de transaccion → `conflicto_concurrencia`.
+- La reserva del paso 0 se libera igual en los dos casos, que ya ocurria y ahora tiene prueba.
+
+Tres pruebas nuevas en `solicitarCompra.test.ts`, incluida la que importa: con un lote `VENDIDO`
+**y** un conflicto de transaccion, la respuesta es `conflicto_concurrencia` y no
+`lote_no_disponible`. Decirle al participante que el lote no esta disponible cuando el lote sigue
+en juego seria una mentira, no un error tecnico.
+
+**Y no era el unico sitio.** Encontrado uno, se reviso el resto: hay cuatro escrituras fuera de
+transaccion en `src/lib` y **tres** tocan items que si participan en transacciones. Las otras dos
+tenian el mismo agujero, con el agravante de que las dos estan documentadas como "de mejor
+esfuerzo" — es decir, el codigo ya declaraba que su fallo no debia importar, y sin embargo dejaba
+escapar una excepcion:
+
+- `liberarReserva` (`src/lib/fila/reservas.ts`). El item de la reserva lo borra el paso 2 de T1
+  dentro de su transaccion, asi que `depurarYContarReservas` puede chocar al retirar una reserva
+  muerta. Como `adjudicarLote` llama a `depurarYContarReservas` **en cada ronda**, la excepcion
+  convertia una limpieza opcional en una adjudicacion fallida.
+- `incrementarIntento` (`src/lib/correo/procesarOutbox.ts`). El item del mensaje lo tocan
+  `marcarEnviado` y `marcarFallido` por transaccion; dos corridas del barrido pueden solaparse
+  —cada 5 minutos con 300 s de limite— y chocar. La excepcion abortaba el resto del outbox de la
+  corrida por no poder escribir un contador de reintentos.
+
+En los dos casos la correccion es la misma y no cambia la intencion, solo la cumple: un conflicto
+de transaccion significa "alguien mas lo esta resolviendo", que es exactamente lo que esos dos
+helpers ya decian tolerar. La cuarta escritura suelta —`anotarReserva`— no necesita nada: su
+`reservaId` es nuevo por solicitud y nadie mas lo toca.
+
+`reservas.test.ts` es nuevo y fija las cuatro ramas de `liberarReserva`, incluida la que importa
+al final: **cualquier otro error si escapa**. Credenciales o red caidas no son "alguien mas ya lo
+resolvio", y tragarlas dejaria reservas huerfanas deteniendo adjudicaciones sin que nadie se
+entere (regla 15).
+
+### Regla para futuro
+
+Toda escritura fuera de transaccion sobre un item que **si** participa en transacciones tiene que
+contemplar `TransactionConflictException`. Son tres en este sistema y estan enumeradas arriba;
+antes de agregar una cuarta, comprobar si su item aparece en alguna de las ocho transacciones de
+`modelo-datos-dynamodb.md` seccion 6.
+
+Cuidado especial con los helpers "de mejor esfuerzo": el comentario que dice que su fallo no
+importa **no** lo hace verdad. Aqui dos de ellos declaraban tolerancia y rethrowaban, que es la
+peor combinacion — nadie los revisa porque el comentario tranquiliza.
+
+Y de forma mas general: los reintentos del SDK ocultan clases enteras de defecto. Una prueba de
+carga que los desactiva —aunque no sea la configuracion de produccion— es una herramienta de
+diagnostico legitima, y aqui pago su costo a la primera corrida. Se conserva detras de
+`CARGA_SIN_REINTENTOS=1`.
+
+---
+
+## 42) La primera prueba de carga midio la prueba de carga
+
+### Problema
+
+`carga.integracion.test.ts` (Etapa 12) tenia que medir la apertura de una convocatoria: L lotes
+abiertos a la vez, P participantes cada uno, todos disparando `solicitarCompra` simultaneamente.
+
+### Sintoma
+
+Tres corridas seguidas fallaron, cada una por una razon distinta, y **ninguna de las tres era el
+sistema**:
+
+1. `TimeoutError: connect ETIMEDOUT 3.218.180.176:443` — ni siquiera llegaba a medir.
+2. Con el cupo de sockets subido: `TimeoutError: the request socket did not establish a
+   connection within the configured timeout of 15000 ms`, todavia.
+3. Con la conexion resuelta: `AssertionError: expected 4 to be 1` en "gana el turno menor de cada
+   lote", y un p95 de 15,6 s contra un techo de 10 s.
+
+### Causa raiz
+
+Cuatro causas independientes, y lo unico que tenian en comun era estar en el arnes:
+
+**1. Agotamiento de sockets del propio proceso.** El agente HTTPS de Node trae 50 sockets por
+omision. Cien solicitudes son **trescientas** peticiones en vuelo, porque cada `solicitarCompra`
+hace tres escrituras. Las que no consiguen socket esperan en cola hasta que expira el `connect`,
+y el error resultante —`ETIMEDOUT` contra la IP de DynamoDB— parece un problema de AWS.
+
+**2. `maxAttempts: 1` no era una decision defendible.** Se puso razonando que "un reintento
+esconde la contencion". El razonamiento estaba invertido: `maxAttempts` vale 3 **en produccion**,
+asi que medir sin reintentos mide una configuracion que el sistema no tiene, y la latencia que
+importa es la que percibe el participante con los reintentos incluidos. (Aquella corrida si
+encontro un defecto real — seccion 41 — pero como diagnostico, no como forma de medir.)
+
+**3. La afirmacion comparaba dos turnos distintos con el mismo nombre.** Esta es la que mas
+enseña. `solicitarCompra` devuelve `{ turno, adjudicacion }`, y son de dos cosas diferentes:
+`turno` es el de **quien solicito**, mientras `adjudicacion.turno` es el turno **al que se
+adjudico el lote**. No coinciden casi nunca, y por diseno: toda solicitud dispara
+`adjudicarLote`, esa funcion premia al turno vivo menor de la fila, y quien la dispara con exito
+es el ultimo en aterrizar (`arquitectura-tecnica-aws.md` 4.2 — "el ultimo en aterrizar cierra la
+ronda"). La prueba leia el turno del llamador y afirmaba que era el menor: **fallaba con el
+sistema comportandose exactamente como debe**.
+
+**4. El techo del p95 no era medible desde esta maquina.** La inspeccion TLS corporativa (riesgo
+R11) convierte el establecimiento de trescientas conexiones en el cuello de botella. El p95 de
+15,5 s mide el proxy, no DynamoDB — y se ve en la forma de la distribucion: p50 de 1,7 s contra
+p95 de 15,5 s es la firma de una cola, no de una base de datos lenta.
+
+**Y la prueba de eso la dio la corrida siguiente**, con el escenario ya corregido y sin tocar
+nada mas: mismo sandbox, mismos 10 x 10, y **p50 965 ms, p95 1 296 ms, 62 solicitudes por
+segundo** — un factor de diez contra la primera. Lo unico que cambio entre las dos fue que el
+agente HTTPS del proceso ya tenia conexiones abiertas.
+
+### Solucion aplicada
+
+- `httpsAgent: { maxSockets: 400 }` y tiempos de espera explicitos.
+- Reintentos del SDK como en produccion, con el modo sin reintentos detras de
+  `CARGA_SIN_REINTENTOS=1` por si hay que repetir el diagnostico de la seccion 41.
+- `Medicion` distingue `turno` de `turnoAdjudicado`, con el comentario que explica por que no son
+  lo mismo, y la afirmacion compara el segundo.
+- El techo del p95 pasa a 30 s, ajustable con `CARGA_TECHO_P95_MS`, y documentado como detector
+  de degradacion catastrofica y **no** como objetivo de rendimiento.
+
+Con eso, la corrida completa: 100 solicitudes concurrentes sobre 10 lotes, **100 aceptadas, 0
+rechazadas, exactamente 10 adjudicaciones** —una por lote y siempre al turno menor de su fila—, y
+las abstenciones por reservas en vuelo que R18 predice.
+
+### Regla para futuro
+
+Cuando una prueba de carga falla, la primera hipotesis es el arnes y no el sistema: cupo de
+conexiones, configuracion del cliente, y sobre todo **que afirma exactamente la asercion**. Aqui
+la tercera causa habria pasado por un defecto grave del motor de fila —"no gana el turno menor",
+que es la invariante central de la equidad— cuando lo unico roto era que dos campos con nombres
+parecidos significaban cosas distintas.
+
+Y **un solo numero de latencia no es una medida**: hay que correr la prueba dos veces y comparar.
+Si la segunda corrida da diez veces mejor que la primera, lo que se midio la primera vez fue el
+establecimiento de conexiones. Por eso el entregable de esta prueba es su informe —las dos
+columnas— y no su veredicto.

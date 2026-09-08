@@ -13,10 +13,12 @@
 >
 > Sincronizado con: rama `main`, 2026-09-08, Etapas 7 a 10 cerradas mas la **Etapa 2.2**
 > (impersonacion de identidad en desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y
-> navegacion por permiso, decision **D-11**) y la **Etapa 11** (auditoria: verificacion de
-> integridad recalculada desde el evento crudo, decision **D-12**). Etapas 10, 2.2, 10.1 y 11
-> pendientes de commit al escribir esto — el reindexado no vera sus simbolos hasta que se
-> confirme. Los headings de
+> navegacion por permiso, decision **D-11**), la **Etapa 11** (auditoria: verificacion de
+> integridad recalculada desde el evento crudo, decision **D-12**) y la **Etapa 12 parcial**
+> (observabilidad y alarmas, decision **D-13**; sus puntos `[OPERADOR]` —navegador, despliegue,
+> runbooks ejecutados— siguen abiertos y no son codigo). Las Etapas 8 a 11 quedaron confirmadas
+> en `cc5af85`; **la Etapa 12 sigue sin commit** al escribir esto, asi que el reindexado no vera
+> `src/lib/observabilidad/` ni `amplify/alarmas.ts` hasta que se confirme. Los headings de
 > `agent_files/*.md` ya estan indexados como nodos `Section` — consultables con
 > `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`. Este ADR no los duplica.
 >
@@ -237,6 +239,60 @@ Anclas: `src/lib/domain/verificacionDeAuditoria.ts::verificarIntegridadDeLote`,
 `src/lib/auditoria/verificarIntegridad.ts`, `src/lib/fila/leerFilaCompleta.ts`,
 `src/app/api/auditoria/exportar/route.ts`.
 
+### D-13 — Cada alarma toma su senal de donde sobreviva al fallo que vigila
+`amplify/alarmas.ts` reparte las seis alarmas entre **metricas nativas** de AWS y **filtros de
+metrica** sobre el registro que escribe `src/lib/observabilidad`, y el criterio no es de estilo:
+lo que hay que detectar *aunque el codigo este roto* va a metrica nativa; lo que solo el dominio
+sabe contar va a filtro de log.
+Razon: una alarma derivada de los logs de la aplicacion depende de que la aplicacion llegue a
+escribir la linea. "El barrido no se ejecuta" (riesgo **R6**) es el caso limite — si el `handler`
+lanza antes de su primera linea, un filtro no ve nada y **calla**, que es precisamente el fallo
+que la alarma existe para gritar. Por eso esa alarma mira `AWS/Lambda` `Invocations` y trata la
+ausencia de datos como incumplimiento (`TreatMissingData.BREACHING`), contra el valor por omision
+de CloudWatch: un barrido caido no publica ceros, no publica nada, e `INSUFFICIENT_DATA` es
+indistinguible de "todo bien" para quien no esta mirando.
+La contencion se vigila con `TransactionConflict` de DynamoDB y **no** con
+`ConditionalCheckFailedRequests`: en este sistema una condicion que falla es el mecanismo normal
+—la adjudicacion se gana con escritura condicional (regla 6), asi que en cada lote N-1 intentos
+fallan su condicion por diseno— y esa alarma estaria disparada siempre.
+Las alarmas viven en una **tercera pila** (`AutobAlarmas`). Una metrica dimensionada por
+`FunctionName` es una referencia a la pila de la funcion de barrido, y esa pila ya toma
+`AUTOB_TABLE_NAME` de `AutobRecursos`: ponerlas ahi cierra un ciclo entre pilas y `ampx` falla al
+sintetizar (`desafios-implementacion.md` 38).
+Las trazas son propias, no de X-Ray: una linea por operacion con el `correlacionId` que ya
+comparte con la bitacora. Y ninguna metrica lleva `loteId` como dimension —CloudWatch cobra por
+combinacion de dimensiones y `loteId` es de cardinalidad ilimitada—; esa pregunta la responde
+Logs Insights sobre el registro.
+El registro operativo **nunca lanza** y **nunca escribe identidad de personas**: es la
+contrapartida de la regla 4, porque perder una linea de diagnostico no puede tumbar la
+adjudicacion que describia, al contrario del evento de auditoria.
+Los umbrales de `UMBRAL_OUTBOX_MIN` (60 min) y `UMBRAL_CONFLICTOS_POR_PERIODO` (50 por periodo de
+5 min) son **valores de partida, no medidas**, y la prueba de carga de la Etapa 12 no alcanzo a
+calibrar el segundo: los reintentos del SDK absorben los conflictos antes de que la aplicacion los
+vea, asi que el numero real solo lo dice la metrica nativa `TransactionConflict` desde el entorno
+desplegado. Queda `[OPERADOR]`.
+Descartado:
+- Derivar las seis de los logs de la aplicacion, que seria mas uniforme. Deja ciega justo la
+  alarma que vigila que la aplicacion arranque.
+- Alarmar sobre `ConditionalCheckFailedRequests`, la metrica que parece obvia para contencion.
+- Ponerlas en `AutobRecursos`, que es donde parece que corresponden. Ciclo entre pilas.
+- AWS X-Ray. Responde "donde se fue el tiempo entre servicios" y aqui hay un proceso hablando con
+  DynamoDB; agrega SDK, permiso de IAM y costo por traza para una pregunta que el
+  `correlacionId` ya contesta.
+- Emitir metricas en formato EMF desde la aplicacion. Habria evitado los filtros, pero su
+  interaccion con el formato JSON de log de Lambda no se pudo verificar sin AWS, y las cuatro
+  senales del documento se cubren sin ella.
+- `loteId` como dimension de metrica, que es lo que pedia literalmente
+  `arquitectura-tecnica-aws.md` 7 ("solicitudes por lote"). Una serie nueva por cada lote que
+  haya existido, para siempre.
+- Una variable de entorno propia para silenciar el registro. Seria una palanca para apagar el
+  diagnostico en produccion sin que nada lo delate; se comprueba `VITEST`, que no se puede
+  activar por error en un despliegue.
+Anclas: `amplify/alarmas.ts::AlarmasAutob`, `amplify/backend.ts::grupoDeLogsDelBarrido`,
+`src/lib/observabilidad/registro.ts::registrar`, `src/lib/observabilidad/registro.ts::redactar`,
+`src/lib/observabilidad/traza.ts::conTraza`, `src/lib/data/transacciones.ts::ejecutarTransaccion`,
+`src/lib/data/transacciones.ts::esConflictoDeTransaccion`.
+
 ## Decisiones de modelo de datos
 
 Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
@@ -263,6 +319,9 @@ Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
 | El outbox se encola en la **misma** transaccion que T2/T5, no despues | Es lo unico que le da al correo la misma garantia que a su propio evento (regla 4); `itemsDeEncoladoAdjudicacion` devuelve lista vacia sin `correoTitular`, sin bloquear la adjudicacion (D-6) |
 | "Recoger lotes libres" se acota a convocatorias `PUBLICADA` y exige una `Query COUNT` de fila viva antes de llamar a `adjudicarLote` | Sin el filtro, cada lote `EN_OFERTA` sin candidatos (la mayoria del inventario) escribiria `FILA_AGOTADA` en cada corrida del barrido, para siempre; no existe GSI para "lotes con fila viva" y no se creo uno solo para esto |
 | Nuevo motivo de adjudicacion `RECUPERACION_POR_BARRIDO` | Un lote huerfano recuperado por el barrido no es "primera adjudicacion" ni ninguna reasignacion con causa conocida — forzarlo a uno de los cuatro existentes falsearia la bitacora |
+| Los GSIs se quedan en `ALL`: **revisado en la Etapa 12 y confirmado**, no estrechado a `INCLUDE` | DynamoDB cobra la escritura en bloques de 1 KB redondeando hacia arriba, asi que el ahorro es **cero** justo donde esta el volumen —solicitudes (~600 B) y eventos (~400 B), ya bajo el minimo facturable— y solo aparece en vehiculos y convocatorias, que se escriben unas pocas veces al mes: menos de un centavo mensual. Contra eso, la proyeccion de un GSI **no se puede modificar**: estrechar exige recrear el indice, y en esa ventana PA-05 y PA-11 dejan de responder (modelo-datos-dynamodb.md 8.1) |
+| Las tres escrituras sueltas sobre items transaccionales contemplan `TransactionConflictException` | Son el `ADD contadorTurnos` del paso 1 de T1, `liberarReserva` y `incrementarIntento` del outbox: las tres tocan items que si participan en transacciones (el lote en T2, la reserva en el paso 2 de T1, el mensaje en `marcarEnviado`/`marcarFallido`). El SDK la reintenta —`maxAttempts` 3— asi que nunca se habia visto; con contencion sostenida los tres intentos se agotan. En T1 el participante recibia un 500 en lugar de "relee y reintenta"; en los otros dos, un helper documentado como "de mejor esfuerzo" tumbaba una adjudicacion o abortaba el outbox de la corrida. Lo encontro la prueba de carga de la Etapa 12 corriendo sin reintentos (desafios-implementacion.md 41) |
+| `leerVencidasDelDia` y `leerPendientes` leen **una sola pagina**, sin recorrer `LastEvaluatedKey` | GSI4 es disperso, las dos leen de lo mas viejo a lo mas nuevo y el barrido es idempotente cada 5 minutos: una pagina truncada es un retraso, no trabajo perdido, porque la corrida siguiente empieza donde la anterior dejo de ver. La cota son ~1 700 solicitudes por corrida. Paginar dentro de una corrida la acercaria a su limite de 300 s sin resolver mas de lo que la siguiente ya resuelve (modelo-datos-dynamodb.md 8.2) |
 
 Centinelas: vehiculo activo (R-10), fila (R-07), adjudicacion activa (R-09), reserva de turno
 (R18). Transacciones criticas T1–T8 en `modelo-datos-dynamodb.md` seccion 6 (linea 258).
@@ -278,7 +337,11 @@ condicional con abstencion por reservas y congelamiento por R-09), `cancelarSoli
 `descongelarSolicitudes.ts`, `cerrarFilaDelLote.ts` (R-18) y `consultarMiLugar.ts` (DTO sin
 identidades, R-12). La regresion permanente de la regla 16 es
 `src/lib/fila/fila.integracion.test.ts`, que **si vive en la compuerta** y corre contra DynamoDB
-real asumiendo el rol de computo SSR.
+real asumiendo el rol de computo SSR. La Etapa 12 agrega `carga.integracion.test.ts`, que abre
+diez lotes a la vez y mide capacidad: 100 solicitudes concurrentes, 0 rechazos, una adjudicacion
+por lote y siempre al turno menor de su fila; p95 de 1,3 s en caliente contra 15,5 s en frio, y
+esa diferencia de diez veces son apretones de manos TLS, no DynamoDB
+(`modelo-datos-dynamodb.md` 8.3).
 
 **El pago y el dictamen de tesoreria son la Etapa 9**, en `src/lib/tesoreria/`:
 `subirComprobante.ts` (T3, S3 antes que DynamoDB, sin compensacion — `NegarBorradoDeComprobantes`
@@ -327,6 +390,40 @@ filtrar por estatus, la capacidad de `fila:ver-completa`), las pantallas `/audit
 evaluado y **diferido** con justificacion: el sumidero append-only independiente que propone como
 garantia fuerte (DynamoDB Streams + S3 Object Lock) es infraestructura AWS nueva fuera del alcance
 que esta etapa recibio.
+
+**La observabilidad es la Etapa 12** (decision **D-13**): `src/lib/observabilidad/`
+(`registro.ts` con redaccion de identidad, `traza.ts` con `conTraza` sobre las tres operaciones
+criticas mas el barrido y el outbox), el diagnostico de cancelacion dentro de
+`ejecutarTransaccion`, y `amplify/alarmas.ts` con seis alarmas en su pila propia
+`AutobAlarmas`. **Cierra R6**: la alarma de infraestructura que la Etapa 10 dejo pendiente
+existe, mira una metrica nativa de Lambda y trata la ausencia de datos como fallo. La etapa
+queda **parcial**: lo que exige mirar la aplicacion corriendo —axe en navegador,
+responsividad, cada runbook ejecutado una vez, despliegue y prueba de humo, y confirmar la
+suscripcion de SNS— sigue `[OPERADOR]`, por las mismas credenciales que bloquean la
+verificacion visual desde la Etapa 5.
+
+## Cabeceras de seguridad y CSP
+
+La CSP se calcula por peticion en `src/proxy.ts` porque lleva un **nonce nuevo cada vez** en
+`script-src`, con `'strict-dynamic'` y sin `'unsafe-inline'`. Las cabeceras que no dependen de
+la peticion viven en `next.config.ts`, y no es una separacion estetica: el `matcher` del proxy
+excluye `_next/static`, `favicon.ico`, `robots.txt` y `sitemap.xml`, y esos recursos tambien
+tienen que llegar con `nosniff` y con HSTS.
+
+**`style-src 'unsafe-inline'` no se puede quitar, y en la Etapa 12 se comprobo por que.** Son dos
+hechos independientes, cada uno suficiente: Eden no publica **ningun** archivo `.css` —cada
+componente lleva su hoja como cadena y la monta con `<style href precedence>`, el izado de hojas
+de estilo de React 19, sin nonce que podamos inyectar— y ademas usa atributos `style={{...}}` en
+componentes presentes en casi toda pantalla (`TD`, `TH`, `TR` de `eden-table`; `Hint`, `Select`,
+`FieldSet` de `eden-form-parts`; `Item` de `eden-grid`). Lo primero exige el permiso en
+`style-src-elem`, lo segundo en `style-src-attr`: partir la directiva no gana nada. Queda como
+riesgo aceptado y documentado, no como pendiente.
+
+Ni `next build` ni jsdom aplican CSP, asi que un endurecimiento equivocado pasaria la compuerta
+entera en verde y romperia la aplicacion en produccion. De ahi que las pruebas afirmen el
+**limite** y no solo la capacidad: `src/proxy.test.ts` comprueba a la vez que `style-src` lleva
+`'unsafe-inline'` y que `script-src` no.
+Anclas: `src/proxy.ts::proxy`, `next.config.ts`, `desafios-implementacion.md` 40.
 
 ## Decisiones de negocio registradas
 
@@ -381,7 +478,8 @@ Fuente: `agent_files/trazabilidad-auditoria.md` seccion 4 (linea 166).
   lo que la regla 4 obliga a permitir.
 - **Correccion por compensacion** (R-20): nunca se edita un evento; se agrega uno que corrige.
 - Las identidades **si** se registran en la bitacora, aunque nunca se expongan entre
-  participantes (regla 7).
+  participantes (regla 7). El **registro operativo** es lo contrario y a proposito: no lleva
+  correo, nombre ni destinatario (D-13). Aquel prueba y no caduca; este depura y caduca.
 Anclas: `src/lib/data/eventos.ts::atributosDeEvento`, `amplify/auditoriaInmutable.ts`,
 `src/lib/data/identificadores.ts::nuevoUlid`.
 
@@ -402,6 +500,12 @@ confirma la frontera —`app → lib` 22 llamadas, `lib → types` 20, `lib → 
 despues no aparece hasta reindexar. Servicios reciben el cliente por `deps` — inyeccion que
 permite el cliente falso `src/utils/clienteDynamoFalso.ts` en pruebas.
 
+`src/lib/observabilidad/` es transversal, no una capa: lo importan `src/lib/data` y
+`src/lib/<feature>`, nunca `src/lib/domain` — el dominio sigue puro y sin efectos (P-2). Tampoco
+recibe el reloj por `deps`: `conTraza` mide con `performance.now()`, porque el `ahora` inyectable
+esta congelado por invocacion a proposito y daria siempre cero
+(`estrategia-aplicacion.md` 2.3).
+
 Dos excepciones registradas, las dos por la misma razon: el layout raiz no puede leer datos de
 la peticion sin volverse el punto donde todas las pantallas esperan, asi que la lectura ocurre
 dentro de un `<Suspense>` — y para estar dentro de un `<Suspense>` hay que ser un componente.
@@ -421,7 +525,9 @@ En los dos casos la presentacion vive aparte y si es props pura:
   Ancla: `src/lib/domain/dinero.ts::formatearPrecio`.
 - Nada sin publicar entra a cache estatica: las rutas dependen de `publicadaEn`; `Suspense` con
   lectura dinamica o `cacheLife` corto con `revalidateTag` disparado por la publicacion. Las
-  rutas de participante de las Etapas 7 y 8 son `dynamic = "force-dynamic"`.
+  rutas de participante de las Etapas 7 y 8 son `dynamic = "force-dynamic"`. En la Etapa 12 el
+  `build` confirma que **ninguna** ruta sale estatica: las veintiuna son `ƒ (Dynamic)`, que es
+  la senal de alerta de R4 leida en positivo.
 - La cuenta regresiva la calcula el servidor y el cliente solo decrementa; al llegar a cero
   revalida contra el servidor y nunca habilita nada con el reloj del navegador (R-04).
   Ancla: `src/components/CuentaRegresiva.tsx`.
@@ -452,8 +558,8 @@ devuelve `[]`, se borro.
 > **El reindexado no ve el trabajo sin commit.** El grafo se ancla al `head_sha`, asi que
 > `index_repository` sobre un arbol con cambios sin confirmar devuelve el mismo conteo de nodos
 > y los simbolos nuevos no aparecen — medido en la Etapa 8: 2143 nodos antes y despues de
-> agregar dieciocho archivos. Reindexar **despues** de confirmar; hasta entonces, el grafo
-> describe el commit anterior y hay que leer el archivo.
+> agregar dieciocho archivos, y de nuevo en la Etapa 12. Reindexar **despues** de confirmar;
+> hasta entonces, el grafo describe el commit anterior y hay que leer el archivo.
 
 El hook `.claude/hooks/adr-doc-sync` avisa al editar estos documentos. El avance de
 `plan-ejecucion.md` no toca el ADR: aqui van decisiones, no progreso.

@@ -23,15 +23,11 @@ export const handler = async (): Promise<void> => {
     );
   }
 
-  const vencimientos = await barridoDeVencimientos();
-  const correo = await procesarOutbox();
-
-  console.info(
-    JSON.stringify({
-      mensaje: "barrido ejecutado",
-      tabla: nombreTabla,
-      vencimientos,
-      correo,
-    }),
-  );
+  // Sin linea propia del handler. Cada una de las dos tareas ya deja la suya
+  // —`conTraza` en `barridoDeVencimientos` y en `procesarOutbox`—, y son esas
+  // las que los filtros de metrica de `amplify/alarmas.ts` leen. Una tercera
+  // linea que repitiera los mismos contadores con otros nombres duplicaria el
+  // volumen y obligaria a mantener dos formatos que tienen que coincidir.
+  await barridoDeVencimientos();
+  await procesarOutbox();
 };

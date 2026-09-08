@@ -18,5 +18,14 @@ export const barrido = defineFunction({
   // que un corte no rompe nada, pero reintentarlo entero cuesta.
   timeoutSeconds: 300,
   memoryMB: 512,
-  logging: { format: "json", level: "info" },
+  // `retention` no es solo higiene de costo. Es lo que hace que Amplify cree el
+  // grupo de logs **como recurso de la pila** en vez de dejar que Lambda lo
+  // fabrique en su primera invocacion; sin el, los filtros de metrica de
+  // `amplify/alarmas.ts` no tendrian a que colgarse en el momento del
+  // despliegue (`AWS::Logs::MetricFilter` exige que el grupo ya exista).
+  //
+  // Un mes: el registro operativo "es para depurar y caduca", al contrario de
+  // la bitacora, que "es para probar y no caduca"
+  // (`arquitectura-tecnica-aws.md` 7) y que vive en DynamoDB sin TTL.
+  logging: { format: "json", level: "info", retention: "1 month" },
 });

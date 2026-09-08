@@ -159,6 +159,37 @@ describe("obtenerDiccionario", () => {
   });
 });
 
+// La compuerta "diccionarios completos, sin claves faltantes" de la Etapa 12
+// descansa en **dos** mecanismos, y conviene saber cual cubre que:
+//
+//   1. Las pruebas de arriba, para las etiquetas que salen de un catalogo
+//      runtime (`ESTATUS_LOTE`, `TIPOS_DE_EVENTO`...). Un valor nuevo sin
+//      etiqueta rompe aqui.
+//   2. `npm run typecheck`, para todo lo demas. `index.ts` importa los JSON y
+//      conserva sus tipos literales con `satisfies`, asi que indexar el
+//      diccionario con una union —`diccionario.errores[error]`,
+//      `etiquetas[\`hecho_${evento}\`]`, `etiquetas.comprobaciones[clave]`—
+//      obliga a TypeScript a comprobar que **todas** las variantes existen. Se
+//      verifico quitando `acciones.hecho_PUBLICAR`: `tsc` responde TS7053.
+//
+// El segundo mecanismo es silencioso y frágil de una forma concreta: anotar
+// `es`/`en` como `Record<string, Record<string, string>>` lo desactivaria por
+// completo sin romper ninguna prueba. La comprobacion de abajo existe para eso.
+describe("el tipado literal del diccionario, que es la otra mitad de la garantia", () => {
+  it("una clave inexistente es error de compilacion y no undefined en pantalla", () => {
+    const diccionario = obtenerDiccionario("es");
+
+    // @ts-expect-error -- la clave no existe. Si algun dia esto deja de ser un
+    // error, el diccionario se tipo como indice abierto y una etiqueta
+    // faltante llegara a pantalla como vacia sin que nada la detenga. Un
+    // `@ts-expect-error` que no encuentra error **falla el typecheck**, asi que
+    // esa regresion rompe la compuerta en vez de pasar inadvertida.
+    const inexistente: unknown = diccionario.acciones.hecho_INVENTADO;
+
+    expect(inexistente).toBeUndefined();
+  });
+});
+
 // Los documentos de `agent_files/` y los comentarios del codigo se escriben sin
 // acentos; los diccionarios **no**, porque son el texto que lee el usuario. El
 // riesgo concreto no es teclear mal: es copiar una frase de un documento a una

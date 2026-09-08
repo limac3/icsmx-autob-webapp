@@ -2,6 +2,7 @@
 import {
   ConditionalCheckFailedException,
   TransactionCanceledException,
+  TransactionConflictException,
 } from "@aws-sdk/client-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -237,6 +238,65 @@ describe("compensacion cuando el turno no se entrega", () => {
     );
 
     expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
+  });
+});
+
+describe("el paso 1 choca con la transaccion de T2 sobre el mismo lote", () => {
+  // Lo encontro la prueba de carga de la Etapa 12 y **no** es teorico: el `ADD
+  // contadorTurnos` es la unica escritura del sistema que ocurre fuera de
+  // transaccion sobre un item que si esta en otras —el de T2—, y en
+  // `inicioVenta` los dos caminos se cruzan de forma rutinaria.
+  //
+  // Antes de la correccion la excepcion escapaba de `solicitarCompra` y el
+  // participante veia un error del servidor en lugar de un "reintenta".
+
+  const enConflicto =
+    () =>
+    (comando: ComandoEnviado): unknown => {
+      if (comando.nombre !== "UpdateCommand") return {};
+      throw new TransactionConflictException({
+        message: "Transaction is ongoing for the item",
+        $metadata: {},
+      });
+    };
+
+  it("responde conflicto_concurrencia, no una excepcion", async () => {
+    const falso = crearClienteFalso({ responder: enConflicto() });
+
+    const resultado = await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
+  });
+
+  it("no lo confunde con un rechazo de negocio", async () => {
+    // Un lote vendido responde `lote_no_disponible` cuando falla **la
+    // condicion**; con un conflicto de transaccion sobre el mismo lote, decirle
+    // eso al participante seria falso: el lote sigue en juego.
+    const falso = crearClienteFalso({ responder: enConflicto() });
+
+    const resultado = await solicitarCompra(
+      { lote: { ...lote, estatus: "VENDIDO" }, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
+  });
+
+  it("libera la reserva igual que cualquier otro rechazo del paso 1", async () => {
+    // Sin esto, un conflicto dejaria la reserva en pie hasta el umbral y
+    // detendria las adjudicaciones ajenas de ese lote sin ninguna razon.
+    const falso = crearClienteFalso({ responder: enConflicto() });
+
+    await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    const borrado = falso.comandos.find((c) => c.nombre === "DeleteCommand");
+    expect(borrado?.input.Key).toEqual({ PK: "LOTE#L1", SK: "RESERVA#R1" });
   });
 });
 

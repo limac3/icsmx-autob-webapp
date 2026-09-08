@@ -1,7 +1,11 @@
 // @vitest-environment node
 vi.mock("server-only", () => ({}));
 
-import { TransactionCanceledException } from "@aws-sdk/client-dynamodb";
+import {
+  ConditionalCheckFailedException,
+  TransactionCanceledException,
+  TransactionConflictException,
+} from "@aws-sdk/client-dynamodb";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clave } from "./claves";
@@ -10,6 +14,7 @@ import {
   CONDICION_CENTINELA_NUEVO,
   CONDICION_LOTE_LIBRE,
   ejecutarTransaccion,
+  esConflictoDeTransaccion,
   esFalloDeCondicion,
   MAXIMO_ITEMS_POR_TRANSACCION,
   putDeEvento,
@@ -322,6 +327,91 @@ describe("condiciones nombradas", () => {
     // REMOVE justamente para que esta condicion siga siendo autoridad.
     expect(CONDICION_LOTE_LIBRE).toContain("adjudicacionActual");
     expect(CONDICION_LOTE_LIBRE).not.toContain("estatus");
+  });
+});
+
+describe("registro operativo de la cancelacion", () => {
+  // La traza de la operacion (`conTraza`) dice que la adjudicacion se rechazo.
+  // Solo esta linea dice **cual** item la cancelo, y con que codigo crudo: es
+  // el unico punto que ve el codigo de DynamoDB, la posicion y la
+  // `descripcion` que le puso quien escribio la transaccion.
+  beforeEach(() => {
+    vi.stubEnv("VITEST", undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("deja la posicion, la descripcion y los codigos posicionales completos", async () => {
+    const consola = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const cliente = clienteQue(() => {
+      throw cancelacion(["None", "None", "ConditionalCheckFailed", "None"]);
+    });
+
+    await ejecutarTransaccion(ITEMS_DE_T2, { cliente });
+
+    expect(consola.mock.calls[0]?.[0]).toMatchObject({
+      operacion: "transaccion",
+      nivel: "warn",
+      error: "adjudicacion_activa",
+      indice: 2,
+      descripcion: "centinela de adjudicacion",
+      // Los cuatro codigos en su orden posicional. `traducirCancelacion` se
+      // queda con el primero distinto de "None"; sin la cadena completa no se
+      // puede comprobar despues si esa eleccion fue la correcta.
+      codigos: "None,None,ConditionalCheckFailed,None",
+      items: 4,
+    });
+  });
+
+  it("no registra nada cuando la transaccion pasa", async () => {
+    // Una linea por escritura exitosa multiplicaria el volumen de CloudWatch
+    // por el de las escrituras del sistema sin decir nada nuevo.
+    const consola = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const cliente = clienteQue(() => ({}));
+
+    await ejecutarTransaccion(ITEMS_DE_T2, { cliente });
+
+    expect(consola).not.toHaveBeenCalled();
+  });
+});
+
+describe("esConflictoDeTransaccion", () => {
+  // Distingue el choque de una escritura **suelta** contra una transaccion en
+  // curso. Existe por el paso 1 de T1, el unico `UpdateItem` fuera de
+  // transaccion sobre un item que si esta en otras (el lote, en T2).
+  it("reconoce TransactionConflictException", () => {
+    expect(
+      esConflictoDeTransaccion(
+        new TransactionConflictException({
+          message: "Transaction is ongoing for the item",
+          $metadata: {},
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("no lo confunde con una cancelacion, que es el caso contrario", async () => {
+    // `TransactionConflict` dentro de `CancellationReasons` llega cuando pierde
+    // **la transaccion**; `TransactionConflictException` cuando pierde la
+    // operacion suelta. Tratarlos igual mezclaria dos caminos de codigo.
+    expect(esConflictoDeTransaccion(cancelacion(["TransactionConflict"]))).toBe(
+      false,
+    );
+    expect(
+      esConflictoDeTransaccion(
+        new ConditionalCheckFailedException({
+          message: "condicion",
+          $metadata: {},
+        }),
+      ),
+    ).toBe(false);
+    expect(esConflictoDeTransaccion(undefined)).toBe(false);
   });
 });
 
