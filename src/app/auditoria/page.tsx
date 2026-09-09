@@ -1,55 +1,75 @@
 import Link from "next/link";
 import { forbidden, redirect } from "next/navigation";
-import { Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
-import { FormField, Input } from "@churchofjesuschrist/eden-form-parts";
+import { Secondary } from "@churchofjesuschrist/eden-buttons";
 import { H1 } from "@churchofjesuschrist/eden-headings";
 import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import { exportarBitacoraFormulario } from "@/app/actions/auditoria";
 import BitacoraDeEventos from "@/components/BitacoraDeEventos";
+import FiltrosDeBitacora from "@/components/FiltrosDeBitacora";
 import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
+import { consultarActividadDeParticipante } from "@/lib/auditoria/consultarActividadDeParticipante";
 import { consultarBitacoraCompleta } from "@/lib/auditoria/consultarBitacora";
-import { eventoCoincideConFiltros } from "@/lib/auditoria/filtrosDeBitacora";
+import {
+  consultarBitacoraGlobal,
+  consultarPorTipoDeEvento,
+} from "@/lib/auditoria/consultarBitacoraGlobal";
+import {
+  esTipoDeAgregado,
+  eventoCoincideConFiltros,
+  rangoPorDefecto,
+  validarBusqueda,
+  type BusquedaDeBitacora,
+  type CriteriosCrudos,
+} from "@/lib/auditoria/filtrosDeBitacora";
+import { construirOpciones } from "@/lib/auditoria/opcionesDeBusqueda";
 import { aFilaDeBitacora } from "@/lib/auditoria/vistaDeEvento";
-import { TIPOS_DE_AGREGADO, type TipoDeAgregado } from "@/lib/data/claves";
+import { TIPOS_DE_AGREGADO } from "@/lib/data/claves";
+import { diaDeNegocio, desdeIso } from "@/lib/domain/fechas";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
-import { TIPOS_DE_EVENTO, type TipoDeEvento } from "@/types/auditoria";
+import { TIPOS_DE_EVENTO, type EventoDTO } from "@/types/auditoria";
 import "./pagina.css";
 
 /**
  * Bitacora de auditoria — pantalla 7 de `ui-ux-requerimientos.md`.
  *
- * **Un `<form method="get">`, sin JavaScript de cliente** (mismo patron que
- * `/admin/vehiculos`): el filtro queda en la URL, se puede compartir y volver
- * atras. `consultarBitacora` (PA-12) solo acepta un agregado concreto, asi
- * que el resto de los filtros —tipo, fechas, participante— se aplican en
- * memoria sobre la historia completa de ese agregado.
+ * Sigue siendo **un `<form method="get">`**: el filtro vive en la URL, se
+ * comparte y se navega hacia atras. Lo que cambio es que la pantalla ya no
+ * exige conocer de antemano el identificador de lo que se busca. Ahora hay dos
+ * modos de consulta, y la diferencia entre ellos explica casi todo lo demas:
+ *
+ *   - **Con identificador**: `consultarBitacoraCompleta` (PA-12) lee la
+ *     particion de ese agregado, que trae su historia entera. El rango de
+ *     fechas es entonces un filtro en memoria, asi que no se acota — y por eso
+ *     un enlace desde la pantalla de una convocatoria puede abrir su historia
+ *     completa aunque empiece hace meses.
+ *   - **Sin identificador**: `consultarBitacoraGlobal` (PA-13) lee una
+ *     particion **por dia**. Ahi el rango es la llave de la consulta, no un
+ *     filtro, y de ahi salen las dos reglas: no puede estar vacio y no puede
+ *     pasar de 31 dias.
+ *
+ * Las opciones de los selects salen de una lectura global del rango, siempre:
+ * ofrecer solo lo que tiene actividad en el rango es lo que garantiza que
+ * ninguna opcion devuelva una tabla vacia.
  *
  * Dinamica: es una bitacora de trabajo, no un dato publicable.
  */
 export const dynamic = "force-dynamic";
 
-type Busqueda = {
-  agregado?: string;
-  agregadoId?: string;
-  tipo?: string;
-  desde?: string;
-  hasta?: string;
-  participanteId?: string;
-};
-
-const esTipoDeAgregado = (valor: string | undefined): valor is TipoDeAgregado =>
-  valor !== undefined &&
-  (TIPOS_DE_AGREGADO as readonly string[]).includes(valor);
-
-const esTipoDeEvento = (valor: string | undefined): valor is TipoDeEvento =>
-  valor !== undefined && (TIPOS_DE_EVENTO as readonly string[]).includes(valor);
+/** Etiqueta corta del registro de un evento, para la columna homonima. */
+const registroDeEvento = (
+  evento: EventoDTO,
+  etiquetas: Record<string, string>,
+): string | undefined =>
+  evento.agregado && evento.agregadoId
+    ? `${etiquetas[evento.agregado]} · ${evento.agregadoId}`
+    : undefined;
 
 const AuditoriaPagina = async ({
   searchParams,
 }: {
-  searchParams: Promise<Busqueda>;
+  searchParams: Promise<CriteriosCrudos>;
 }) => {
   const sesion = await getSession();
   if (!sesion) redirect("/auth/login");
@@ -61,34 +81,163 @@ const AuditoriaPagina = async ({
   const diccionario = obtenerDiccionario(idioma);
   const etiquetas = diccionario.auditoria;
 
-  const { agregado, agregadoId, tipo, desde, hasta, participanteId } =
-    await searchParams;
-  const hayBusqueda = esTipoDeAgregado(agregado) && Boolean(agregadoId);
-  // `auditoria:exportar` es el mismo `Autob_Auditar` que abrio esta pantalla
-  // (permission-matrix.md seccion 7); no hace falta una segunda consulta.
-  const puedeExportar = sesion.permisos.has("Autob_Auditar");
+  const crudos = await searchParams;
+  const ahora = new Date();
+  const validacion = validarBusqueda(crudos, ahora);
 
-  const filas = hayBusqueda
-    ? await (async () => {
-        const lectura = await consultarBitacoraCompleta({
-          agregado: agregado as TipoDeAgregado,
-          agregadoId: agregadoId as string,
+  // El rango que se **pinta** en el formulario no es siempre el que se
+  // consulta: si lo que llego es invalido, se le devuelve tal cual para que
+  // quien lo escribio vea su error, en vez de sustituirlo por el defecto y
+  // dejarlo mirando una bitacora que no pidio.
+  const porDefecto = rangoPorDefecto(ahora);
+  const rangoVisible = {
+    desde: crudos.desde?.trim() || porDefecto.desde,
+    hasta: crudos.hasta?.trim() || porDefecto.hasta,
+  };
+
+  const busqueda: BusquedaDeBitacora | undefined = validacion.ok
+    ? validacion.busqueda
+    : undefined;
+
+  // El tipo de registro se toma de lo crudo y **no** de la busqueda validada,
+  // y no es un atajo: al elegirlo, la busqueda todavia no es valida —falta el
+  // identificador, que es justo lo que se va a elegir a continuacion—, asi que
+  // leerlo de `busqueda` dejaria el select de identificador vacio para siempre
+  // y la pantalla seria inutilizable.
+  const agregadoElegido = esTipoDeAgregado(crudos.agregado)
+    ? crudos.agregado
+    : undefined;
+
+  // Lectura global del rango para las opciones. Se intenta siempre que el
+  // rango sea utilizable: sin ella los selects quedarian vacios justo cuando
+  // hay que corregir un criterio.
+  const rangoDeOpciones = validacion.ok
+    ? validacion.busqueda.rango
+    : validacion.motivos.includes("rango_invalido")
+      ? undefined
+      : rangoVisible;
+
+  const eventosDelRango =
+    rangoDeOpciones &&
+    (await consultarBitacoraGlobal({
+      desde: rangoDeOpciones.desde,
+      hasta: rangoDeOpciones.hasta,
+    }));
+
+  const opciones =
+    eventosDelRango?.ok === true
+      ? await construirOpciones({
+          eventos: eventosDelRango.data.eventos,
+          ...(agregadoElegido ? { agregado: agregadoElegido } : {}),
+          diccionario,
+        })
+      : undefined;
+
+  // --- Resultados -----------------------------------------------------------
+
+  const resultado = busqueda
+    ? await (async (): Promise<{
+        eventos: readonly EventoDTO[];
+        truncada: boolean;
+        /** Eventos del agregado anteriores al rango, en el modo PA-12. */
+        anteriores?: string;
+      }> => {
+        if (busqueda.agregado && busqueda.agregadoId) {
+          const lectura = await consultarBitacoraCompleta({
+            agregado: busqueda.agregado,
+            agregadoId: busqueda.agregadoId,
+          });
+          if (!lectura.ok) {
+            throw new Error(`No se pudo leer la bitacora: ${lectura.error}`);
+          }
+
+          const enRango = lectura.data.filter((evento) =>
+            eventoCoincideConFiltros(evento, {
+              ...(busqueda.tipo ? { tipo: busqueda.tipo } : {}),
+              desde: busqueda.rango.desde,
+              hasta: busqueda.rango.hasta,
+              ...(busqueda.participanteId
+                ? { participanteId: busqueda.participanteId }
+                : {}),
+            }),
+          );
+
+          // La particion se leyo entera, asi que saber si hay historia mas
+          // vieja que el rango no cuesta ninguna lectura extra — y ofrecerla
+          // evita que el rango por defecto esconda el origen del registro.
+          const masViejo = lectura.data
+            .map((evento) => desdeIso(evento.ocurridoEn))
+            .filter((instante): instante is Date => instante !== undefined)
+            .map((instante) => diaDeNegocio(instante))
+            .sort()
+            .at(0);
+
+          return {
+            eventos: enRango,
+            truncada: false,
+            ...(masViejo && masViejo < busqueda.rango.desde
+              ? { anteriores: masViejo }
+              : {}),
+          };
+        }
+
+        if (busqueda.participanteId) {
+          const lectura = await consultarActividadDeParticipante({
+            participanteId: busqueda.participanteId,
+            desde: busqueda.rango.desde,
+            hasta: busqueda.rango.hasta,
+            ...(busqueda.tipo ? { tipo: busqueda.tipo } : {}),
+          });
+          if (!lectura.ok) {
+            throw new Error(`No se pudo leer la bitacora: ${lectura.error}`);
+          }
+          return lectura.data;
+        }
+
+        // Solo tipo de evento. `validarBusqueda` garantiza que si no hay
+        // identificador ni participante, hay tipo.
+        if (!busqueda.tipo) {
+          throw new Error("Busqueda sin criterio: validarBusqueda fallo");
+        }
+        if (!eventosDelRango?.ok) {
+          throw new Error("No se pudo leer la bitacora del rango");
+        }
+
+        // Reusa la lectura de las opciones **solo si fue completa**; ver
+        // `consultarPorTipoDeEvento`.
+        const lectura = await consultarPorTipoDeEvento({
+          desde: busqueda.rango.desde,
+          hasta: busqueda.rango.hasta,
+          tipo: busqueda.tipo,
+          yaLeido: eventosDelRango.data,
         });
         if (!lectura.ok) {
           throw new Error(`No se pudo leer la bitacora: ${lectura.error}`);
         }
-        return lectura.data
-          .filter((evento) =>
-            eventoCoincideConFiltros(evento, {
-              tipo: esTipoDeEvento(tipo) ? tipo : undefined,
-              desde,
-              hasta,
-              participanteId,
-            }),
-          )
-          .map((evento) => aFilaDeBitacora(evento, diccionario));
+        return lectura.data;
       })()
-    : [];
+    : undefined;
+
+  const filas = (resultado?.eventos ?? []).map((evento) =>
+    aFilaDeBitacora(evento, diccionario, {
+      ...(busqueda?.agregadoId
+        ? {}
+        : { registro: registroDeEvento(evento, etiquetas.tiposDeAgregado) }),
+      ...(opciones?.ok && opciones.data.nombresDeActor.get(evento.actorId)
+        ? {
+            nombreDeActor: opciones.data.nombresDeActor.get(evento.actorId),
+          }
+        : {}),
+    }),
+  );
+
+  const avisos = validacion.ok
+    ? []
+    : validacion.motivos.map((motivo) => etiquetas.busqueda[motivo]);
+
+  // `auditoria:exportar` es el mismo `Autob_Auditar` que abrio esta pantalla
+  // (permission-matrix.md seccion 7); no hace falta una segunda consulta.
+  const puedeExportar = sesion.permisos.has("Autob_Auditar");
 
   return (
     <main className="auditoria">
@@ -97,78 +246,114 @@ const AuditoriaPagina = async ({
         <Text2 renderAs="p">{etiquetas.descripcion}</Text2>
       </header>
 
-      <form method="get" className="auditoria__filtros">
-        <FormField label={etiquetas.campoAgregado}>
-          {/* `<option>` nativo: un `Select`/`Option` de Eden no sobrevive la
-              frontera de RSC (desafios-implementacion.md 28). */}
-          <select name="agregado" defaultValue={agregado ?? ""}>
-            <option value="" />
-            {TIPOS_DE_AGREGADO.map((valor) => (
-              <option key={valor} value={valor}>
-                {etiquetas.tiposDeAgregado[valor]}
-              </option>
-            ))}
-          </select>
-        </FormField>
-        <FormField label={etiquetas.campoAgregadoId}>
-          <Input name="agregadoId" defaultValue={agregadoId ?? ""} />
-        </FormField>
-        <FormField label={etiquetas.campoTipo}>
-          <select name="tipo" defaultValue={tipo ?? ""}>
-            <option value="">{etiquetas.todosLosTipos}</option>
-            {TIPOS_DE_EVENTO.map((valor) => (
-              <option key={valor} value={valor}>
-                {diccionario.tiposDeEvento[valor]}
-              </option>
-            ))}
-          </select>
-        </FormField>
-        {/* `<input>` nativo: el `Input` de Eden no admite `type="date"`. */}
-        <FormField label={etiquetas.campoDesde}>
-          <input type="date" name="desde" defaultValue={desde ?? ""} />
-        </FormField>
-        <FormField label={etiquetas.campoHasta}>
-          <input type="date" name="hasta" defaultValue={hasta ?? ""} />
-        </FormField>
-        <FormField label={etiquetas.campoParticipante}>
-          <Input name="participanteId" defaultValue={participanteId ?? ""} />
-        </FormField>
-        <Primary type="submit">{etiquetas.buscar}</Primary>
-      </form>
+      <FiltrosDeBitacora
+        valores={{
+          agregado: agregadoElegido ?? "",
+          agregadoId: busqueda?.agregadoId ?? crudos.agregadoId?.trim() ?? "",
+          tipo: busqueda?.tipo ?? "",
+          participanteId: busqueda?.participanteId ?? "",
+          desde: rangoVisible.desde,
+          hasta: rangoVisible.hasta,
+        }}
+        tiposDeAgregado={TIPOS_DE_AGREGADO.map((valor) => ({
+          valor,
+          etiqueta: etiquetas.tiposDeAgregado[valor],
+        }))}
+        tiposDeEvento={TIPOS_DE_EVENTO.map((valor) => ({
+          valor,
+          etiqueta: diccionario.tiposDeEvento[valor],
+        }))}
+        identificadores={opciones?.ok ? opciones.data.identificadores : []}
+        participantes={opciones?.ok ? opciones.data.participantes : []}
+        etiquetas={{
+          campoDesde: etiquetas.campoDesde,
+          campoHasta: etiquetas.campoHasta,
+          campoAgregado: etiquetas.campoAgregado,
+          campoAgregadoId: etiquetas.campoAgregadoId,
+          campoTipo: etiquetas.campoTipo,
+          campoParticipante: etiquetas.campoParticipante,
+          todosLosTipos: etiquetas.todosLosTipos,
+          sinOpciones: etiquetas.sinOpciones,
+          eligeTipoDeRegistro: etiquetas.eligeTipoDeRegistro,
+          buscar: etiquetas.buscar,
+          eligeIdentificador: etiquetas.eligeIdentificador,
+        }}
+        avisos={avisos}
+      />
 
-      {!hayBusqueda ? (
+      {!busqueda || !resultado ? (
         <Text2 renderAs="p">{etiquetas.promptInicial}</Text2>
       ) : (
         <>
           <div className="auditoria__acciones">
-            {puedeExportar ? (
+            {/* La exportacion exige un identificador, y no por comodidad:
+                `BITACORA_EXPORTADA` es un evento y todo evento se ancla a un
+                agregado (`trazabilidad-auditoria.md` 2.1). Una exportacion del
+                rango completo no tendria a que anclarse, asi que saldria sin
+                quedar registrada — que es exactamente lo que la seccion 36 de
+                `desafios-implementacion.md` cerro. */}
+            {puedeExportar && busqueda.agregado && busqueda.agregadoId ? (
               <form action={exportarBitacoraFormulario}>
-                <input type="hidden" name="agregado" value={agregado} />
-                <input type="hidden" name="agregadoId" value={agregadoId} />
-                {tipo ? <input type="hidden" name="tipo" value={tipo} /> : null}
-                {desde ? (
-                  <input type="hidden" name="desde" value={desde} />
+                <input
+                  type="hidden"
+                  name="agregado"
+                  value={busqueda.agregado}
+                />
+                <input
+                  type="hidden"
+                  name="agregadoId"
+                  value={busqueda.agregadoId}
+                />
+                {busqueda.tipo ? (
+                  <input type="hidden" name="tipo" value={busqueda.tipo} />
                 ) : null}
-                {hasta ? (
-                  <input type="hidden" name="hasta" value={hasta} />
-                ) : null}
-                {participanteId ? (
+                <input
+                  type="hidden"
+                  name="desde"
+                  value={busqueda.rango.desde}
+                />
+                <input
+                  type="hidden"
+                  name="hasta"
+                  value={busqueda.rango.hasta}
+                />
+                {busqueda.participanteId ? (
                   <input
                     type="hidden"
                     name="participanteId"
-                    value={participanteId}
+                    value={busqueda.participanteId}
                   />
                 ) : null}
                 <Secondary type="submit">{etiquetas.exportar}</Secondary>
               </form>
             ) : null}
-            {agregado === "LOTE" && agregadoId ? (
-              <Link href={`/auditoria/lotes/${agregadoId}`}>
+            {busqueda.agregado === "LOTE" && busqueda.agregadoId ? (
+              <Link href={`/auditoria/lotes/${busqueda.agregadoId}`}>
                 {etiquetas.verReconstruccion}
+              </Link>
+            ) : null}
+            {resultado.anteriores ? (
+              <Link
+                href={`/auditoria?${new URLSearchParams({
+                  agregado: busqueda.agregado ?? "",
+                  agregadoId: busqueda.agregadoId ?? "",
+                  desde: resultado.anteriores,
+                  hasta: busqueda.rango.hasta,
+                }).toString()}`}
+              >
+                {etiquetas.verHistoriaCompleta}
               </Link>
             ) : null}
           </div>
           <Text4 renderAs="p">{etiquetas.avisoExportacion}</Text4>
+          {resultado.truncada ? (
+            <Text4 renderAs="p" role="alert">
+              {etiquetas.truncada}
+            </Text4>
+          ) : null}
+          {resultado.anteriores ? (
+            <Text4 renderAs="p">{etiquetas.anterioresAlRango}</Text4>
+          ) : null}
 
           <BitacoraDeEventos eventos={filas} diccionario={diccionario} />
         </>

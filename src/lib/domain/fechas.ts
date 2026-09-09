@@ -387,3 +387,124 @@ export const formatearCuentaRegresiva = (
   if (horas > 0) return `${unidad(horas, "hour")} ${unidad(minutos, "minute")}`;
   return unidad(minutos, "minute");
 };
+
+// --- Aritmetica sobre etiquetas de dia --------------------------------------
+//
+// `diaDeNegocio` produce una etiqueta `yyyy-mm-dd`, y esa etiqueta es la clave
+// de particion de `AUDIT#<dia>` en GSI2. Recorrer un rango de la bitacora es
+// recorrer esas etiquetas, no sumar 24 horas a un instante: un dia con cambio
+// de horario no dura 24 horas, y sumar milisegundos se saltaria o repetiria un
+// dia del calendario. Por eso estas funciones operan sobre la etiqueta.
+//
+// El calculo se hace en UTC a proposito y sin contradecir la regla 9: la
+// etiqueta ya viene resuelta en hora de negocio por `diaDeNegocio`, asi que
+// aqui es un dato de calendario y no un instante. Usar la zona de negocio para
+// avanzar un dia del calendario no anadiria correccion y si una frontera.
+
+const DIA_CALENDARIO = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Mediodia UTC del dia de calendario, o `undefined` si la etiqueta no existe.
+ *
+ * Mediodia y no medianoche para que ningun desplazamiento de zona pueda mover
+ * el resultado al dia vecino, aunque estas funciones ya no miran mas que las
+ * partes UTC.
+ */
+const aMediodiaUtc = (dia: string): Date | undefined => {
+  const partes = DIA_CALENDARIO.exec(dia);
+  if (!partes) return undefined;
+
+  const [, anio, mes, diaDelMes] = partes;
+  const instante = new Date(
+    Date.UTC(Number(anio), Number(mes) - 1, Number(diaDelMes), 12),
+  );
+
+  // Verificacion de ida y vuelta, igual que en `desdeIso`: `Date.UTC` desborda
+  // el dia en silencio y `2026-02-30` seria el 2 de marzo.
+  const coincide =
+    instante.getUTCFullYear() === Number(anio) &&
+    instante.getUTCMonth() + 1 === Number(mes) &&
+    instante.getUTCDate() === Number(diaDelMes);
+
+  return coincide ? instante : undefined;
+};
+
+const aEtiquetaDeDia = (instante: Date): string =>
+  `${conCeros(instante.getUTCFullYear(), 4)}-` +
+  `${conCeros(instante.getUTCMonth() + 1, 2)}-` +
+  `${conCeros(instante.getUTCDate(), 2)}`;
+
+/**
+ * Frontera de entrada: `true` solo si la etiqueta es un dia que existe. Lo que
+ * llega de un `<input type="date">` o de la URL pasa por aqui antes de
+ * convertirse en una clave de particion.
+ */
+export const esDiaDeNegocio = (dia: string): boolean =>
+  aMediodiaUtc(dia) !== undefined;
+
+/** Etiqueta de dia desplazada N dias, o `undefined` si la entrada no es un dia. */
+export const sumarDiasDeNegocio = (
+  dia: string,
+  dias: number,
+): string | undefined => {
+  const base = aMediodiaUtc(dia);
+  if (!base) return undefined;
+  if (!Number.isInteger(dias)) {
+    throw new RangeError(`dias debe ser un entero, no ${dias}`);
+  }
+  return aEtiquetaDeDia(new Date(base.getTime() + dias * DIA_EN_MS));
+};
+
+/**
+ * Etiquetas de los dias del rango, **inclusivas en los dos extremos** y en
+ * orden ascendente. `undefined` si algun extremo no es un dia valido o si el
+ * rango esta invertido.
+ *
+ * El orden importa mas de lo que parece: las particiones `AUDIT#<dia>` son
+ * disjuntas y cada una se lee ya ordenada por `ocurridoEn`, asi que recorrer
+ * los dias en este orden y concatenar produce la bitacora global en orden
+ * cronologico **sin ordenar nada en memoria**.
+ */
+export const diasDeNegocioEntre = (
+  desde: string,
+  hasta: string,
+): readonly string[] | undefined => {
+  const inicio = aMediodiaUtc(desde);
+  const fin = aMediodiaUtc(hasta);
+  if (!inicio || !fin || inicio.getTime() > fin.getTime()) return undefined;
+
+  const dias: string[] = [];
+  for (let t = inicio.getTime(); t <= fin.getTime(); t += DIA_EN_MS) {
+    dias.push(aEtiquetaDeDia(new Date(t)));
+  }
+  return dias;
+};
+
+// `fractionalSecondDigits` no se puede combinar con `dateStyle`/`timeStyle`
+// —el propio Intl lanza `TypeError`—, asi que este formateador declara sus
+// componentes uno por uno. `hourCycle: "h23"` evita el "a. m./p. m." de es-MX:
+// en una bitacora densa, 16:03 se lee mas rapido que 4:03 p. m.
+const FORMATEADOR_PRECISO = new Intl.DateTimeFormat("es-MX", {
+  timeZone: ZONA_HORARIA_NEGOCIO,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  fractionalSecondDigits: 3,
+  hourCycle: "h23",
+});
+
+/**
+ * Instante con la mayor resolucion que el dato tiene: milisegundos.
+ *
+ * **No hay microsegundos que mostrar.** `ocurridoEn` se serializa con `aIso`
+ * desde un `Date`, cuya resolucion es el milisegundo, asi que pedirle mas
+ * precision a la pantalla solo puede producir ceros inventados. Cuando dos
+ * eventos comparten milisegundo, lo que los distingue y los ordena es el
+ * `eventoId` de la `SK` (`claves.ts`), y por eso la bitacora lo muestra en su
+ * propia columna en vez de fingir una resolucion mas fina.
+ */
+export const formatearFechaHoraPrecisa = (instante: Date): string =>
+  FORMATEADOR_PRECISO.format(instante);

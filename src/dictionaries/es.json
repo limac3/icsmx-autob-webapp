@@ -409,15 +409,15 @@
     "tiposDeAgregado": {
       "VEHICULO": "Vehículo",
       "CONVOCATORIA": "Convocatoria",
-      "LOTE": "Lote",
-      "SOLICITUD": "Solicitud"
+      "LOTE": "Lote y su fila",
+      "SOLICITUD": "Solicitud (lugar en la fila)"
     },
     "campoAgregadoId": "Identificador",
     "campoTipo": "Tipo de evento",
     "todosLosTipos": "Todos",
     "campoDesde": "Desde",
     "campoHasta": "Hasta",
-    "campoParticipante": "Participante (identificador)",
+    "campoParticipante": "Participante",
     "buscar": "Buscar",
     "promptInicial": "Elige un tipo de registro y su identificador para ver su bitácora.",
     "sinEventos": "No hay eventos que coincidan con estos filtros.",
@@ -461,6 +461,20 @@
     "turnosSinExplicar": "Turnos sin evento que explique su estatus vigente",
     "eventosSinMotivo": "Eventos sin motivo obligatorio",
     "sinHallazgos": "Sin hallazgos.",
-    "volver": "Volver"
+    "volver": "Volver",
+    "sinOpciones": "Sin actividad en este rango",
+    "eligeTipoDeRegistro": "Elige primero un tipo de registro",
+    "columnaEvento": "Identificador del evento",
+    "columnaRegistro": "Registro",
+    "busqueda": {
+      "rango_invalido": "Revisa las fechas: el rango no es válido.",
+      "rango_excedido": "El rango no puede pasar de 31 días cuando no eliges un identificador.",
+      "sin_criterio": "Elige al menos un identificador, un tipo de evento o un participante."
+    },
+    "truncada": "Hay más eventos de los que caben en una consulta. Acota el rango de fechas.",
+    "anterioresAlRango": "Este registro tiene eventos anteriores al rango.",
+    "verHistoriaCompleta": "Ver su historia completa",
+    "verEnBitacora": "Ver en la bitácora de auditoría",
+    "eligeIdentificador": "Elige un identificador"
   }
 }

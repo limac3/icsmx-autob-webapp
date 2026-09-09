@@ -32,6 +32,7 @@ import {
   retirarLoteDesdeFormulario,
 } from "@/app/actions/convocatorias";
 import type { Diccionario, Idioma } from "@/dictionaries";
+import { enlaceDeBitacora } from "@/lib/auditoria/enlace";
 import { PRECIO_MAXIMO_LOTE } from "@/lib/domain/convocatorias";
 import { formatearPrecio } from "@/lib/domain/dinero";
 import {
@@ -100,6 +101,8 @@ export type LotesDeConvocatoriaProps = {
   disponibles: readonly VehiculoDisponible[];
   /** Solo en `BORRADOR` y con permiso de administracion. */
   editable: boolean;
+  /** `Autob_Auditar`: abre el atajo a la bitacora de cada lote. */
+  puedeAuditar?: boolean;
   diccionario: Diccionario;
   idioma: Idioma;
 };
@@ -109,6 +112,7 @@ const LotesDeConvocatoria = ({
   lotes,
   disponibles,
   editable,
+  puedeAuditar = false,
   diccionario,
   idioma,
 }: LotesDeConvocatoriaProps) => {
@@ -242,6 +246,15 @@ const LotesDeConvocatoria = ({
                     >
                       {diccionario.filaAdministrativa.titulo}
                     </Link>
+                    {/* La historia de la fila **es** la del lote: no hay un
+                        registro de fila aparte, y su identificador es este
+                        `loteId`. El enlace lo lleva ya puesto para que no haya
+                        que buscarlo. */}
+                    {puedeAuditar ? (
+                      <Link href={enlaceDeBitacora("LOTE", lote.loteId)}>
+                        {diccionario.auditoria.verEnBitacora}
+                      </Link>
+                    ) : null}
                     {!editable ||
                     lote.estatus === "RETIRADO" ? null : lote.puedeRetirarse ? (
                       <Danger

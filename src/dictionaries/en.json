@@ -409,15 +409,15 @@
     "tiposDeAgregado": {
       "VEHICULO": "Vehicle",
       "CONVOCATORIA": "Sale announcement",
-      "LOTE": "Lot",
-      "SOLICITUD": "Request"
+      "LOTE": "Lot and its queue",
+      "SOLICITUD": "Request (place in queue)"
     },
     "campoAgregadoId": "Identifier",
     "campoTipo": "Event type",
     "todosLosTipos": "All",
     "campoDesde": "From",
     "campoHasta": "To",
-    "campoParticipante": "Participant (identifier)",
+    "campoParticipante": "Participant",
     "buscar": "Search",
     "promptInicial": "Choose a record type and its identifier to see its audit log.",
     "sinEventos": "There are no events matching these filters.",
@@ -461,6 +461,20 @@
     "turnosSinExplicar": "Turns with no event explaining their current status",
     "eventosSinMotivo": "Events missing a required reason",
     "sinHallazgos": "No findings.",
-    "volver": "Back"
+    "volver": "Back",
+    "sinOpciones": "No activity in this range",
+    "eligeTipoDeRegistro": "Choose a record type first",
+    "columnaEvento": "Event identifier",
+    "columnaRegistro": "Record",
+    "busqueda": {
+      "rango_invalido": "Check the dates: the range is not valid.",
+      "rango_excedido": "The range cannot exceed 31 days unless you choose an identifier.",
+      "sin_criterio": "Choose at least an identifier, an event type or a participant."
+    },
+    "truncada": "There are more events than a single query can return. Narrow the date range.",
+    "anterioresAlRango": "This record has events before the range.",
+    "verHistoriaCompleta": "See its full history",
+    "verEnBitacora": "View in the audit log",
+    "eligeIdentificador": "Choose an identifier"
   }
 }

@@ -14,12 +14,15 @@
 > Sincronizado con: rama `main`, 2026-09-08, Etapas 7 a 10 cerradas mas la **Etapa 2.2**
 > (impersonacion de identidad en desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y
 > navegacion por permiso, decision **D-11**), la **Etapa 11** (auditoria: verificacion de
-> integridad recalculada desde el evento crudo, decision **D-12**) y la **Etapa 12 parcial**
+> integridad recalculada desde el evento crudo, decision **D-12**), la **Etapa 12 parcial**
 > (observabilidad y alarmas, decision **D-13**; sus puntos `[OPERADOR]` —navegador, despliegue,
-> runbooks ejecutados— siguen abiertos y no son codigo). Las Etapas 8 a 11 quedaron confirmadas
-> en `cc5af85`; **la Etapa 12 sigue sin commit** al escribir esto, asi que el reindexado no vera
-> `src/lib/observabilidad/` ni `amplify/alarmas.ts` hasta que se confirme. Los headings de
-> `agent_files/*.md` ya estan indexados como nodos `Section` — consultables con
+> runbooks ejecutados— siguen abiertos y no son codigo) y la **Etapa 11.1** (la bitacora se vuelve
+> consultable: rango de dias como llave y perfil de participante, decisiones **D-14** y **D-15**).
+> Las Etapas 8 a 11 quedaron confirmadas en `cc5af85`; **las Etapas 12 y 11.1 siguen sin commit**
+> al escribir esto, asi que el reindexado no vera `src/lib/observabilidad/`, `amplify/alarmas.ts`,
+> `src/lib/participantes/` ni los servicios nuevos de `src/lib/auditoria/` hasta que se confirmen
+> — el conteo de nodos volvio a dar 2143, que es la misma senal ya medida dos veces. Los headings
+> de `agent_files/*.md` ya estan indexados como nodos `Section` — consultables con
 > `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`. Este ADR no los duplica.
 >
 > Este archivo es la copia local y versionada del ADR. El ADR que vive en el grafo se pierde
@@ -293,6 +296,96 @@ Anclas: `amplify/alarmas.ts::AlarmasAutob`, `amplify/backend.ts::grupoDeLogsDelB
 `src/lib/observabilidad/traza.ts::conTraza`, `src/lib/data/transacciones.ts::ejecutarTransaccion`,
 `src/lib/data/transacciones.ts::esConflictoDeTransaccion`.
 
+### D-14 — La bitacora se busca por rango de dias, y el rango es la llave
+La pantalla de auditoria tiene **dos modos de consulta** y la diferencia no es de interfaz sino de
+patron de acceso. Con un identificador concreto se lee la particion de ese agregado (PA-12), que
+trae su historia entera: el rango de fechas es un filtro en memoria y **no se acota**. Sin
+identificador —por tipo de evento o por participante— se lee una particion **por dia** del rango
+(PA-13, GSI2 `AUDIT#<dia>`): ahi el rango **es la llave**, no puede estar vacio y se acota a 31
+dias, validado en la pantalla **y otra vez en el servicio**.
+Razon: PA-13 estaba declarado desde la Etapa 0 y `eventos.ts` escribia su clave desde la Etapa 5,
+pero **ningun codigo lo leia**, asi que toda busqueda exigia conocer de antemano el identificador
+—y el de una solicitud es derivado (`<loteId>-<turno>`) y no aparecia en ninguna pantalla. El tope
+de 31 dias es el techo de `Query` que el servicio esta dispuesto a lanzar; aplicarlo tambien al
+modo por identificador solo esconderia historia sin ahorrar nada.
+Rastrear a un participante son **dos preguntas**: lo que firmo (`actorId`) y lo que le ocurrio
+(los eventos que `SISTEMA` escribio sobre sus solicitudes, via GSI3 mas la particion de cada una).
+Buscar solo por `actorId` daria una respuesta que parece completa y no lo es — el vencimiento que
+explica por que alguien perdio su adjudicacion lo firma `SISTEMA`.
+Las opciones de los selects salen de la **bitacora del rango** y no del catalogo de entidades, de
+modo que toda opcion ofrecida devuelve resultados; y de la **clave** del evento, no de sus
+atributos, porque la lectura es por particion de agregado. `EventoDTO` gano por eso `agregado` y
+`agregadoId`, opcionales: quien lee PA-12 ya sabe de que pregunto, quien lee PA-13 no.
+`tipo` y `actorId` se filtran con `FilterExpression`, contra el criterio general del modulo de
+filtros: ese criterio vale para la particion de un agregado —cientos de eventos en toda su vida—,
+no para una de dia, que puede traer todos los eventos del sistema de ese dia.
+**El rango se lee del dia mas nuevo al mas viejo, en secuencia, y se voltea al final.** Es lo que
+hace correcto el truncamiento: cuando no cabe todo, lo que sobra tiene que ser lo mas viejo. La
+primera version leia ascendente en paralelo y cortaba al llegar al tope, o sea descartaba lo mas
+reciente; con los datos del sandbox —un dia de prueba de carga con 3 069 eventos contra un tope de
+2 000— eso escondia justamente lo de hoy, y las opciones de los selects, que se ordenan por
+actividad reciente, se armaban del dia anterior. La secuencia es la contrapartida del orden:
+permite dejar de consultar los dias que ya no caben.
+Descartado:
+- Poblar los selects desde el catalogo de entidades, que es mas barato. Ofreceria convocatorias sin
+  un solo evento en el rango, y elegirlas devolveria una tabla vacia.
+- Mostrar microsegundos, que es lo que se pidio. `ocurridoEn` viene de un `Date`: milisegundos y no
+  hay mas. El desempate real de dos eventos del mismo milisegundo es el `eventoId` de la `SK`, y por
+  eso la tabla lo muestra en columna propia en vez de fingir precision.
+- Extender la exportacion CSV al modo global. `BITACORA_EXPORTADA` es un evento y todo evento se
+  ancla a un agregado: no tendria a que anclarse y saldria sin registrarse, que es el hueco que
+  cerro `desafios-implementacion.md` 36. El boton se oculta.
+- Dejar el filtro de rango comparando `ocurridoEn` contra `yyyy-mm-dd`. Ponia la frontera en la
+  medianoche UTC mientras PA-13 la pone en la de Mexico: el mismo rango devolvia conjuntos
+  distintos segun como se buscara (`desafios-implementacion.md` 44).
+- Subir `LIMITE_DE_EVENTOS_GLOBAL` para que el caso del sandbox entrara completo, en vez de
+  corregir el sentido de la lectura. Solo mueve el problema: un dia de apertura real con mas lotes
+  vuelve a truncar, y seguiria descartando lo reciente.
+- Reusar siempre la lectura sin filtrar del rango —la que arma las opciones— para responder la
+  busqueda por tipo de evento, ahorrando una consulta. Solo vale **si esa lectura fue completa**:
+  con truncamiento, el corte se lleva los eventos mas viejos y entre ellos los del tipo buscado.
+  Medido en el sandbox: 483 filas reusando contra 841 preguntando con el filtro, y las 483
+  marcadas como truncadas, que le dice al auditor "acota el rango" cuando hacia falta lo
+  contrario (`consultarPorTipoDeEvento`).
+- Leer los dias en paralelo, que es mas rapido. Obligaria a traer hasta el cupo de **cada** dia
+  para quedarse con el cupo total, y no permite dejar de leer lo que ya no cabe.
+Anclas: `src/lib/auditoria/consultarBitacoraGlobal.ts::consultarBitacoraGlobal`,
+`src/lib/auditoria/consultarActividadDeParticipante.ts::consultarActividadDeParticipante`,
+`src/lib/auditoria/filtrosDeBitacora.ts::validarBusqueda`,
+`src/lib/auditoria/filtrosDeBitacora.ts::eventoCoincideConFiltros`,
+`src/lib/auditoria/opcionesDeBusqueda.ts::construirOpciones`,
+`src/lib/auditoria/mapeo.ts::agregadoDeParticion`,
+`src/lib/domain/fechas.ts::diasDeNegocioEntre`,
+`src/lib/domain/fechas.ts::formatearFechaHoraPrecisa`.
+
+### D-15 — Del upsert de participante se implemento el perfil, nunca la identidad
+`PART#<id> / PERFIL` guarda `nombre` y `correo`, escrito por `registrarPerfil` desde
+`getSession()` una vez por proceso y por persona, de mejor esfuerzo. **`participanteId` sigue
+siendo el `sub` de Okta.**
+Razon: el diseno de la Etapa 0 preveia que el *upsert* acunara tambien un ULID propio, y eso ya no
+se puede hacer. `actorId` guarda el identificador vigente cuando se escribio cada evento y la
+bitacora es **append-only**, asi que cambiar la identidad ahora partiria en dos la historia de cada
+persona —lo anterior con su `sub`, lo nuevo con su ULID— sin forma de unirlas. El perfil existe
+solo para que la bitacora se pueda **leer**: sin el, el auditor ve `sub` opacos y no puede buscar
+la actividad de una persona.
+Nada de negocio depende de este item: los permisos los responde EAS en cada peticion (regla 17),
+nunca el perfil. De ahi que su escritura sea de mejor esfuerzo — que no se pueda escribir una
+etiqueta de auditoria no es razon para negarle la aplicacion a quien inicio sesion — y que no lleve
+evento de auditoria: un evento por acceso ahogaria la bitacora en ruido, que es lo contrario de lo
+que el perfil viene a resolver.
+Descartado:
+- Escribirlo en cada peticion. Seria una escritura por pantalla para reponer el mismo dato.
+- Escribirlo desde el `onCallback` o el `beforeSessionSaved` del SDK de Auth0. Los ejecuta
+  `auth.middleware` dentro de `src/proxy.ts`, y meter el cliente de DynamoDB en el middleware es
+  peso y superficie donde no corresponde; `beforeSessionSaved` ademas desactiva el filtrado por
+  omision de los `claims` del `id_token`.
+- Desnormalizar nombre y correo en cada evento. Los eventos son append-only: congelaria nombres
+  para siempre y metaria identidad legible en la particion mas sensible del sistema, sin arreglar
+  los eventos ya escritos.
+Anclas: `src/lib/participantes/registrarPerfil.ts::registrarPerfil`,
+`src/lib/participantes/leerPerfiles.ts::leerPerfiles`,
+`src/lib/auth/session.ts::getSession`, `src/lib/data/lecturaPorLotes.ts::leerPorClaves`.
+
 ## Decisiones de modelo de datos
 
 Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
@@ -505,6 +598,13 @@ permite el cliente falso `src/utils/clienteDynamoFalso.ts` en pruebas.
 recibe el reloj por `deps`: `conTraza` mide con `performance.now()`, porque el `ahora` inyectable
 esta congelado por invocacion a proposito y daria siempre cero
 (`estrategia-aplicacion.md` 2.3).
+
+`src/types/auditoria.ts` importa `TipoDeAgregado` de `src/lib/data/claves.ts`, que es la unica
+arista `types → lib` del repositorio. Es `import type`, o sea que **no existe en ejecucion**: se
+borra al compilar y no arrastra la capa de datos a ningun bundle de cliente. La union vive en
+`claves.ts` porque es la forma de una clave de particion; duplicarla en `types/` para respetar la
+direccion de la flecha crearia dos catalogos que se separan al agregar un agregado, que es peor
+que la arista.
 
 Dos excepciones registradas, las dos por la misma razon: el layout raiz no puede leer datos de
 la peticion sin volverse el punto donde todas las pantallas esperan, asi que la lectura ocurre

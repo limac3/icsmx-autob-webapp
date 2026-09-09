@@ -1,0 +1,45 @@
+/* Filtros de la bitacora. Solo layout; la apariencia la ponen los componentes
+   de Eden (regla 10). */
+
+.filtros-bitacora {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--unity-spacing-100, 1rem);
+  align-items: flex-end;
+  margin-bottom: var(--unity-spacing-150, 1.5rem);
+}
+
+/* Los dos selects de opciones legibles llevan etiquetas largas —"Nissan Versa
+   2019 · 12 mar 2026 · 01K4Z..."—, asi que se les da mas ancho que a los
+   campos de fecha y se les permite crecer. Sin esto el texto se corta justo
+   donde esta el dato que distingue una opcion de otra. */
+.filtros-bitacora select[name="agregadoId"],
+.filtros-bitacora select[name="participanteId"] {
+  min-width: 18rem;
+  max-width: 100%;
+}
+
+/* Renglon propio. Como un elemento mas del `flex-wrap`, el boton se colaba
+   entre los campos —en 1440 px caia junto a "Participante", en medio del
+   formulario— y los avisos quedaban a su derecha en lugar de debajo. */
+.filtros-bitacora__acciones {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--unity-spacing-050, 0.5rem) var(--unity-spacing-100, 1rem);
+}
+
+/* Movil: cada campo en su renglon. Un filtro de seis campos en dos columnas
+   estrechas es peor que uno en una sola columna (regla 12). */
+@media (width <= 48rem) {
+  .filtros-bitacora {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filtros-bitacora select[name="agregadoId"],
+  .filtros-bitacora select[name="participanteId"] {
+    min-width: 0;
+  }
+}

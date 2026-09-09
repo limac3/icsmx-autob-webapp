@@ -46,6 +46,9 @@ export const OPERACIONES = [
   "barridoDeVencimientos",
   "procesarOutbox",
   "transaccion",
+  // De mejor esfuerzo y fuera de toda transaccion: su fallo no cancela nada,
+  // asi que la unica forma de enterarse es esta linea (`session.ts`).
+  "registrarPerfil",
 ] as const;
 export type Operacion = (typeof OPERACIONES)[number];
 

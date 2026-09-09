@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { aEventoDTO } from "./mapeo";
+import { aEventoDTO, agregadoDeParticion } from "./mapeo";
 
 vi.mock("server-only", () => ({}));
 
@@ -30,6 +30,8 @@ describe("aEventoDTO", () => {
       eventoId: "E1",
       tipo: "SOLICITUD_CREADA",
       ocurridoEn: "2026-10-06T10:00:00.000Z",
+      agregado: "LOTE",
+      agregadoId: "L1",
       actorTipo: "USUARIO",
       actorId: "P1",
       actorPermisos: ["Autob_Venta_a_empleados"],
@@ -113,5 +115,57 @@ describe("aEventoDTO", () => {
       actorId: "SISTEMA",
       correlacionId: "COR1",
     });
+  });
+});
+
+describe("agregadoDeParticion", () => {
+  it("parte AUDIT#<agregado>#<id> en sus dos componentes", () => {
+    expect(agregadoDeParticion("AUDIT#LOTE#L1")).toEqual({
+      agregado: "LOTE",
+      agregadoId: "L1",
+    });
+  });
+
+  it("acepta el identificador derivado de una solicitud", () => {
+    // `<loteId>-<turno>` lleva guion, no `#`, asi que la clave sigue teniendo
+    // exactamente tres partes.
+    expect(agregadoDeParticion("AUDIT#SOLICITUD#01K4Z-7")).toEqual({
+      agregado: "SOLICITUD",
+      agregadoId: "01K4Z-7",
+    });
+  });
+
+  it.each([
+    ["otra particion del modelo", "LOTE#L1"],
+    ["sin identificador", "AUDIT#LOTE#"],
+    ["sin agregado", "AUDIT##L1"],
+    ["un agregado que no existe", "AUDIT#PLANETA#L1"],
+    ["con una parte de mas", "AUDIT#LOTE#L1#EXTRA"],
+    ["vacia", ""],
+  ])("no interpreta %s", (_caso, pk) => {
+    expect(agregadoDeParticion(pk)).toBeUndefined();
+  });
+
+  it("no interpreta lo que no es una cadena", () => {
+    expect(agregadoDeParticion(undefined)).toBeUndefined();
+    expect(agregadoDeParticion(42)).toBeUndefined();
+  });
+});
+
+describe("aEventoDTO y su particion", () => {
+  it("un evento sabe de que agregado es historia", () => {
+    expect(aEventoDTO(item())).toMatchObject({
+      agregado: "LOTE",
+      agregadoId: "L1",
+    });
+  });
+
+  it("sin PK legible, el evento sigue siendo valido pero sin agregado", () => {
+    // PA-12 no necesita esos campos: quien pregunta por una particion ya sabe
+    // de que agregado pregunto.
+    const evento = aEventoDTO({ ...item(), PK: undefined });
+    expect(evento?.eventoId).toBe("E1");
+    expect(evento?.agregado).toBeUndefined();
+    expect(evento?.agregadoId).toBeUndefined();
   });
 });

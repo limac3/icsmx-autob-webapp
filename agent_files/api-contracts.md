@@ -295,6 +295,43 @@ necesita algo mas que la bitacora misma.
 > archivo** — el mismo criterio que `COMPROBANTE_DESCARGADO` en la seccion 7. Registrar el evento
 > en la action dejaria un hueco: cualquiera con `Autob_Auditar` podria construir esa misma URL a
 > mano y exportar sin dejar rastro (`desafios-implementacion.md` 36).
+>
+> **Exige un agregado, y por eso no cubre el modo global de la pantalla.** `BITACORA_EXPORTADA` es
+> un evento y todo evento se ancla a un agregado (`trazabilidad-auditoria.md` 2.1): una
+> exportacion del rango completo no tendria a que anclarse y saldria sin registrarse, que es el
+> hueco que la seccion 36 cerro. La pantalla oculta el boton en ese modo.
+
+### 6.2 Servicios de lectura de la bitacora
+
+No son Server Actions: los invoca la pagina `/auditoria` directamente, que es un Server Component
+(regla 2 — solo las mutaciones pasan por action).
+
+| Servicio | Entrada | Salida | Patron |
+| --- | --- | --- | --- |
+| `consultarBitacoraCompleta` | `{ agregado, agregadoId }` | `EventoDTO[]` | PA-12, agota las paginas |
+| `consultarBitacoraGlobal` | `{ desde, hasta, tipo?, actorId? }` | `{ eventos, truncada }` | PA-13, una `Query` por dia |
+| `consultarPorTipoDeEvento` | `{ desde, hasta, tipo, yaLeido? }` | `{ eventos, truncada }` | reusa `yaLeido` **solo si no trunco** |
+| `consultarActividadDeParticipante` | `{ participanteId, desde, hasta, tipo? }` | `{ eventos, truncada }` | PA-13 + PA-09 + PA-12 |
+| `construirOpciones` | `{ eventos, agregado?, diccionario }` | `{ identificadores, participantes, nombresDeActor }` | lecturas por lote |
+| `leerPerfiles` | `participanteId[]` | `Map<id, PerfilDeParticipante>` | `BatchGetItem` |
+| `registrarPerfil` | `{ participanteId, oktaSub, nombre, correo }` | `PerfilDeParticipante` | `PutItem` sin condicion |
+
+`desde` y `hasta` son **dias de negocio `yyyy-mm-dd`**, inclusivos, no instantes ISO. El rango es
+la llave de PA-13 y sus fronteras son las medianoches de Mexico
+(`modelo-datos-dynamodb.md` 5.3).
+
+> **`consultarActividadDeParticipante` son dos preguntas, no una.** Lo que la persona **hizo** son
+> sus eventos firmados (`actorId`), y para un administrador o un operador de tesoreria es casi todo
+> lo que hay. Lo que **le ocurrio** son los eventos de sus solicitudes, y esos los firma `SISTEMA`
+> —un vencimiento, una omision, un descongelamiento—, asi que buscar por `actorId` no los
+> encuentra. Son justo los que explican por que alguien perdio una adjudicacion. Los resultados se
+> desduplican por `eventoId` (`SOLICITUD_CREADA` aparece en las dos lecturas) y se ordenan por
+> `ocurridoEn` con desempate por `eventoId`, que es el orden de la `SK` de la bitacora.
+>
+> **`EventoDTO` gano `agregado` y `agregadoId`.** Salen de la clave de particion, no de los
+> atributos, y son opcionales por eso. Quien lee PA-12 ya sabe de que agregado pregunto; quien lee
+> PA-13 recibe eventos de todo el sistema mezclados y sin ellos no puede decir de que habla cada
+> renglon.
 
 ---
 

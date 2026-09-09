@@ -36,7 +36,7 @@ participante.
 
 | Entidad | `PK` | `SK` | Notas |
 | --- | --- | --- | --- |
-| Participante | `PART#<participanteId>` | `PERFIL` | `participanteId` es un ULID propio, no el `sub` de Okta |
+| Participante | `PART#<participanteId>` | `PERFIL` | `nombre`, `correo`, `actualizadoEn`. **`participanteId` es el `sub` de Okta**, no un ULID propio: ver 2.2 |
 | Vehiculo | `VEH#<vehiculoId>` | `META` | |
 | Fotografia | `VEH#<vehiculoId>` | `FOTO#<orden:04d>#<fotoId>` | Se leen con `begins_with(SK, "FOTO#")`, ya ordenadas |
 | **Centinela de vehiculo activo** | `VEH#<vehiculoId>` | `ACTIVO` | Garantiza R-10. Ver 4.1 |
@@ -58,6 +58,29 @@ participante.
 > ordenar la fila por tiempo aunque alguien lo intente (R-08).
 
 ### 2.2 Atributos relevantes
+
+**Participante:**
+
+```
+participanteId, nombre, correo, actualizadoEn
+GSI1PK/GSI1SK           OKTA#<encodeURIComponent(sub)> / PERFIL
+```
+
+Lo escribe `registrarPerfil` desde `getSession()`, **una vez por proceso y por persona** y de
+mejor esfuerzo: si falla, se registra y la peticion sigue. Nada de negocio depende de este item —
+los permisos los responde EAS en cada peticion (regla 17) y nunca este perfil. Existe para que la
+bitacora se pueda **leer**: todo evento guarda solo `actorId`, y sin este item el auditor no puede
+buscar la actividad de una persona ni ver un nombre en lugar de un `sub`.
+
+> **`participanteId` es el `sub` de Okta, y se queda asi.** El diseno de la Etapa 0 preveia que el
+> *upsert* acunara un ULID propio; hacerlo hoy **partiria en dos la historia de cada persona**,
+> porque `actorId` guarda el identificador vigente cuando se escribio cada evento y la bitacora es
+> append-only. Se implemento por tanto solo la mitad del *upsert* pendiente: el perfil, no la
+> identidad (`desafios-implementacion.md` 8, 31 y 45).
+>
+> El perfil **no conserva historia**: se sobrescribe en cada acceso. Lo que necesita el dato del
+> momento ya se copia al item que lo necesita — `correoTitular` en la solicitud, `actorPermisos`
+> en el evento.
 
 **Vehiculo:**
 
@@ -267,7 +290,7 @@ Ordena entre `PART#` y `SOL#`, asi que ninguna consulta de la fila la ve.
 | PA-10 | Adjudicaciones por vencer | `Query` GSI4 `VENCE#<dia>`, `GSI4SK <= ahora` |
 | PA-11 | Bandeja de tesoreria | `Query` GSI2 `SOL_ESTATUS#EN_VERIFICACION` |
 | PA-12 | Bitacora de un agregado | `Query` `PK = AUDIT#<agregado>#<id>` |
-| PA-13 | Bitacora cronologica global | `Query` GSI2 `AUDIT#<yyyy-mm-dd>` |
+| PA-13 | Bitacora cronologica global | `Query` GSI2 `AUDIT#<yyyy-mm-dd>`, **una por dia del rango**. Ver 5.3 |
 | PA-14 | Correos pendientes | `Query` GSI4 `OUTBOX_PENDIENTE` |
 
 ### 5.1 El gating triple es una consulta, no un filtro
@@ -300,6 +323,53 @@ descarte, marginal.
 Se calculan con un `Query` `Select: COUNT` sobre PA-07, **sin traer los items**. Es lo que
 hace estructuralmente imposible filtrar identidades (R-12): los datos de terceros nunca salen
 de DynamoDB.
+
+### 5.3 PA-13: el rango de dias es la llave, no un filtro
+
+`consultarBitacoraGlobal` recorre **una particion por dia** del rango, **del dia mas nuevo al mas
+viejo y en secuencia**, y voltea el resultado al final para presentarlo cronologico. No ordena
+nada en memoria y no le hace falta: las particiones de dia son disjuntas, cada `Query` devuelve su
+dia ya ordenado (`GSI2SK` es `<ocurridoEn>#<eventoId>`, leida con `ScanIndexForward: false`) y los
+dias se recorren en orden, asi que basta un `reverse`.
+
+> **El sentido de la lectura es lo que hace correcto el truncamiento.** Cuando el rango tiene mas
+> eventos de los que caben, lo que debe sobrar es **lo mas viejo**. La primera version leia
+> ascendente y cortaba al llegar al tope, con lo que descartaba lo mas reciente: en el sandbox, un
+> dia de prueba de carga con 3 069 eventos consumia el cupo entero y las opciones de los selects
+> —que se ordenan por actividad mas reciente— se armaban del dia anterior. Leer en secuencia y no
+> en paralelo es la contrapartida: permite **dejar de consultar** los dias que ya no caben, y el
+> caso lento (recorrer los 31 dias) es exactamente el caso en que casi no hay datos.
+
+Tres consecuencias, y ninguna es opcional:
+
+- **El rango se acota a 31 dias** (`MAXIMO_DIAS_DE_RANGO`), que es el techo de `Query` que el
+  servicio esta dispuesto a lanzar. Lo valida la pantalla y **lo vuelve a validar el servicio**:
+  una action nueva que olvide validar no puede conseguir que se ejecuten cien consultas. Solo
+  aplica al modo global; con un identificador concreto se lee una sola particion (PA-12) y el rango
+  vuelve a ser un filtro en memoria.
+- **El dia es el de negocio**, calculado con `diaDeNegocio`, asi que las fronteras del rango son
+  las medianoches de Mexico. El filtro en memoria de PA-12 tuvo que alinearse a lo mismo: comparar
+  `ocurridoEn` contra `yyyy-mm-dd` a secas ponia la frontera en la medianoche **UTC** y el mismo
+  rango devolvia conjuntos distintos segun como se buscara (`desafios-implementacion.md` 44).
+- **`tipo` y `actorId` se filtran con `FilterExpression`**, contra el criterio general de filtrar
+  en memoria. Ese criterio vale para la particion de un agregado —cientos de eventos en toda su
+  vida—; una particion de dia puede traer todos los eventos del sistema de ese dia. No ahorra RCU
+  (DynamoDB cobra lo leido, no lo devuelto) pero si transferencia y memoria, que es lo que se agota
+  primero. La respuesta avisa cuando **trunco** (`LIMITE_DE_EVENTOS_GLOBAL`), en vez de entregar
+  una lista incompleta que parece completa.
+
+**Costo por render de `/auditoria`.** Una lectura global del rango para armar las opciones de los
+selects, mas la del modo elegido. Rastrear un participante suma su `Query` de GSI3 (PA-09) y una
+particion `AUDIT#SOLICITUD#` por solicitud suya, acotadas a `MAXIMO_SOLICITUDES_A_RASTREAR`.
+
+> **En el modo "solo tipo de evento", la lectura de las opciones se reusa solo si fue completa**
+> (`consultarPorTipoDeEvento`). Si no trunco, contiene todo el rango y filtrarla en memoria da
+> exactamente el mismo conjunto que preguntarle a DynamoDB. Si trunco, **no se puede reusar**: el
+> corte se lleva los eventos mas viejos y entre ellos puede haber muchos del tipo buscado. Medido
+> en el sandbox: `LOTE_ADJUDICADO` devolvia 483 filas reusando la lectura truncada y devuelve
+> **841** preguntando con el filtro. Y peor que el numero, la respuesta reusada venia marcada como
+> truncada, que le dice al auditor "acota el rango" cuando hacia falta lo contrario. Repetir la
+> lectura cuesta el mismo RCU que la primera; se paga.
 
 ---
 

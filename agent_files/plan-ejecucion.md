@@ -1162,6 +1162,93 @@ los permisos.
 
 ---
 
+## Etapa 11.1 — La bitacora se vuelve consultable ✅
+
+**Objetivo:** que el auditor pueda buscar sin conocer de antemano el identificador de lo que
+busca.
+
+**Dependencias:** Etapa 11.
+
+> **El sintoma era "es dificil encontrar los ID"; los huecos eran tres.** La pantalla solo sabia
+> leer la particion de un agregado (PA-12), asi que exigia teclear un ULID — y el de una solicitud
+> es derivado (`<loteId>-<turno>`) y no aparecia en ninguna pantalla. Detras habia dos cosas mas:
+> **PA-13 nunca se habia leido** (su clave se escribia desde la Etapa 5 y ningun codigo la
+> consultaba) y **no existia perfil de participante**, asi que no habia de donde sacar un nombre.
+> Ver `desafios-implementacion.md` 45.
+
+- [x] `src/lib/auditoria/consultarBitacoraGlobal.ts` — PA-13, una `Query` por dia del rango, en
+      paralelo y sin ordenar en memoria. Filtro de `tipo` y `actorId` en DynamoDB; avisa cuando
+      trunca
+- [x] `src/lib/auditoria/consultarActividadDeParticipante.ts` — lo que la persona **firmo** mas lo
+      que **le ocurrio** (los eventos que `SISTEMA` escribio sobre sus solicitudes), desduplicado
+      por `eventoId`
+- [x] `src/lib/participantes/` — `registrarPerfil` y `leerPerfiles`. Es la **mitad** del *upsert*
+      pendiente desde la Etapa 2: el perfil, no la identidad. `participanteId` sigue siendo el
+      `sub` de Okta porque cambiarlo partiria en dos la historia de cada persona
+- [x] `src/lib/data/lecturaPorLotes.ts` — `BatchGetItem` con troceado y reintento de las claves sin
+      procesar
+- [x] `src/lib/auditoria/opcionesDeBusqueda.ts` — las opciones de los dos selects, con etiquetas
+      legibles resueltas por lectura por lote. Salen de la **bitacora del rango** y no del catalogo
+      de entidades, asi que toda opcion ofrecida devuelve resultados
+- [x] `src/lib/domain/fechas.ts` — aritmetica sobre etiquetas de dia (`diasDeNegocioEntre`,
+      `sumarDiasDeNegocio`, `esDiaDeNegocio`) y `formatearFechaHoraPrecisa`
+- [x] `src/components/FiltrosDeBitacora.tsx` — fechas primero, obligatorias y con los ultimos 30
+      dias por defecto; selects dependientes que reenvian el formulario al cambiar
+- [x] Tabla con milisegundos, `eventoId`, el registro de cada evento y el nombre del actor
+- [x] Atajos "ver en la bitacora" desde vehiculos, convocatoria, lote y vista de fila, solo con
+      `Autob_Auditar` — `src/lib/auditoria/enlace.ts`
+- [x] `EventoDTO` gana `agregado` y `agregadoId`, leidos de la clave de particion
+
+**Verificacion:**
+
+- [x] Compuerta de calidad completa en verde — 1982 pruebas, `typecheck` y `build` limpios
+- [x] El rango es obligatorio y acotado a 31 dias **en el servicio y no solo en la pantalla**: una
+      action que olvide validar no puede lanzar cien `Query`
+- [x] Sin criterio no se busca; un tipo de registro sin identificador no es un criterio
+- [x] Un vencimiento firmado por `SISTEMA` **si** aparece al rastrear al participante afectado
+- [x] `axe` sin violaciones sobre el filtro nuevo — y en el camino se corrigio un defecto real:
+      un control nativo dentro de un `FormField` de Eden queda **sin nombre accesible**
+      (`desafios-implementacion.md` 43)
+- [x] El mismo rango devuelve el mismo conjunto por los dos modos de consulta: las fronteras de
+      dia se unificaron en dia de negocio (`desafios-implementacion.md` 44)
+- [x] **Recorrido en navegador con datos reales del sandbox**, con Playwright y una sesion de Okta
+      real mas la persona simulada `auditor`. Verificado: el auto-envio puebla los selects, la
+      busqueda por identificador devuelve la historia del lote, la busqueda global por tipo de
+      evento devuelve 483 filas **con la columna Registro**, la fecha se presenta con
+      milisegundos y el aviso de truncamiento aparece con el rango por defecto. Movil a 390 px:
+      `CardView` apila con la etiqueta de cada columna. Consola sin errores ni advertencias.
+      Corrigio tres defectos de interfaz que solo se ven con la pantalla delante: el texto de
+      ayuda permanente duplicaba el aviso de `sin_criterio`, la opcion vacia del identificador se
+      dibujaba **en blanco** al elegir un tipo, y el boton `Buscar` caia en medio del formulario
+- [ ] **[OPERADOR]** comprobar las **etiquetas legibles** con datos creados desde la aplicacion.
+      No se pueden ver en el sandbox: los eventos que hay son de la prueba de carga, y sus lotes,
+      convocatorias, vehiculos y perfiles **no existen** como items (verificado con `get-item`),
+      asi que cada opcion cae al identificador crudo — que es el respaldo correcto y esta cubierto
+      por prueba, pero no demuestra la etiqueta
+
+**Lo que se decidio, y por que asi:**
+
+1. **Microsegundos no existen y no se van a inventar.** `ocurridoEn` se serializa desde un `Date`:
+   milisegundos. Pedirle mas precision a la pantalla solo podia producir ceros. Lo que si
+   distingue dos eventos del mismo milisegundo es el `eventoId` de la `SK`, y por eso la tabla lo
+   muestra en su propia columna en vez de fingir una resolucion mas fina.
+2. **No hay registro de "fila".** La historia de una fila **es** la del lote, con el mismo
+   `loteId`; una solicitud es un lugar dentro de ella. Las etiquetas del select lo dicen ahora
+   ("Lote y su fila", "Solicitud (lugar en la fila)") en vez de dejar suponer que falta un
+   identificador que buscar.
+3. **El tope de 31 dias solo aplica al modo global.** Con un identificador se lee una sola
+   particion y el rango vuelve a ser un filtro en memoria, asi que acotarlo solo esconderia
+   historia sin ahorrar nada — y es lo que permite que un enlace desde la pantalla de una
+   convocatoria abra su historia completa aunque empiece hace meses.
+4. **La exportacion sigue exigiendo un agregado.** `BITACORA_EXPORTADA` es un evento y todo evento
+   se ancla a un agregado: una exportacion del rango completo no tendria a que anclarse y saldria
+   sin registrarse, que es el hueco que cerro la seccion 36. El boton se oculta en el modo global.
+
+**Salida esperada:** una bitacora que se puede consultar sin saber de memoria un ULID.
+**Cumplida.**
+
+---
+
 ## Etapa 12 — Endurecimiento y despliegue — **parcial**
 
 **Objetivo:** listo para produccion.

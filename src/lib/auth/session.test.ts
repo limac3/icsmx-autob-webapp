@@ -3,8 +3,12 @@ vi.mock("server-only", () => ({}));
 vi.mock("./auth0", () => ({ auth: { getSession: vi.fn() } }));
 vi.mock("./eas", () => ({ obtenerPermisos: vi.fn() }));
 vi.mock("./impersonacion", () => ({ leerPersonaSimulada: vi.fn() }));
+vi.mock("@/lib/participantes/registrarPerfil", () => ({
+  registrarPerfil: vi.fn(),
+}));
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registrarPerfil } from "@/lib/participantes/registrarPerfil";
 import type { Permiso } from "@/types/identidad";
 import { auth } from "./auth0";
 import { obtenerPermisos } from "./eas";
@@ -15,6 +19,7 @@ import { getSession } from "./session";
 const authGetSession = vi.mocked(auth.getSession);
 const obtenerPermisosMock = vi.mocked(obtenerPermisos);
 const leerPersonaMock = vi.mocked(leerPersonaSimulada);
+const registrarPerfilMock = vi.mocked(registrarPerfil);
 
 const permisos = (...valores: Permiso[]) => new Set(valores);
 
@@ -22,6 +27,16 @@ beforeEach(() => {
   authGetSession.mockReset();
   obtenerPermisosMock.mockReset();
   leerPersonaMock.mockReset();
+  registrarPerfilMock.mockReset();
+  registrarPerfilMock.mockResolvedValue({
+    ok: true,
+    data: {
+      participanteId: "x",
+      nombre: "x",
+      correo: "x",
+      actualizadoEn: "2026-09-08T00:00:00.000Z",
+    },
+  });
   // Sin impersonacion salvo que la prueba diga lo contrario: es lo que ocurre
   // en produccion y en MOCK_USERS.
   leerPersonaMock.mockResolvedValue(null);
@@ -160,5 +175,87 @@ describe("getSession con impersonacion de desarrollo", () => {
     expect(sesion?.participanteId).toBe("okta|real");
     expect(sesion?.permisos).toEqual(permisos("Autob_Auditar"));
     expect(obtenerPermisosMock).toHaveBeenCalledWith("okta|real");
+  });
+});
+
+describe("getSession y el perfil del participante", () => {
+  it("deja el nombre y el correo alcanzables para el auditor", async () => {
+    authGetSession.mockResolvedValue({
+      user: { sub: "okta|perfil-1", email: "ana@example.com", name: "Ana" },
+    } as never);
+    obtenerPermisosMock.mockResolvedValue(permisos());
+
+    await getSession();
+
+    expect(registrarPerfilMock).toHaveBeenCalledWith({
+      participanteId: "okta|perfil-1",
+      oktaSub: "okta|perfil-1",
+      nombre: "Ana",
+      correo: "ana@example.com",
+    });
+  });
+
+  it("no vuelve a escribirlo en la misma instancia", async () => {
+    authGetSession.mockResolvedValue({
+      user: { sub: "okta|perfil-2", email: "b@example.com", name: "B" },
+    } as never);
+    obtenerPermisosMock.mockResolvedValue(permisos());
+
+    await getSession();
+    await getSession();
+    await getSession();
+
+    expect(registrarPerfilMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("si la escritura falla, la sesion se entrega igual", async () => {
+    // Es la invariante que importa: que no se pueda escribir una etiqueta de
+    // auditoria no puede dejar sin aplicacion a quien inicio sesion.
+    authGetSession.mockResolvedValue({
+      user: { sub: "okta|perfil-3", email: "c@example.com", name: "C" },
+    } as never);
+    obtenerPermisosMock.mockResolvedValue(permisos("Autob_Venta_en_general"));
+    registrarPerfilMock.mockRejectedValue(new Error("Falta AUTOB_TABLE_NAME"));
+
+    const sesion = await getSession();
+
+    expect(sesion?.participanteId).toBe("okta|perfil-3");
+    expect(sesion?.permisos).toEqual(permisos("Autob_Venta_en_general"));
+  });
+
+  it("un fallo pasajero se reintenta en la peticion siguiente", async () => {
+    authGetSession.mockResolvedValue({
+      user: { sub: "okta|perfil-4", email: "d@example.com", name: "D" },
+    } as never);
+    obtenerPermisosMock.mockResolvedValue(permisos());
+    registrarPerfilMock.mockRejectedValueOnce(new Error("throttling"));
+
+    await getSession();
+    await getSession();
+
+    expect(registrarPerfilMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("tambien registra el perfil de una persona simulada", async () => {
+    authGetSession.mockResolvedValue({
+      user: { sub: "okta|real-5", email: "yo@example.com", name: "Yo Real" },
+    } as never);
+    leerPersonaMock.mockResolvedValue({
+      id: "auditor",
+      participanteId: "dev-auditor-5",
+      nombre: "Carla Auditora",
+      correo: "carla@autob.invalid",
+      roles: ["AUDITOR_CUMPLIMIENTO"],
+    });
+
+    await getSession();
+
+    expect(registrarPerfilMock).toHaveBeenCalledWith({
+      participanteId: "dev-auditor-5",
+      // El sub real: es lo unico que responde quien conduce la sesion.
+      oktaSub: "okta|real-5",
+      nombre: "Carla Auditora",
+      correo: "carla@autob.invalid",
+    });
   });
 });

@@ -2406,3 +2406,217 @@ Y **un solo numero de latencia no es una medida**: hay que correr la prueba dos 
 Si la segunda corrida da diez veces mejor que la primera, lo que se midio la primera vez fue el
 establecimiento de conexiones. Por eso el entregable de esta prueba es su informe —las dos
 columnas— y no su veredicto.
+
+---
+
+## 43) `FormField` de Eden no etiqueta un control nativo, y ninguna pantalla lo detectaba
+
+### Problema
+
+La pantalla de auditoria envolvia sus `<select>` y sus `<input type="date">` en el `FormField` de
+Eden, con la etiqueta pasada por la prop `label`. Es la receta que aparenta ser correcta y la que
+ya estaba escrita en el repositorio.
+
+### Sintoma
+
+Ninguno en ejecucion. Aparecio al escribir la prueba del componente nuevo `FiltrosDeBitacora`:
+axe fallo con *"Select element must have an accessible name"* sobre los cinco campos.
+
+### Causa raiz
+
+`FormField` no envuelve a su hijo en el `<label>`: renderiza `<Label htmlFor={id}>` y reparte ese
+`id` **por contexto de React** (`IdContext`). Los componentes de Eden lo consumen y se lo ponen a
+su `<input>`; un elemento nativo no consume nada, asi que la etiqueta apunta a un `id` que **no
+existe en el documento** y el control queda sin nombre accesible. Pasarle un `id` a mano al
+elemento nativo tampoco sirve: `FormField` solo adopta el `id` de un hijo cuyo
+`type.isInput` sea verdadero, y un `"select"` nativo no tiene esa propiedad.
+
+Por que no se habia visto: los controles nativos dentro de `FormField` estaban **en paginas**, y
+el inventario de accesibilidad de la Etapa 12 cubre componentes, no paginas — las paginas son
+Server Components asincronos que jsdom no puede montar. El defecto vivia exactamente en el hueco
+declarado de esa cobertura.
+
+### Solucion aplicada
+
+Usar los componentes de Eden que si consumen el contexto: `Select` y `DateInput`, con `<option>`
+**nativos** dentro del `Select`. Eso ya estaba probado en `/admin/vehiculos` (seccion 23): lo que
+no sobrevive la frontera de RSC es el `Option` de Eden, no el `Select`. De paso corrige una
+violacion de la regla 10 que el comentario del archivo justificaba con una premisa falsa — decia
+que "el `Input` de Eden no admite `type=date`", que es cierto, pero `DateInput` existe.
+
+### Regla para futuro
+
+Un control nativo dentro de un `FormField` es un campo **sin etiqueta**, aunque se vea etiquetado.
+Si hace falta un control que Eden no tenga, la etiqueta va con un `<Label htmlFor>` explicito como
+hijo, no con la prop `label`. Y todo formulario nuevo vive en un componente con su prueba de axe:
+en una pagina, nadie lo comprueba.
+
+---
+
+## 44) El mismo rango de fechas devolvia dos conjuntos distintos de eventos
+
+### Problema
+
+La bitacora tenia un solo modo de consulta —la particion de un agregado (PA-12)— con el rango de
+fechas aplicado en memoria. Al agregar la lectura global (PA-13) aparecio un segundo modo, y los
+dos tenian que responder lo mismo para el mismo rango.
+
+### Sintoma
+
+No se observo en ejecucion: se detecto al comparar las dos implementaciones. Un evento de las
+20:00 de Mexico aparecia en el modo global bajo el dia correcto y **desaparecia** del modo por
+identificador con ese mismo rango.
+
+### Causa raiz
+
+Dos fronteras de dia distintas para el mismo concepto. PA-13 particiona por `AUDIT#<dia>` con
+`diaDeNegocio`, o sea medianoche de Mexico. El filtro en memoria comparaba `ocurridoEn`
+—ISO-8601 UTC— contra la cadena `yyyy-mm-dd` del formulario, lo que pone la frontera en la
+medianoche **UTC**: seis horas antes. Las seis horas entre 18:00 y 24:00 de Mexico caian, para el
+filtro, en el dia siguiente.
+
+El defecto ya existia antes de PA-13 —el filtro siempre habia comparado contra UTC— pero era
+invisible porque no habia una segunda respuesta con la que contrastarlo.
+
+### Solucion aplicada
+
+`eventoCoincideConFiltros` convierte `ocurridoEn` a dia de negocio con `diaDeNegocio` y compara
+etiqueta contra etiqueta. El contrato de `FiltrosDeBitacora.desde`/`.hasta` pasa de "ISO-8601 UTC"
+a "dia de negocio `yyyy-mm-dd`", y con eso desaparece `finDeRango`, el parche que extendia un
+`hasta` sin hora al final del dia UTC. Un `ocurridoEn` ilegible deja de coincidir con cualquier
+rango: la bitacora es prueba, y ante un dato que no se puede interpretar se calla en vez de
+adivinar.
+
+### Regla para futuro
+
+Cuando dos lecturas responden la misma pregunta de negocio, sus fronteras se comparan **en la
+misma unidad**. Aqui la unidad es la etiqueta de dia de negocio, que es la que esta en la clave;
+un ISO-8601 UTC y un `yyyy-mm-dd` de Mexico no son comparables aunque las dos sean cadenas que
+ordenan bien por separado.
+
+---
+
+## 45) La bitacora no podia responder "toda la actividad de esta persona"
+
+### Problema
+
+Un auditor tiene que poder seguir a un participante o revisar un tipo de evento en un periodo. La
+pantalla solo aceptaba "dame la historia de este identificador".
+
+### Sintoma
+
+Reportado al revisar el proceso de auditoria: era dificil encontrar los identificadores con los
+que buscar. El sintoma de superficie —hay que teclear un ULID— escondia tres huecos distintos.
+
+### Causa raiz
+
+Tres, y solo el primero era el que se veia:
+
+1. **PA-13 nunca se leyo.** El patron estaba declarado desde la Etapa 0 y `eventos.ts` escribia su
+   clave (`AUDIT#<dia>` en GSI2) en cada evento desde la Etapa 5, pero ningun codigo la
+   consultaba. Sin esa lectura, toda busqueda exigia conocer de antemano el identificador.
+2. **No habia perfil de participante.** El *upsert* que documentan las secciones 8 y 31 nunca se
+   implemento, asi que la bitacora solo tenia `actorId` —el `sub` de Okta— y no habia de donde
+   sacar un nombre ni un correo con los que poblar una lista de personas.
+3. **`actorId` no responde "de quien es este evento".** Un vencimiento, una omision o un
+   descongelamiento los firma `SISTEMA`. Buscar por actor habria dado una respuesta que **parece
+   completa y no lo es**, que para un auditor es peor que no responder.
+
+### Solucion aplicada
+
+`consultarBitacoraGlobal` (PA-13, una `Query` por dia del rango, acotado a 31 dias),
+`registrarPerfil` desde `getSession()` —una vez por proceso y por persona, de mejor esfuerzo— y
+`consultarActividadDeParticipante`, que une lo firmado con la historia de las solicitudes de esa
+persona y desduplica por `eventoId`.
+
+**Del *upsert* pendiente se implemento solo la mitad.** El diseno original preveia acunar tambien
+un `participanteId` propio, un ULID distinto del `sub`. Eso ya no se puede hacer: `actorId` guarda
+el identificador vigente cuando se escribio cada evento y la bitacora es append-only, asi que
+cambiar la identidad ahora partiria en dos la historia de cada persona —lo anterior con su `sub`,
+lo nuevo con su ULID— y sin forma de unirlas. `participanteId` se queda siendo el `sub`.
+
+Y los identificadores dejaron de teclearse: los dos campos son selects poblados desde la bitacora
+del rango, con etiquetas legibles resueltas por lectura por lote. Se pueblan **de la bitacora y no
+del catalogo de entidades** a proposito: asi toda opcion ofrecida devuelve resultados.
+
+### Regla para futuro
+
+Un patron de acceso declarado y con su clave escrita **no esta implementado**. `eventos.ts` llevaba
+dos etapas escribiendo `AUDIT#<dia>` sin que nada lo leyera, y ni la compuerta ni el plan lo
+notaron: escribir una clave de indice no cuesta nada visible y su ausencia de lectores no falla.
+Al cerrar una etapa que declara un patron, comprobar que existe el servicio que lo consulta.
+
+---
+
+## 46) El truncamiento de la bitacora global descartaba lo mas reciente
+
+### Problema
+
+`consultarBitacoraGlobal` acota cuantos eventos acumula (`LIMITE_DE_EVENTOS_GLOBAL`), porque un
+rango de 31 dias puede traer todos los eventos del sistema de un mes y eso no cabe en una pantalla
+ni debe caber en un render.
+
+### Sintoma
+
+No lo produjo ninguna prueba: lo delataron los datos reales del sandbox al contar los eventos por
+particion de dia antes del recorrido en navegador.
+
+```
+2026-09-08 -> 3069 eventos     (la prueba de carga de la Etapa 12)
+2026-09-07 ->   52
+resto del rango -> 0
+```
+
+El rango por defecto trae 3 121 eventos contra un tope de 2 000, asi que la pantalla abre avisando
+que trunco — correcto. Lo que no era correcto es **cual mitad se queda**: los eventos del dia mas
+reciente no aparecian, y las opciones de los selects se armaban con los 52 del dia anterior.
+
+### Causa raiz
+
+La lectura recorria los dias en orden **ascendente** —el mismo orden en que
+`diasDeNegocioEntre` los entrega— y cortaba al llegar al tope. En una bitacora eso es al reves de
+lo que se necesita: lo que sobra tiene que ser lo mas viejo. El efecto se amplificaba en los
+selects, porque `ordenadas` los presenta por actividad mas reciente y esa era precisamente la que
+se habia quedado fuera del cupo.
+
+Que las pruebas no lo vieran tiene una razon concreta: todas afirmaban **cuantos** eventos
+devolvia y si avisaba del truncamiento, ninguna **cuales**.
+
+### Solucion aplicada
+
+Recorrer los dias del mas nuevo al mas viejo, cada particion con `ScanIndexForward: false`,
+acumular hasta el cupo y voltear una vez al final para presentar cronologico. Sigue sin ordenarse
+nada en memoria: un `reverse` no es un `sort`.
+
+Los dias pasan a leerse **en secuencia y no en paralelo**, y no es un costo sino la contrapartida
+del orden: en secuencia se deja de consultar en cuanto se llena el cupo — con estos datos, un dia
+en vez de treinta y uno—, y el caso lento (recorrer los 31) es exactamente el caso en que casi no
+hay datos y cada `Query` es barata.
+
+Se pide **un evento mas** que el cupo restante para poder distinguir "cabe justo" de "no cabe": sin
+ese extra, un rango que llena el tope exacto se reportaria como truncado sin serlo y mandaria al
+auditor a acotar un rango que ya estaba completo.
+
+### Solucion aplicada, segunda parte
+
+El mismo tope tenia un segundo efecto, y se vio al revisar la pantalla en el navegador. La busqueda
+por **tipo de evento** reusaba la lectura sin filtrar del rango —la que arma las opciones de los
+selects— y la filtraba en memoria, para ahorrar una consulta. Con truncamiento eso responde de
+menos: `LOTE_ADJUDICADO` devolvia **483** filas y con el filtro en DynamoDB devuelve **841**. Y
+peor que el numero: las 483 venian marcadas como truncadas, que le dice al auditor "acota el
+rango" cuando lo que hacia falta era exactamente lo contrario.
+
+`consultarPorTipoDeEvento` reusa la lectura previa **solo si no trunco** —en ese caso contiene todo
+el rango y filtrarla da el mismo conjunto, sin consulta extra— y si trunco vuelve a preguntar con
+`FilterExpression`, para que el cupo se llene con eventos del tipo pedido. Cuesta el mismo RCU que
+la primera lectura, porque DynamoDB cobra lo leido y no lo devuelto.
+
+### Regla para futuro
+
+Una prueba de truncamiento que solo afirma la **cantidad** no prueba nada: hay que afirmar
+**cuales** sobreviven. Y todo tope que se aplique sobre datos ordenados tiene un sentido correcto y
+uno incorrecto — hay que escribir en el codigo cual es y por que, porque los dos compilan y los dos
+pasan las pruebas de cantidad.
+
+Y una optimizacion que **reusa** un resultado acotado hereda su recorte: solo es valida si ese
+resultado estaba completo. Reusar una lectura truncada no ahorra una consulta, cambia la respuesta.

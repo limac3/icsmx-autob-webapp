@@ -7,7 +7,11 @@ import {
   desdeIso,
   desplazamientoEnMinutos,
   diaDeNegocio,
+  diasDeNegocioEntre,
+  esDiaDeNegocio,
   esInstanteValido,
+  formatearFechaHoraPrecisa,
+  sumarDiasDeNegocio,
   formatearCuentaRegresiva,
   formatearEspera,
   formatearFecha,
@@ -470,5 +474,140 @@ describe("formatearCuentaRegresiva", () => {
     expect(formatearCuentaRegresiva(2 * DIA + 4 * HORA, "en")).toBe(
       "2 days 4 hr",
     );
+  });
+});
+
+describe("esDiaDeNegocio", () => {
+  it("acepta un dia que existe", () => {
+    expect(esDiaDeNegocio("2026-09-08")).toBe(true);
+  });
+
+  it("rechaza un dia que el calendario no tiene", () => {
+    // El parser de V8 lo desbordaria al 2 de marzo en silencio, que es el
+    // mismo defecto que `desdeIso` corrige con la verificacion de ida y vuelta.
+    expect(esDiaDeNegocio("2026-02-30")).toBe(false);
+  });
+
+  it("acepta el 29 de febrero de un ano bisiesto y lo rechaza si no lo es", () => {
+    expect(esDiaDeNegocio("2024-02-29")).toBe(true);
+    expect(esDiaDeNegocio("2026-02-29")).toBe(false);
+  });
+
+  it("rechaza cualquier forma que no sea yyyy-mm-dd", () => {
+    expect(esDiaDeNegocio("2026-9-8")).toBe(false);
+    expect(esDiaDeNegocio("2026-09-08T00:00:00.000Z")).toBe(false);
+    expect(esDiaDeNegocio("")).toBe(false);
+    expect(esDiaDeNegocio("ayer")).toBe(false);
+  });
+});
+
+describe("sumarDiasDeNegocio", () => {
+  it("avanza y retrocede dias del calendario", () => {
+    expect(sumarDiasDeNegocio("2026-09-08", 1)).toBe("2026-09-09");
+    expect(sumarDiasDeNegocio("2026-09-08", -30)).toBe("2026-08-09");
+  });
+
+  it("cruza el fin de mes y el fin de ano", () => {
+    expect(sumarDiasDeNegocio("2026-01-31", 1)).toBe("2026-02-01");
+    expect(sumarDiasDeNegocio("2026-12-31", 1)).toBe("2027-01-01");
+    expect(sumarDiasDeNegocio("2026-01-01", -1)).toBe("2025-12-31");
+  });
+
+  it("cuenta el dia bisiesto", () => {
+    expect(sumarDiasDeNegocio("2024-02-28", 1)).toBe("2024-02-29");
+  });
+
+  it("no se desplaza en el dia de un cambio de horario historico", () => {
+    // Mexico adelanto el reloj el 4 de abril de 2021: ese dia duro 23 horas.
+    // Sumar milisegundos habria devuelto el 4 en vez del 5.
+    expect(sumarDiasDeNegocio("2021-04-04", 1)).toBe("2021-04-05");
+    // Y retrocedio el 31 de octubre de 2021, un dia de 25 horas.
+    expect(sumarDiasDeNegocio("2021-10-31", 1)).toBe("2021-11-01");
+  });
+
+  it("devuelve undefined si el dia de partida no existe", () => {
+    expect(sumarDiasDeNegocio("2026-02-30", 1)).toBeUndefined();
+  });
+});
+
+describe("diasDeNegocioEntre", () => {
+  it("incluye los dos extremos", () => {
+    expect(diasDeNegocioEntre("2026-09-06", "2026-09-08")).toEqual([
+      "2026-09-06",
+      "2026-09-07",
+      "2026-09-08",
+    ]);
+  });
+
+  it("un rango de un solo dia devuelve ese dia", () => {
+    expect(diasDeNegocioEntre("2026-09-08", "2026-09-08")).toEqual([
+      "2026-09-08",
+    ]);
+  });
+
+  it("devuelve los dias en orden ascendente, que es lo que hace que la bitacora global quede cronologica sin ordenar", () => {
+    const dias = diasDeNegocioEntre("2026-08-30", "2026-09-02");
+    expect(dias).toEqual([
+      "2026-08-30",
+      "2026-08-31",
+      "2026-09-01",
+      "2026-09-02",
+    ]);
+  });
+
+  it("no pierde ni repite dias en un rango con cambio de horario historico", () => {
+    const dias = diasDeNegocioEntre("2021-10-30", "2021-11-02");
+    expect(dias).toEqual([
+      "2021-10-30",
+      "2021-10-31",
+      "2021-11-01",
+      "2021-11-02",
+    ]);
+    expect(new Set(dias).size).toBe(dias?.length);
+  });
+
+  it("cuenta exactamente 31 dias para un rango de 31 dias", () => {
+    expect(diasDeNegocioEntre("2026-08-09", "2026-09-08")).toHaveLength(31);
+  });
+
+  it("devuelve undefined si el rango esta invertido", () => {
+    expect(diasDeNegocioEntre("2026-09-08", "2026-09-06")).toBeUndefined();
+  });
+
+  it("devuelve undefined si un extremo no es un dia valido", () => {
+    expect(diasDeNegocioEntre("2026-02-30", "2026-03-05")).toBeUndefined();
+    expect(diasDeNegocioEntre("2026-03-01", "no-es-un-dia")).toBeUndefined();
+  });
+});
+
+describe("formatearFechaHoraPrecisa", () => {
+  it("conserva el milisegundo, que es toda la resolucion que el dato tiene", () => {
+    const texto = formatearFechaHoraPrecisa(
+      new Date("2026-09-08T22:03:07.045Z"),
+    );
+    expect(texto).toContain("045");
+    expect(texto).toContain("07.045");
+  });
+
+  it("presenta en hora de negocio y no en UTC", () => {
+    // 22:03 UTC son las 16:03 en Mexico (UTC-6).
+    const instante = new Date("2026-09-08T22:03:07.045Z");
+    const { hora } = partesEnZonaDeNegocio(instante);
+    expect(formatearFechaHoraPrecisa(instante)).toContain(`${hora}:03:07.045`);
+    expect(hora).toBe(16);
+  });
+
+  it("usa reloj de 24 horas: sin a. m./p. m. que ocupe columna", () => {
+    const texto = formatearFechaHoraPrecisa(
+      new Date("2026-09-08T22:03:07.045Z"),
+    );
+    expect(texto).not.toMatch(/[ap]\.?\s?m/i);
+  });
+
+  it("rellena a tres digitos un milisegundo de un solo digito", () => {
+    // Sin relleno, ".5" ordenaria despues de ".45" a la vista de quien lee.
+    expect(
+      formatearFechaHoraPrecisa(new Date("2026-09-08T22:03:07.005Z")),
+    ).toContain("07.005");
   });
 });

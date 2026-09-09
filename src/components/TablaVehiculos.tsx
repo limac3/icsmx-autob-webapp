@@ -15,6 +15,7 @@ import {
 } from "@churchofjesuschrist/eden-table";
 import { Text2 } from "@churchofjesuschrist/eden-text";
 import type { Diccionario, Idioma } from "@/dictionaries";
+import { enlaceDeBitacora } from "@/lib/auditoria/enlace";
 import type { EstatusVehiculo, Vehiculo } from "@/types/vehiculo";
 import "./TablaVehiculos.css";
 
@@ -57,6 +58,8 @@ export type TablaVehiculosProps = {
   idioma: Idioma;
   /** Puede editarse; si no, la fila no ofrece el enlace. */
   puedeEditar: boolean;
+  /** `Autob_Auditar`: agrega la columna con el atajo a la bitacora. */
+  puedeAuditar?: boolean;
 };
 
 const TablaVehiculos = ({
@@ -64,6 +67,7 @@ const TablaVehiculos = ({
   diccionario,
   idioma,
   puedeEditar,
+  puedeAuditar = false,
 }: TablaVehiculosProps) => {
   const { vehiculos: etiquetas, estatusVehiculo } = diccionario;
 
@@ -83,6 +87,7 @@ const TablaVehiculos = ({
           <Col id="col-modelo" />
           <Col id="col-kilometraje" />
           <Col id="col-estatus" />
+          {puedeAuditar ? <Col id="col-bitacora" /> : null}
         </ColGroup>
         <THead>
           <TR>
@@ -90,6 +95,9 @@ const TablaVehiculos = ({
             <TH scope="col">{etiquetas.campos.modelo}</TH>
             <TH scope="col">{etiquetas.campos.kilometraje}</TH>
             <TH scope="col">{etiquetas.campos.estatus}</TH>
+            {puedeAuditar ? (
+              <TH scope="col">{diccionario.auditoria.titulo}</TH>
+            ) : null}
           </TR>
         </THead>
         <TBody>
@@ -116,6 +124,17 @@ const TablaVehiculos = ({
                   {estatusVehiculo[vehiculo.estatus]}
                 </Badge>
               </TD>
+              {puedeAuditar ? (
+                <TD>
+                  {/* Con el tipo y el identificador ya puestos: es lo que
+                      evita tener que copiar un ULID a mano. */}
+                  <Link
+                    href={enlaceDeBitacora("VEHICULO", vehiculo.vehiculoId)}
+                  >
+                    {diccionario.auditoria.verEnBitacora}
+                  </Link>
+                </TD>
+              ) : null}
             </TR>
           ))}
         </TBody>

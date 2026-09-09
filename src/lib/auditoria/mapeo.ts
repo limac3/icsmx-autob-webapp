@@ -6,7 +6,11 @@ import "server-only";
 // mentirle al compilador sobre datos que pudo escribir una version anterior
 // del codigo.
 
-import { loteYTurnoDesdeIdentificador } from "@/lib/data/claves";
+import {
+  loteYTurnoDesdeIdentificador,
+  TIPOS_DE_AGREGADO,
+  type TipoDeAgregado,
+} from "@/lib/data/claves";
 import {
   TIPOS_DE_ACTOR,
   TIPOS_DE_EVENTO,
@@ -15,6 +19,34 @@ import {
 
 const texto = (valor: unknown): string | undefined =>
   typeof valor === "string" && valor.length > 0 ? valor : undefined;
+
+/**
+ * Agregado y identificador a partir de la particion `AUDIT#<agregado>#<id>`.
+ *
+ * Se parte en tres y se exige que sean tres: ni el agregado ni el
+ * identificador pueden contener `#` —`exigirIdentificador` lo garantiza al
+ * escribir—, asi que cualquier otra forma es una clave que este codigo no
+ * escribio y no hay que interpretar.
+ */
+export const agregadoDeParticion = (
+  pk: unknown,
+): { agregado: TipoDeAgregado; agregadoId: string } | undefined => {
+  const clave = texto(pk);
+  if (!clave) return undefined;
+
+  const partes = clave.split("#");
+  if (partes.length !== 3 || partes[0] !== "AUDIT") return undefined;
+
+  const [, agregado, agregadoId] = partes;
+  if (
+    !agregadoId ||
+    !(TIPOS_DE_AGREGADO as readonly string[]).includes(agregado)
+  ) {
+    return undefined;
+  }
+
+  return { agregado: agregado as TipoDeAgregado, agregadoId };
+};
 
 const esTipoDeEvento = (valor: unknown): valor is EventoDTO["tipo"] =>
   typeof valor === "string" &&
@@ -80,10 +112,13 @@ export const aEventoDTO = (
     return undefined;
   }
 
+  const particion = agregadoDeParticion(item.PK);
+
   return {
     eventoId,
     tipo: item.tipo,
     ocurridoEn,
+    ...(particion ?? {}),
     actorTipo: item.actorTipo,
     actorId,
     ...(permisos(item.actorPermisos)

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { forbidden, notFound, redirect } from "next/navigation";
 import { Badge } from "@churchofjesuschrist/eden-badge";
 import { H1, H4 } from "@churchofjesuschrist/eden-headings";
@@ -11,6 +12,7 @@ import LotesDeConvocatoria, {
 import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
+import { enlaceDeBitacora } from "@/lib/auditoria/enlace";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { aCampoLocal, desdeIso, formatearFechaHora } from "@/lib/domain/fechas";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
@@ -75,6 +77,8 @@ const DetalleDeConvocatoria = async ({
     convocatoria.estatus === "BORRADOR" &&
     sesion.permisos.has("Autob_Administrar_Convocatorias");
 
+  const puedeAuditar = sesion.permisos.has("Autob_Auditar");
+
   // Una lectura por lote. Son los vehiculos de **esta** convocatoria, que se
   // cuentan por decenas: `listarVehiculos` traeria el catalogo entero para
   // quedarse con unos pocos, y ademas no encontraria un vehiculo ya vendido.
@@ -131,6 +135,19 @@ const DetalleDeConvocatoria = async ({
             {`${diccionario.convocatorias.creadaPor}: ${convocatoria.creadoPor}` +
               (creadoEn ? ` — ${formatearFechaHora(creadoEn)}` : "")}
           </Text4>
+          {/* Atajo a la bitacora con el tipo y el identificador ya puestos:
+              sin esto, consultar la historia de esta convocatoria exige
+              copiar su ULID a mano en la pantalla de auditoria. */}
+          {puedeAuditar ? (
+            <Link
+              href={enlaceDeBitacora(
+                "CONVOCATORIA",
+                convocatoria.convocatoriaId,
+              )}
+            >
+              {diccionario.auditoria.verEnBitacora}
+            </Link>
+          ) : null}
         </div>
       </header>
 
@@ -153,6 +170,7 @@ const DetalleDeConvocatoria = async ({
         lotes={lotes}
         disponibles={disponibles}
         editable={editable}
+        puedeAuditar={puedeAuditar}
         diccionario={diccionario}
         idioma={idioma}
       />

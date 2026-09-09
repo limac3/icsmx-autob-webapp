@@ -1,3 +1,4 @@
+import type { TipoDeAgregado } from "@/lib/data/claves";
 import type { Permiso } from "./identidad";
 
 // Fuente: agent_files/trazabilidad-auditoria.md secciones 2 y 3.
@@ -134,6 +135,17 @@ export type EventoDTO = {
   tipo: TipoDeEvento;
   /** ISO-8601 UTC. La pantalla lo formatea en hora de negocio al presentar. */
   ocurridoEn: string;
+  /**
+   * Agregado del que este evento es historia — el `AUDIT#<agregado>#<id>` de su
+   * particion.
+   *
+   * Opcionales porque salen de la **clave** y no de los atributos: quien lee
+   * PA-12 ya sabe de que agregado pregunto y puede no necesitarlos, pero quien
+   * lee PA-13 recibe eventos de todo el sistema mezclados y sin esto no puede
+   * decir de que habla cada uno.
+   */
+  agregado?: TipoDeAgregado;
+  agregadoId?: string;
   actorTipo: TipoDeActor;
   actorId: string;
   actorPermisos?: readonly Permiso[];

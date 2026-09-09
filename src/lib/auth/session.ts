@@ -1,5 +1,7 @@
 import "server-only";
 import { cache } from "react";
+import { registrar } from "@/lib/observabilidad/registro";
+import { registrarPerfil } from "@/lib/participantes/registrarPerfil";
 import {
   tiposDeConvocatoriaPermitidos,
   type Permiso,
@@ -10,15 +12,57 @@ import { obtenerPermisos } from "./eas";
 import { leerPersonaSimulada } from "./impersonacion";
 import { permisosDePersona } from "./personasSimuladas";
 
-// El upsert real en DynamoDB (para obtener un participanteId propio y
-// estable, distinto del `sub` de Okta) llega en la Etapa 4 junto con
-// src/lib/data — ver agent_files/desafios-implementacion.md. Hasta entonces
-// participanteId es el propio oktaSub: identifica al participante de forma
-// unica y estable, solo que con el formato largo de Okta en vez de un id
-// interno corto. Cuando exista el upsert, esta es la unica funcion que
-// cambia.
+// `participanteId` es el `sub` de Okta, y **se queda asi**. El diseno de la
+// Etapa 0 preveia acunar un ULID propio en el upsert; hacerlo hoy partiria en
+// dos la historia de cada persona en la bitacora, que es append-only y guarda
+// el identificador con el que se escribio cada evento. Ver
+// `src/lib/participantes/registrarPerfil.ts`.
 const resolverParticipanteId = async (oktaSub: string): Promise<string> =>
   oktaSub;
+
+/**
+ * Participantes cuyo perfil ya se escribio en este proceso.
+ *
+ * El perfil solo cambia cuando Okta cambia un nombre o un correo, asi que
+ * escribirlo en cada peticion seria pagar una escritura por pantalla para
+ * reponer el mismo dato. Una vez por proceso y por persona lo mantiene fresco
+ * —cada despliegue y cada instancia nueva lo repone— sin convertir la lectura
+ * de sesion en una escritura constante.
+ *
+ * Solo se marca **despues** de escribir con exito: un fallo pasajero se
+ * reintenta en la siguiente peticion.
+ */
+const perfilesEscritos = new Set<string>();
+
+/**
+ * Deja el nombre y el correo alcanzables para el auditor, sin poder romper la
+ * peticion que los trajo.
+ *
+ * De mejor esfuerzo, e igual que `liberarReserva` o `incrementarIntento`: si
+ * falla, se registra y la pantalla sigue. No contradice la regla 15 —nada de
+ * negocio depende de este item— y lo contrario si seria grave: que no se pueda
+ * escribir una etiqueta de auditoria no es razon para negarle el catalogo a un
+ * participante.
+ */
+const asegurarPerfil = async (sesion: Sesion): Promise<void> => {
+  if (perfilesEscritos.has(sesion.participanteId)) return;
+
+  try {
+    const resultado = await registrarPerfil({
+      participanteId: sesion.participanteId,
+      oktaSub: sesion.oktaSub,
+      nombre: sesion.nombre,
+      correo: sesion.correo,
+    });
+    if (resultado.ok) perfilesEscritos.add(sesion.participanteId);
+  } catch (error) {
+    // Sin identidad en la linea: `registro.ts` redacta nombre y correo, y el
+    // participanteId no aporta nada para diagnosticar una escritura fallida.
+    registrar("warn", "registrarPerfil", {
+      causa: error instanceof Error ? error.name : "desconocida",
+    });
+  }
+};
 
 // Memoizado por peticion con `cache()` de React: una pagina que llama a
 // getSession() desde el layout y desde tres componentes consulta EAS **una
@@ -50,7 +94,7 @@ export const getSession = cache(async (): Promise<Sesion | null> => {
   const persona = await leerPersonaSimulada();
   if (persona) {
     const permisos = permisosDePersona(persona);
-    return {
+    const sesion: Sesion = {
       participanteId: persona.participanteId,
       oktaSub: usuario.sub,
       correo: persona.correo,
@@ -58,6 +102,11 @@ export const getSession = cache(async (): Promise<Sesion | null> => {
       permisos,
       tiposDeConvocatoriaPermitidos: tiposDeConvocatoriaPermitidos(permisos),
     };
+    // Tambien para las personas simuladas: sin esto, la bitacora de un
+    // recorrido de desarrollo queda llena de identificadores del roster que
+    // nadie reconoce, y la pantalla de auditoria no se podria probar.
+    await asegurarPerfil(sesion);
+    return sesion;
   }
 
   const [participanteId, permisos] = await Promise.all([
@@ -65,7 +114,7 @@ export const getSession = cache(async (): Promise<Sesion | null> => {
     permisosDeLaPeticion(usuario.sub),
   ]);
 
-  return {
+  const sesion: Sesion = {
     participanteId,
     oktaSub: usuario.sub,
     correo: usuario.email ?? "",
@@ -73,4 +122,6 @@ export const getSession = cache(async (): Promise<Sesion | null> => {
     permisos,
     tiposDeConvocatoriaPermitidos: tiposDeConvocatoriaPermitidos(permisos),
   };
+  await asegurarPerfil(sesion);
+  return sesion;
 });

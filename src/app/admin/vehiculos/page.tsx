@@ -109,6 +109,7 @@ const CatalogoVehiculos = async ({
           diccionario={diccionario}
           idioma={idioma}
           puedeEditar={puedeEditar}
+          puedeAuditar={sesion.permisos.has("Autob_Auditar")}
         />
       )}
     </main>

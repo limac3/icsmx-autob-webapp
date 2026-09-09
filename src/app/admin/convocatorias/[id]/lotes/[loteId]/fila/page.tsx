@@ -6,6 +6,7 @@ import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
+import { enlaceDeBitacora } from "@/lib/auditoria/enlace";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { desdeIso, formatearFechaHora } from "@/lib/domain/fechas";
 import { consultarTamanoFila } from "@/lib/fila/conteosDeFila";
@@ -34,7 +35,8 @@ const FilaDelLote = async ({
 }: {
   params: Promise<{ id: string; loteId: string }>;
 }) => {
-  if (!(await getSession())) redirect("/auth/login");
+  const sesion = await getSession();
+  if (!sesion) redirect("/auth/login");
 
   const { id, loteId } = await params;
   const lectura = await obtenerConvocatoria(id);
@@ -104,9 +106,18 @@ const FilaDelLote = async ({
           <Badge>{diccionario.estatusLote[lote.estatus]}</Badge>
           <Text4 renderAs="p">{etiquetas.descripcion}</Text4>
         </div>
-        <Link href={`/admin/convocatorias/${id}`}>
-          {etiquetas.volverALaConvocatoria}
-        </Link>
+        <div>
+          <Link href={`/admin/convocatorias/${id}`}>
+            {etiquetas.volverALaConvocatoria}
+          </Link>
+          {/* La bitacora de esta fila es la del lote: no hay un registro de
+              fila aparte, y su identificador es este `loteId`. */}
+          {sesion.permisos.has("Autob_Auditar") ? (
+            <Link href={enlaceDeBitacora("LOTE", loteId)}>
+              {diccionario.auditoria.verEnBitacora}
+            </Link>
+          ) : null}
+        </div>
       </header>
 
       <section>

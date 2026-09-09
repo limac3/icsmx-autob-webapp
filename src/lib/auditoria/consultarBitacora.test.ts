@@ -65,6 +65,10 @@ describe("consultarBitacora — PA-12", () => {
             eventoId: "E1",
             tipo: "SOLICITUD_CREADA",
             ocurridoEn: "2026-10-06T10:00:00.000Z",
+            // De la clave de particion: redundante en PA-12 —quien pregunta ya
+            // sabe de que agregado pregunto— e indispensable en PA-13.
+            agregado: "LOTE",
+            agregadoId: "L1",
             actorTipo: "USUARIO",
             actorId: "P1",
             correlacionId: "COR1",

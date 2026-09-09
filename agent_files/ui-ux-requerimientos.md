@@ -357,13 +357,50 @@ Que la consecuencia aparezca antes de confirmar es lo que evita rechazos por err
 
 Solo lectura, sin un solo boton de mutacion.
 
-- **Bitacora** (`/auditoria`) — se elige primero el agregado (vehiculo, convocatoria, lote o
-  solicitud) y su identificador, porque PA-12 solo sabe leer la historia de uno concreto; tipo de
-  evento, rango de fechas y participante se filtran despues, sobre esa historia completa. Cada
-  evento: fecha en hora de negocio, tipo traducido, actor con sus **permisos** de entonces (nunca
-  roles: EAS no los expone desde la Etapa 2.1), motivo y `correlacionId` — visible como columna,
-  no agrupado visualmente: alcanza para relacionar los eventos de una misma transaccion sin
-  necesitar que queden contiguos en la tabla.
+- **Bitacora** (`/auditoria`) — **dos modos de consulta**, y la diferencia entre ellos explica
+  casi todo el resto de la pantalla:
+  - **Con identificador**: PA-12 lee la particion de ese agregado, que trae su historia entera.
+    El rango de fechas es entonces un filtro en memoria, asi que **no se acota**; si hay eventos
+    anteriores al rango, la pantalla lo dice y ofrece ampliarlo ("ver historia completa"), lo que
+    no cuesta ninguna lectura extra porque la particion ya se leyo entera.
+  - **Sin identificador** (por tipo de evento o por participante): PA-13 lee una particion **por
+    dia** del rango. Ahi el rango **es la llave** de la consulta y no un filtro: de eso salen las
+    dos reglas de abajo —obligatorio y acotado a 31 dias.
+
+  Reglas de los filtros:
+  - **El rango nunca esta vacio.** Por defecto, los ultimos 30 dias contando hoy (31 dias de
+    calendario, que es exactamente el tope). Los dos campos van **primero** en el formulario y son
+    `required`. Un rango ausente en la URL se sustituye por el defecto; uno **presente y mal
+    formado** se rechaza con aviso, sin sustituirlo en silencio — quien escribio esas fechas
+    espera esas fechas.
+  - **Buscar exige al menos un criterio completo**: identificador, tipo de evento o participante.
+    Un tipo de registro sin identificador no es un criterio: solo acota las opciones del select.
+  - **`Identificador` y `Participante` son selects, no campos de texto.** Sus opciones salen de la
+    bitacora del rango —no del catalogo de entidades—, de modo que **toda opcion ofrecida devuelve
+    resultados**. Cada una se presenta con datos legibles y su identificador al final: vehiculo
+    con marca, version y modelo; convocatoria con su tipo traducido y su fecha de inicio de venta;
+    lote con el vehiculo y la fecha de la convocatoria; solicitud con el vehiculo, el turno y quien
+    la pidio; participante con nombre y correo. Cambiar el tipo de registro o una fecha **reenvia
+    el formulario solo** para recalcular las opciones, y limpia el identificador elegido antes de
+    hacerlo. Sin JavaScript el boton sigue funcionando.
+  - Se avisa cuando la consulta **se trunco** por volumen, para que se acote el rango, en vez de
+    mostrar una lista incompleta que parece completa.
+- **Nomenclatura de los tipos de registro.** "Lote y su fila" y "Solicitud (lugar en la fila)", no
+  "Lote" y "Solicitud" a secas: **no existe un registro de fila** al que buscarle un
+  identificador. La historia de una fila **es** la del lote, con el mismo `loteId`, y una solicitud
+  es un lugar dentro de ella.
+- **Columnas de la tabla.** Fecha con **milisegundos** en hora de negocio —toda la resolucion que
+  el dato tiene; ver `desafios-implementacion.md`—, el registro al que pertenece el evento (solo en
+  el modo global, donde los eventos vienen mezclados), tipo traducido, actor con **nombre y
+  identificador** (el nombre lo hace reconocible; el identificador es lo que quedo escrito y lo que
+  se puede citar), motivo, `correlacionId` y `eventoId`. Los dos ultimos son columnas y no
+  agrupaciones visuales: `correlacionId` relaciona los eventos de una misma transaccion sin
+  necesitar que queden contiguos, y `eventoId` es lo que **desempata dos eventos del mismo
+  milisegundo**, igual que en la `SK` de la bitacora.
+- **Atajos desde el resto de la aplicacion.** El listado de vehiculos, el detalle de convocatoria,
+  cada lote de esa convocatoria y la vista de fila del lote ofrecen "ver en la bitacora de
+  auditoria" con el tipo y el identificador ya puestos, solo a quien tiene `Autob_Auditar`. Es lo
+  que evita copiar un ULID a mano, que era el motivo real por el que la pantalla no se usaba.
 - **Reconstruccion de fila** (`/auditoria/lotes/[loteId]`) — linea de tiempo con todas las
   solicitudes en orden de turno, sus estados y las adjudicaciones. **Aqui si se muestran
   identidades.** Todo salto de turno aparece con su `SOLICITUD_OMITIDA` y su razon.
@@ -373,7 +410,11 @@ Solo lectura, sin un solo boton de mutacion.
   **informativos**, no como incumplimiento.
 - **Exportacion** — descarga en CSV con los filtros aplicados, por un enlace que entrega un
   `Route Handler`. Avisa que la exportacion queda registrada, y la queda: `BITACORA_EXPORTADA` se
-  escribe al momento de la descarga, no antes.
+  escribe al momento de la descarga, no antes. **Solo se ofrece en el modo con identificador**, y
+  no por comodidad: `BITACORA_EXPORTADA` es un evento, y todo evento se ancla a un agregado
+  (`trazabilidad-auditoria.md` 2.1). Una exportacion del rango completo no tendria a que anclarse
+  y saldria sin registrarse, que es exactamente el hueco que cerro la seccion 36 de
+  `desafios-implementacion.md`.
 
 ---
 
