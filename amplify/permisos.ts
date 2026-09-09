@@ -11,6 +11,21 @@ import type { TableV2 } from "aws-cdk-lib/aws-dynamodb";
 import type { Bucket } from "aws-cdk-lib/aws-s3";
 import { Construct } from "constructs";
 
+// **Ruta relativa y con extension `.ts` explicita**, igual que
+// `amplify/barrido/handler.ts`. Ni el alias `@/` ni la ruta sin extension
+// sirven aqui, aunque `amplify/tsconfig.json` declare el alias y
+// `moduleResolution: "bundler"`: los resuelven TypeScript y vitest, pero **no
+// el cargador ESM con el que `ampx` sintetiza la pila**, que falla con "Cannot
+// find package '@/lib'" y "Cannot find module ...claves" respectivamente.
+//
+// Y la compuerta no puede detectarlo: `backend.test.ts` sintetiza la pila y
+// pasa igual, porque vitest resuelve las dos formas. Este import solo se valida
+// desplegando (`npx ampx sandbox`).
+//
+// `claves.ts` es un modulo puro y no importa nada, asi que no arrastra
+// dependencias al bundle de CDK.
+import { PREFIJO_PARTICION_AUDITORIA } from "../src/lib/data/claves.ts";
+
 export type RecursosAutob = {
   readonly tabla: TableV2;
   readonly bucket: Bucket;
@@ -43,7 +58,16 @@ const negarMutacionDeAuditoria = (tabla: TableV2): PolicyStatement[] => [
     ],
     resources: [tabla.tableArn],
     conditions: {
-      "ForAnyValue:StringLike": { "dynamodb:LeadingKeys": ["AUDIT#*"] },
+      // **El prefijo se importa, no se repite.** De esta condicion depende toda
+      // la inmutabilidad de la bitacora, y depende de que coincida con la `PK`
+      // que escribe `clave.evento`. Si las dos se separaran, el `Deny` dejaria
+      // de aplicar **en silencio**: nada fallaria y la bitacora pasaria a ser
+      // modificable. Compartir la constante lo vuelve imposible por
+      // construccion, en vez de dejarlo a la vigilancia de quien edite
+      // `claves.ts`.
+      "ForAnyValue:StringLike": {
+        "dynamodb:LeadingKeys": [`${PREFIJO_PARTICION_AUDITORIA}*`],
+      },
     },
   }),
   new PolicyStatement({

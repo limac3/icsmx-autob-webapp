@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { atributosDeEvento, eventoParaTransaccion } from "./eventos";
-import { esUlid, instanteDeUlid } from "./identificadores";
+import { esId, instanteDeId } from "./identificadores";
 import { CONDICION_APPEND_ONLY } from "./transacciones";
 import { EVENTOS_CON_MOTIVO_OBLIGATORIO } from "@/types/auditoria";
 
@@ -77,8 +77,8 @@ describe("atributos del evento", () => {
     const atributos = atributosDeEvento(base);
     const eventoId = String(atributos.eventoId);
 
-    expect(esUlid(eventoId)).toBe(true);
-    expect(instanteDeUlid(eventoId)).toEqual(OCURRIDO_EN);
+    expect(esId(eventoId)).toBe(true);
+    expect(instanteDeId(eventoId)).toEqual(OCURRIDO_EN);
   });
 
   it("dos eventos del mismo instante tienen identificadores distintos", () => {
@@ -213,5 +213,95 @@ describe("eventoParaTransaccion", () => {
     expect(() =>
       eventoParaTransaccion({ ...base, tipo: "VEHICULO_RETIRADO" }),
     ).toThrow(/exige motivo/);
+  });
+});
+
+describe("las siete claves de los indices de la bitacora (GSI5 a GSI9)", () => {
+  // 18:30Z del 5 de septiembre son las 12:30 del 5 en Mexico, asi que dia y mes
+  // de negocio son `2026-09-05` y `2026-09`.
+  const atributos = () => atributosDeEvento(base);
+
+  it("escribe las siete, desde el primer evento", () => {
+    // No es exhaustividad por gusto: a un evento append-only no se le pueden
+    // anadir atributos despues, asi que uno que hoy no se escriba es una
+    // pregunta que nunca se podra responder sobre los eventos de hoy.
+    const a = atributos();
+    for (const nombre of [
+      "mesPK",
+      "tipoPK",
+      "diaPK",
+      "actorMesPK",
+      "cronoSK",
+      "agregadoSK",
+      "actorSK",
+    ]) {
+      expect(a[nombre], `falta ${nombre}`).toBeDefined();
+    }
+  });
+
+  it("las particiones se calculan en hora de negocio, no en UTC", () => {
+    const a = atributos();
+    expect(a.mesPK).toBe("MES#2026-09");
+    expect(a.diaPK).toBe("DIA#2026-09-05");
+    expect(a.tipoPK).toBe("TIPO#VEHICULO_REGISTRADO#2026-09");
+    expect(a.actorMesPK).toBe("ACTOR#P1#2026-09");
+  });
+
+  it("el mes se recorta del dia, asi que nunca se contradicen", () => {
+    // 03:00Z del 1 de enero son las 21:00 del 31 de diciembre en Mexico. Si el
+    // mes se calculara aparte, este evento caeria en el dia de diciembre y en
+    // el mes de enero, y la consulta por mes no lo encontraria.
+    const a = atributosDeEvento({
+      ...base,
+      ocurridoEn: new Date("2027-01-01T03:00:00.000Z"),
+    });
+    expect(a.diaPK).toBe("DIA#2026-12-31");
+    expect(a.mesPK).toBe("MES#2026-12");
+    expect(String(a.mesPK)).toBe(`MES#${String(a.diaPK).slice(4, 11)}`);
+  });
+
+  it("las claves de ordenamiento llevan el instante completo, con milisegundos", () => {
+    const a = atributos();
+    expect(a.cronoSK).toBe(
+      `${OCURRIDO_EN.toISOString()}#${String(a.eventoId)}`,
+    );
+    expect(a.agregadoSK).toBe(`VEHICULO#V1#${String(a.cronoSK)}`);
+    expect(a.actorSK).toBe(`ACTOR#P1#${String(a.cronoSK)}`);
+  });
+
+  it("un evento del SISTEMA se indexa bajo el actor SISTEMA", () => {
+    // No es un punto caliente —cae en la misma particion del dia que el resto—
+    // y de paso regala "que hizo el barrido el dia D" como condicion de clave.
+    const a = atributosDeEvento({
+      ...base,
+      tipo: "SOLICITUD_VENCIDA",
+      agregado: "LOTE",
+      agregadoId: "L1",
+      actor: { tipo: "SISTEMA" },
+    });
+    expect(a.actorSK).toBe(`ACTOR#SISTEMA#${String(a.cronoSK)}`);
+    expect(a.actorMesPK).toBe("ACTOR#SISTEMA#2026-09");
+  });
+
+  it("el item sigue por debajo del minimo facturable de 1 KB", () => {
+    // Los siete atributos suman ~340 B sobre un evento de ~400 B. Mientras el
+    // item redondee a 1 KB, **cuestan cero WCU**; si lo pasara, cada evento
+    // empezaria a costar el doble. Se mide sobre la suma de nombres y valores,
+    // que es como DynamoDB factura.
+    const a = atributosDeEvento({
+      ...base,
+      datos: { turno: 7, solicitadoEn: OCURRIDO_EN.toISOString() },
+      loteId: "01ARZ3NDEK",
+      convocatoriaId: "01ARZ3NDEL",
+      solicitudId: "01ARZ3NDEK-7",
+      estadoAnterior: "EN_FILA",
+      estadoNuevo: "ADJUDICADA",
+    });
+    const bytes = Object.entries(a).reduce(
+      (suma, [nombre, valor]) =>
+        suma + nombre.length + JSON.stringify(valor ?? "").length,
+      0,
+    );
+    expect(bytes).toBeLessThan(1024);
   });
 });

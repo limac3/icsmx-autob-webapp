@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { App, Stack } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { clave, PREFIJO_PARTICION_AUDITORIA } from "@/lib/data/claves";
 import { AlmacenamientoAutob } from "./almacenamiento";
 import { RolComputoSsr } from "./permisos";
 import { TablaAutob } from "./tabla";
@@ -82,34 +83,68 @@ describe("tabla unica", () => {
     );
   });
 
-  it("declara los cuatro GSIs con la proyeccion de `modelo-datos-dynamodb.md`", () => {
-    const tablas = sintetizar().findResources("AWS::DynamoDB::GlobalTable");
-    const indices = Object.values(tablas)[0].Properties
-      .GlobalSecondaryIndexes as Array<{
+  /**
+   * Claves esperadas de cada indice, en orden de declaracion.
+   *
+   * Se escriben literalmente y no se derivan del nombre: **la clave de un GSI
+   * no se puede cambiar sin recrearlo**, asi que esta tabla es el contrato y no
+   * una comodidad. Los cuatro primeros usan la convencion generica
+   * `GSInPK`/`GSInSK` porque estan sobrecargados —GSI2 sirve cinco entidades—;
+   * los cinco de la bitacora llevan nombre semantico porque cada uno responde
+   * una sola pregunta, y asi se ve de un golpe que un item de negocio, al no
+   * tener `mesPK`, no entra en ese indice.
+   */
+  const INDICES_ESPERADOS = [
+    { nombre: "GSI1", pk: "GSI1PK", sk: "GSI1SK", proyeccion: "KEYS_ONLY" },
+    { nombre: "GSI2", pk: "GSI2PK", sk: "GSI2SK", proyeccion: "ALL" },
+    { nombre: "GSI3", pk: "GSI3PK", sk: "GSI3SK", proyeccion: "ALL" },
+    { nombre: "GSI4", pk: "GSI4PK", sk: "GSI4SK", proyeccion: "ALL" },
+    { nombre: "GSI5", pk: "mesPK", sk: "cronoSK", proyeccion: "ALL" },
+    { nombre: "GSI6", pk: "tipoPK", sk: "cronoSK", proyeccion: "ALL" },
+    { nombre: "GSI7", pk: "diaPK", sk: "agregadoSK", proyeccion: "ALL" },
+    { nombre: "GSI8", pk: "diaPK", sk: "actorSK", proyeccion: "ALL" },
+    { nombre: "GSI9", pk: "actorMesPK", sk: "cronoSK", proyeccion: "ALL" },
+  ] as const;
+
+  const indicesDeclarados = () =>
+    Object.values(sintetizar().findResources("AWS::DynamoDB::GlobalTable"))[0]
+      .Properties.GlobalSecondaryIndexes as Array<{
       IndexName: string;
       KeySchema: Array<{ AttributeName: string; KeyType: string }>;
       Projection: { ProjectionType: string };
     }>;
 
-    expect(indices.map((indice) => indice.IndexName)).toEqual([
-      "GSI1",
-      "GSI2",
-      "GSI3",
-      "GSI4",
-    ]);
+  it("declara los nueve GSIs con las claves y proyecciones de `modelo-datos-dynamodb.md`", () => {
+    const indices = indicesDeclarados();
 
-    for (const indice of indices) {
-      expect(indice.KeySchema).toEqual([
-        { AttributeName: `${indice.IndexName}PK`, KeyType: "HASH" },
-        { AttributeName: `${indice.IndexName}SK`, KeyType: "RANGE" },
+    expect(indices.map((indice) => indice.IndexName)).toEqual(
+      INDICES_ESPERADOS.map((esperado) => esperado.nombre),
+    );
+
+    for (const [i, esperado] of INDICES_ESPERADOS.entries()) {
+      expect(indices[i].KeySchema, `claves de ${esperado.nombre}`).toEqual([
+        { AttributeName: esperado.pk, KeyType: "HASH" },
+        { AttributeName: esperado.sk, KeyType: "RANGE" },
       ]);
+      expect(
+        indices[i].Projection.ProjectionType,
+        `proyeccion de ${esperado.nombre}`,
+      ).toBe(esperado.proyeccion);
     }
+  });
 
-    // GSI1 solo resuelve `oktaSub` -> `participanteId`; el perfil se lee de la tabla base.
-    expect(indices[0].Projection.ProjectionType).toBe("KEYS_ONLY");
-    for (const indice of indices.slice(1)) {
-      expect(indice.Projection.ProjectionType).toBe("ALL");
-    }
+  it("los cinco indices de la bitacora comparten atributos entre si", () => {
+    // Es lo que mantiene el item de evento por debajo del minimo facturable de
+    // 1 KB: siete atributos sirven a cinco indices, en vez de diez. Si alguien
+    // les diera claves propias, el item crecería y cada evento empezaría a
+    // costar 2 WCU en lugar de 1.
+    const indices = indicesDeclarados();
+    const claves = indices
+      .filter((indice) => Number(indice.IndexName.slice(3)) >= 5)
+      .flatMap((indice) => indice.KeySchema.map((k) => k.AttributeName));
+
+    expect(new Set(claves).size).toBe(7);
+    expect(claves).toHaveLength(10);
   });
 
   it("un entorno compartido retiene la tabla; un sandbox se la lleva", () => {
@@ -147,6 +182,34 @@ describe("inmutabilidad de la bitacora", () => {
     expect(negacion?.Condition).toEqual({
       "ForAnyValue:StringLike": { "dynamodb:LeadingKeys": ["AUDIT#*"] },
     });
+  });
+
+  it("**la condicion protege exactamente el prefijo que escribe `clave.evento`**", () => {
+    // Es la invariante de la que depende toda la inmutabilidad de la bitacora, y
+    // el modo de fallo es silencioso: si la `PK` del evento y esta condicion se
+    // separaran, el `Deny` dejaria de aplicar sin que nada falle y la bitacora
+    // pasaria a ser modificable. `permisos.ts` importa la constante en vez de
+    // repetir el literal, asi que no pueden divergir; esta prueba comprueba que
+    // ese acoplamiento sigue en pie y, sobre todo, que el prefijo con `*` casa
+    // con una clave real.
+    const negacion = declaraciones().find(
+      (d) => d.Sid === "NegarMutacionDeBitacora",
+    );
+    const patron = (
+      negacion?.Condition as Record<string, Record<string, string[]>>
+    )["ForAnyValue:StringLike"]["dynamodb:LeadingKeys"][0];
+
+    expect(patron).toBe(`${PREFIJO_PARTICION_AUDITORIA}*`);
+
+    const claveReal = clave.evento(
+      "LOTE",
+      "L1",
+      "2026-09-09T18:00:00.000Z",
+      "E1",
+    ).PK;
+    expect(claveReal.startsWith(PREFIJO_PARTICION_AUDITORIA)).toBe(true);
+    // Y el comodin de IAM casa con ella: `AUDIT#*` sobre `AUDIT#LOTE#L1`.
+    expect(claveReal).toMatch(new RegExp(`^${patron.replace("*", ".*")}$`));
   });
 
   it("no niega PutItem: la regla 4 exige escribir el evento en la misma transaccion", () => {

@@ -5,14 +5,14 @@ import "server-only";
 // Existe por la misma razon que `claves.ts`: que la forma de un evento sea una
 // propiedad del sistema y no una convencion que hay que recordar en cada
 // servicio. Un evento al que se le olvida el `correlacionId`, o que no escribe
-// las claves de GSI2, no falla — simplemente deja un hueco en la bitacora que
+// las claves de sus indices, no falla — simplemente deja un hueco en la bitacora que
 // nadie nota hasta que un auditor pregunta.
 //
 // Y como los eventos son **append-only**, un evento mal formado no se puede
 // corregir: se queda asi para siempre.
 
-import { clave, gsi2, type TipoDeAgregado } from "./claves";
-import { nuevoUlid } from "./identificadores";
+import { bitacora, clave, gsi2, type TipoDeAgregado } from "./claves";
+import { nuevoId } from "./identificadores";
 import { putDeEvento, type ItemDeTransaccion } from "./transacciones";
 import { aIso, diaDeNegocio } from "@/lib/domain/fechas";
 import {
@@ -52,7 +52,7 @@ export type EntradaDeEvento = {
 
 /** Un identificador nuevo para agrupar los eventos de una misma transaccion. */
 export const nuevaCorrelacion = (ahora: Date = new Date()): string =>
-  nuevoUlid(ahora);
+  nuevoId(ahora);
 
 /**
  * Atributos del item de evento, sin las claves.
@@ -72,16 +72,25 @@ export const atributosDeEvento = (
   }
 
   const ocurridoEn = aIso(entrada.ocurridoEn);
-  const eventoId = nuevoUlid(entrada.ocurridoEn);
+  const eventoId = nuevoId(entrada.ocurridoEn);
   const actorTipo: TipoDeActor = entrada.actor.tipo;
+  const actorId =
+    entrada.actor.tipo === "USUARIO" ? entrada.actor.id : ACTOR_SISTEMA;
+
+  // El dia se calcula en hora de negocio y el mes se recorta de el, no se
+  // calcula aparte: recortarlo garantiza que los dos hablen del mismo
+  // calendario. Calcular el mes por su cuenta abriria la posibilidad de que un
+  // evento del 31 de diciembre a las 20:00 de Mexico cayera en el dia de
+  // diciembre y en el mes de enero.
+  const dia = diaDeNegocio(entrada.ocurridoEn);
+  const mes = dia.slice(0, 7);
 
   return {
     eventoId,
     tipo: entrada.tipo,
     ocurridoEn,
     actorTipo,
-    actorId:
-      entrada.actor.tipo === "USUARIO" ? entrada.actor.id : ACTOR_SISTEMA,
+    actorId,
     actorPermisos:
       entrada.actor.tipo === "USUARIO"
         ? [...entrada.actor.permisos]
@@ -98,14 +107,31 @@ export const atributosDeEvento = (
     motivo: entrada.motivo?.trim(),
     datos: entrada.datos,
 
-    // GSI2 en su modo bitacora: PA-13, "todo lo que paso el dia X" en orden
-    // cronologico. El dia se calcula en **hora de negocio** porque quien lee
-    // esa clave es una persona que piensa en dias de Mexico.
-    ...gsi2.bitacoraDelDia(
-      diaDeNegocio(entrada.ocurridoEn),
+    // Las siete claves de los cinco indices de la bitacora (GSI5 a GSI9).
+    //
+    // **Se escriben todas desde el primer evento**, y la razon es que aqui lo
+    // irreversible son los atributos y no los indices: a un evento append-only
+    // no se le pueden anadir despues —`UpdateItem` lo deniega IAM y un `Put` de
+    // reemplazo lo rechaza `attribute_not_exists(PK)`—, asi que un atributo que
+    // hoy no se escribe es una pregunta que nunca se podra responder sobre los
+    // eventos de hoy. Un indice, en cambio, si se puede crear mas tarde y su
+    // relleno vera los atributos que ya estan.
+    ...bitacora.cronologico(mes, ocurridoEn, eventoId),
+    ...bitacora.porTipoDeEvento(entrada.tipo, mes),
+    ...bitacora.porAgregadoDelDia(
+      dia,
+      entrada.agregado,
+      entrada.agregadoId,
       ocurridoEn,
       eventoId,
     ),
+    ...bitacora.porActorDelDia(dia, actorId, ocurridoEn, eventoId),
+    ...bitacora.porActor(actorId, mes),
+
+    // Transitorio: la clave vieja de PA-13 sobre GSI2, mientras
+    // `consultarBitacoraGlobal` siga leyendola. Se retira al reescribir los
+    // lectores — ver `gsi2.bitacoraDelDia`.
+    ...gsi2.bitacoraDelDia(dia, ocurridoEn, eventoId),
   };
 };
 

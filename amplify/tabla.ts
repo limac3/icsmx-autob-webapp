@@ -79,6 +79,62 @@ export class TablaAutob extends Construct {
           sortKey: { name: "GSI4SK", type: AttributeType.STRING },
           projectionType: ProjectionType.ALL,
         },
+
+        // --- GSI5 a GSI9: la bitacora, uno por pregunta del auditor ---------
+        //
+        // **Claves con nombre semantico**, a diferencia de los cuatro de arriba.
+        // La convencion generica esta justificada donde el indice esta
+        // sobrecargado —GSI2 sirve cinco entidades—, pero estos cinco tienen un
+        // solo proposito cada uno, y el nombre hace evidente la propiedad que
+        // sostiene el diseno: **un vehiculo no tiene `mesPK`, asi que no esta en
+        // ese indice**. Al ser dispersos, los items de negocio no pagan ninguna
+        // escritura por ellos; solo los eventos.
+        //
+        // Todos con `ALL` y no `KEYS_ONLY`: el evento pesa ~750 B, o sea que ya
+        // redondea al minimo facturable de 1 KB y una proyeccion menor no ahorra
+        // un solo WCU — solo obligaria a un `BatchGetItem` de hidratacion por
+        // pagina. Y la proyeccion **no se puede modificar** sin recrear el
+        // indice, asi que lo generoso va aqui (`modelo-datos-dynamodb.md` 8.1).
+        {
+          // GSI5 — todo el rango, cronologico. Un mes por particion: un rango
+          // de 90 dias son 1-4 `Query` en vez de 90.
+          indexName: "GSI5",
+          partitionKey: { name: "mesPK", type: AttributeType.STRING },
+          sortKey: { name: "cronoSK", type: AttributeType.STRING },
+          projectionType: ProjectionType.ALL,
+        },
+        {
+          // GSI6 — un tipo de evento en el rango. El mes acota la particion
+          // para que el tipo dominante no crezca sin cota.
+          indexName: "GSI6",
+          partitionKey: { name: "tipoPK", type: AttributeType.STRING },
+          sortKey: { name: "cronoSK", type: AttributeType.STRING },
+          projectionType: ProjectionType.ALL,
+        },
+        {
+          // GSI7 — los agregados con actividad en un dia. `agregadoSK` agrupa
+          // por valor antes que por tiempo, que es lo que permite obtener los
+          // identificadores distintos saltando de grupo en grupo.
+          indexName: "GSI7",
+          partitionKey: { name: "diaPK", type: AttributeType.STRING },
+          sortKey: { name: "agregadoSK", type: AttributeType.STRING },
+          projectionType: ProjectionType.ALL,
+        },
+        {
+          // GSI8 — las personas con actividad en un dia. Mismo salto que GSI7.
+          indexName: "GSI8",
+          partitionKey: { name: "diaPK", type: AttributeType.STRING },
+          sortKey: { name: "actorSK", type: AttributeType.STRING },
+          projectionType: ProjectionType.ALL,
+        },
+        {
+          // GSI9 — lo que una persona firmo, con el rango en la clave de
+          // ordenamiento. Por mes: por dia costaria hasta 90 `Query`.
+          indexName: "GSI9",
+          partitionKey: { name: "actorMesPK", type: AttributeType.STRING },
+          sortKey: { name: "cronoSK", type: AttributeType.STRING },
+          projectionType: ProjectionType.ALL,
+        },
       ],
     });
   }

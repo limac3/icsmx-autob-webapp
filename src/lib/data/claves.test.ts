@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ANCHO_ORDEN_FOTO,
   ANCHO_TURNO,
+  bitacora,
   clave,
   gsi1,
   gsi2,
@@ -537,6 +538,129 @@ describe("nombres de indice", () => {
       "GSI2",
       "GSI3",
       "GSI4",
+      "GSI5",
+      "GSI6",
+      "GSI7",
+      "GSI8",
+      "GSI9",
     ]);
+  });
+
+  it("ningun alias apunta al mismo indice que otro", () => {
+    // El alias existe para que ningun servicio escriba `"GSI7"` a mano. Dos
+    // alias sobre el mismo indice delatarian que uno de los cinco de la
+    // bitacora no se creo, y la consulta correspondiente leeria del indice
+    // equivocado sin fallar.
+    const nombres = Object.values(NOMBRES_DE_INDICE);
+    expect(new Set(nombres).size).toBe(nombres.length);
+  });
+});
+
+describe("bitacora — las claves de los cinco indices", () => {
+  const OCURRIDO = "2026-09-09T18:30:00.000Z";
+
+  it("GSI5 particiona por mes y ordena por instante", () => {
+    expect(bitacora.cronologico("2026-09", OCURRIDO, "E1")).toEqual({
+      mesPK: "MES#2026-09",
+      cronoSK: `${OCURRIDO}#E1`,
+    });
+  });
+
+  it("GSI6 mete el mes en la particion, para que un tipo no crezca sin cota", () => {
+    expect(bitacora.porTipoDeEvento("LOTE_ADJUDICADO", "2026-09")).toEqual({
+      tipoPK: "TIPO#LOTE_ADJUDICADO#2026-09",
+    });
+  });
+
+  it("GSI7 agrupa por agregado **antes** que por tiempo", () => {
+    // Es la propiedad que permite obtener los identificadores distintos de un
+    // dia saltando de grupo en grupo, en vez de leer todos sus eventos. Si el
+    // instante fuera primero, el salto seria imposible.
+    const { diaPK, agregadoSK } = bitacora.porAgregadoDelDia(
+      "2026-09-09",
+      "LOTE",
+      "L1",
+      OCURRIDO,
+      "E1",
+    );
+    expect(diaPK).toBe("DIA#2026-09-09");
+    expect(agregadoSK).toBe(`LOTE#L1#${OCURRIDO}#E1`);
+    expect(agregadoSK.startsWith(bitacora.prefijoDeAgregado("LOTE"))).toBe(
+      true,
+    );
+  });
+
+  it("el prefijo de un agregado ordena antes que sus entradas: es la cota del salto", () => {
+    // `"LOTE#L1"` < `"LOTE#L1#..."` porque una cadena ordena antes que
+    // cualquiera que la extienda. En orden descendente eso lo vuelve la cota
+    // exclusiva justo por debajo de todo el grupo de ese lote.
+    const grupo = "LOTE#L1";
+    const entrada = bitacora.porAgregadoDelDia(
+      "2026-09-09",
+      "LOTE",
+      "L1",
+      OCURRIDO,
+      "E1",
+    ).agregadoSK;
+    expect(grupo < entrada).toBe(true);
+  });
+
+  it("GSI8 agrupa por actor, con el mismo criterio que GSI7", () => {
+    const { diaPK, actorSK } = bitacora.porActorDelDia(
+      "2026-09-09",
+      "okta|ana",
+      OCURRIDO,
+      "E1",
+    );
+    expect(diaPK).toBe("DIA#2026-09-09");
+    expect(actorSK).toBe(`ACTOR#okta|ana#${OCURRIDO}#E1`);
+    expect(actorSK.startsWith(bitacora.prefijoDeActor("okta|ana"))).toBe(true);
+  });
+
+  it("GSI9 particiona por actor y mes", () => {
+    expect(bitacora.porActor("okta|ana", "2026-09")).toEqual({
+      actorMesPK: "ACTOR#okta|ana#2026-09",
+    });
+  });
+
+  it("los tres indices con cronoSK producen exactamente el mismo valor", () => {
+    // Comparten atributo, no solo forma: es lo que mantiene el item de evento
+    // bajo el minimo facturable de 1 KB.
+    const uno = bitacora.cronologico("2026-09", OCURRIDO, "E1").cronoSK;
+    const otro = bitacora.porAgregadoDelDia(
+      "2026-09-09",
+      "LOTE",
+      "L1",
+      OCURRIDO,
+      "E1",
+    ).agregadoSK;
+    expect(otro.endsWith(uno)).toBe(true);
+  });
+
+  it("cronoSK coincide con la SK de la tabla base", () => {
+    // Los dos ordenan por instante y desempatan por identificador. Que
+    // coincidan es lo que hace que la bitacora se lea igual por cualquier
+    // camino; si se separaran, dos consultas darian dos ordenes.
+    expect(bitacora.cronologico("2026-09", OCURRIDO, "E1").cronoSK).toBe(
+      clave.evento("LOTE", "L1", OCURRIDO, "E1").SK,
+    );
+  });
+
+  it.each([
+    ["mes vacio", () => bitacora.cronologico("", OCURRIDO, "E1")],
+    ["tipo con #", () => bitacora.porTipoDeEvento("A#B", "2026-09")],
+    [
+      "actorId con #",
+      () => bitacora.porActorDelDia("2026-09-09", "a#b", OCURRIDO, "E1"),
+    ],
+    [
+      "agregadoId vacio",
+      () =>
+        bitacora.porAgregadoDelDia("2026-09-09", "LOTE", "", OCURRIDO, "E1"),
+    ],
+  ])("rechaza %s", (_caso, construir) => {
+    // Un `#` colado desplazaria el resto de la clave: en `actorSK` fabricaria
+    // el rango de otra persona.
+    expect(construir).toThrow(RangeError);
   });
 });

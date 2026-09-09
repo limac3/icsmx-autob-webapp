@@ -417,3 +417,32 @@ describe("adjudicacion despues de entrar a la fila", () => {
     expect(adjudicacion).not.toHaveBeenCalled();
   });
 });
+
+describe("paso 0 — una reserva repetida no se sobrescribe", () => {
+  it("rechaza con conflicto_concurrencia y **sin pedir el turno**", async () => {
+    // Es la propiedad que importa: el rechazo ocurre antes del `ADD`, asi que
+    // no consume un turno y no deja hueco en la fila. Si se sobrescribiera la
+    // reserva ajena, su ventana quedaria sin marcar y una adjudicacion podria
+    // coronar a un turno mayor — R18 otra vez.
+    const falso = crearClienteFalso({
+      responder: (comando) => {
+        if (comando.nombre === "PutCommand") {
+          throw new ConditionalCheckFailedException({
+            message: "la reserva ya existe",
+            $metadata: {},
+          });
+        }
+        return {};
+      },
+    });
+
+    const resultado = await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
+    // Ningun `UpdateCommand`: el contador de turnos no se toco.
+    expect(falso.comandos.map((c) => c.nombre)).toEqual(["PutCommand"]);
+  });
+});

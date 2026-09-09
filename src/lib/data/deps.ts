@@ -11,7 +11,7 @@ import "server-only";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 
 import { obtenerCliente } from "./cliente";
-import { nuevoUlid } from "./identificadores";
+import { nuevoId } from "./identificadores";
 
 export type DepsDeServicio = {
   cliente?: DynamoDBDocumentClient;
@@ -42,7 +42,7 @@ export type DepsResueltas = {
 export const resolver = (deps: DepsDeServicio): DepsResueltas => ({
   cliente: deps.cliente,
   ahora: (deps.ahora ?? (() => new Date()))(),
-  nuevoId: deps.nuevoId ?? (() => nuevoUlid()),
+  nuevoId: deps.nuevoId ?? (() => nuevoId()),
 });
 
 /** Cliente efectivo, para las operaciones de lectura que no usan transaccion. */

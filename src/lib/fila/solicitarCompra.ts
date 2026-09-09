@@ -132,7 +132,17 @@ const ejecutarSolicitud = async (
   const reservaId = nuevoId();
 
   // Paso 0 — la reserva, antes del contador.
-  await anotarReserva({ loteId: lote.loteId, reservaId, ahora }, deps);
+  //
+  // Si el `reservaId` ya existia, otra solicitud del mismo segundo lo saco
+  // igual: se rechaza en vez de sobrescribir su reserva, porque sobrescribirla
+  // dejaria su ventana sin marcar y R18 dejaria de sostenerse
+  // (`CONDICION_RESERVA_NUEVA`). Es reintentable y el turno todavia no se pidio,
+  // asi que no deja hueco.
+  const anotada = await anotarReserva(
+    { loteId: lote.loteId, reservaId, ahora },
+    deps,
+  );
+  if (!anotada) return fallo("conflicto_concurrencia");
 
   // Paso 1 — el contador atomico entrega el turno.
   const paso1 = await pedirTurno(lote, ahora, deps);

@@ -55,23 +55,49 @@ export const UMBRAL_DE_RESERVA_MS = 15_000;
 export const CONDICION_RESERVA_VIVA = "attribute_exists(SK)";
 
 /**
+ * La reserva es nueva.
+ *
+ * **No es una formalidad: es lo que impide que dos solicitudes simultaneas se
+ * pisen la reserva.** El `reservaId` tiene 25 bits de azar dentro de su segundo
+ * (`identificadores.ts`), asi que con cien solicitudes por segundo sobre el
+ * mismo lote la probabilidad de repetirlo es ~1,5 x 10^-4. Sin condicion, ese
+ * caso sobrescribiria **en silencio** la reserva de otro participante: su
+ * ventana quedaria sin marcar, una adjudicacion podria coronar a un turno mayor
+ * y R18 dejaria de sostenerse justo en el escenario que existe para cubrir.
+ * Con condicion, el que pierde recibe un rechazo reintentable.
+ */
+export const CONDICION_RESERVA_NUEVA = "attribute_not_exists(SK)";
+
+/**
  * Escribe la reserva. Va **antes** de pedir el turno, no despues: al reves
  * quedaria abierta exactamente la ventana que se quiere cerrar. Al derecho, lo
  * peor que puede pasar es una reserva huerfana que el umbral depura.
+ *
+ * Devuelve `false` si el `reservaId` ya existia — ver
+ * `CONDICION_RESERVA_NUEVA`. Se devuelve en vez de lanzar porque quien llama
+ * tiene que poder responder `conflicto_concurrencia`, que es un rechazo que la
+ * interfaz sabe reintentar, y no un 500 (`desafios-implementacion.md` 41).
  */
 export const anotarReserva = async (
   entrada: { loteId: string; reservaId: string; ahora: Date },
   deps: DepsDeServicio = {},
-): Promise<void> => {
-  await clienteDe(deps).send(
-    new PutCommand({
-      TableName: nombreDeTabla(),
-      Item: {
-        ...clave.reservaDeTurno(entrada.loteId, entrada.reservaId),
-        anotadaEn: entrada.ahora.toISOString(),
-      },
-    }),
-  );
+): Promise<boolean> => {
+  try {
+    await clienteDe(deps).send(
+      new PutCommand({
+        TableName: nombreDeTabla(),
+        Item: {
+          ...clave.reservaDeTurno(entrada.loteId, entrada.reservaId),
+          anotadaEn: entrada.ahora.toISOString(),
+        },
+        ConditionExpression: CONDICION_RESERVA_NUEVA,
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (esFalloDeCondicion(error)) return false;
+    throw error;
+  }
 };
 
 /**

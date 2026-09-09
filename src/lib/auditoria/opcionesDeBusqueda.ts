@@ -99,8 +99,20 @@ type Referencias = {
   solicitudes: Set<string>;
 };
 
+/**
+ * Recorre **dos** listas de eventos, y esa separacion es la correccion de un
+ * defecto real.
+ *
+ * `paraParticipantes` es la lectura del rango sin acotar, porque el select de
+ * personas no depende del tipo de registro elegido. `paraIdentificadores` es la
+ * lectura **ya filtrada a ese tipo**: si se derivaran las dos de la misma
+ * lectura, un solo tipo con mucho volumen consumiria el cupo y los demas
+ * apareceran como "sin actividad" siendo falso — medido en el sandbox, 3 288
+ * eventos de lote en un dia contra 9 de vehiculo que quedaban fuera del corte.
+ */
 const recolectar = (
-  eventos: readonly EventoDTO[],
+  paraParticipantes: readonly EventoDTO[],
+  paraIdentificadores: readonly EventoDTO[],
   agregado: TipoDeAgregado | undefined,
 ): Referencias => {
   const referencias: Referencias = {
@@ -112,23 +124,31 @@ const recolectar = (
     solicitudes: new Set(),
   };
 
-  for (const evento of eventos) {
-    if (evento.actorTipo === "USUARIO" && evento.actorId !== ACTOR_SISTEMA) {
-      referencias.actores.set(evento.actorId, evento.ocurridoEn);
-    }
-
-    // Las claves de lote y de solicitud necesitan un segundo componente, asi
-    // que se recogen de todo evento que los traiga y no solo de los que seran
-    // opcion: un evento anclado a la solicitud es el que sabe su `loteId`.
+  // Las claves de lote y de solicitud necesitan un segundo componente, asi que
+  // se recogen de **todo** evento que los traiga, de las dos listas: un evento
+  // anclado a la solicitud es el que sabe su `loteId`.
+  const anotarReferencias = (evento: EventoDTO) => {
     if (evento.loteId && evento.convocatoriaId) {
       referencias.lotesPorConvocatoria.set(
         evento.loteId,
         evento.convocatoriaId,
       );
     }
+  };
 
-    if (agregado === undefined || evento.agregado !== agregado) continue;
-    if (!evento.agregadoId) continue;
+  for (const evento of paraParticipantes) {
+    if (evento.actorTipo === "USUARIO" && evento.actorId !== ACTOR_SISTEMA) {
+      referencias.actores.set(evento.actorId, evento.ocurridoEn);
+    }
+    anotarReferencias(evento);
+  }
+
+  if (agregado === undefined) return referencias;
+
+  for (const evento of paraIdentificadores) {
+    anotarReferencias(evento);
+
+    if (evento.agregado !== agregado || !evento.agregadoId) continue;
 
     referencias.actividad.set(evento.agregadoId, evento.ocurridoEn);
 
@@ -162,19 +182,30 @@ const ordenadas = (
 /**
  * Opciones de los dos selects para un rango ya leido.
  *
- * Recibe los eventos en vez de leerlos: la pantalla ya hizo esa lectura para
- * armar las opciones y no tiene por que pagarla dos veces.
+ * Recibe los eventos en vez de leerlos: la pantalla ya hizo esas lecturas y no
+ * tiene por que pagarlas dos veces.
  */
 export const construirOpciones = async (
   entrada: {
+    /** Lectura del rango sin acotar. Alimenta el select de participantes. */
     eventos: readonly EventoDTO[];
+    /**
+     * Lectura del rango **acotada al tipo de registro**. Alimenta el select de
+     * identificadores. Si no se pasa, se usa `eventos` — que solo es correcto
+     * cuando esa lectura no trunco.
+     */
+    eventosDelAgregado?: readonly EventoDTO[];
     agregado?: TipoDeAgregado;
     diccionario: Diccionario;
   },
   deps: DepsDeServicio = {},
 ): Promise<Resultado<OpcionesDeBusqueda>> => {
   const { diccionario } = entrada;
-  const referencias = recolectar(entrada.eventos, entrada.agregado);
+  const referencias = recolectar(
+    entrada.eventos,
+    entrada.eventosDelAgregado ?? entrada.eventos,
+    entrada.agregado,
+  );
 
   // Las solicitudes aportan el lote que hay que leer para nombrar su vehiculo.
   const clavesDeSolicitud = [...referencias.solicitudes].flatMap(

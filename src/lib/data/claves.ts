@@ -12,6 +12,19 @@
 export type Clave = { PK: string; SK: string };
 
 /**
+ * Prefijo de la particion de todo evento de auditoria.
+ *
+ * **Es la unica fuente de verdad del prefijo, y por una razon de seguridad.**
+ * La inmutabilidad de la bitacora la sostiene un `Deny` de IAM condicionado a
+ * `dynamodb:LeadingKeys = "AUDIT#*"` (`amplify/permisos.ts`), asi que si esta
+ * clave y esa condicion se separaran, el `Deny` dejaria de aplicar **en
+ * silencio**: nada fallaria y la bitacora pasaria a ser modificable. Por eso
+ * `permisos.ts` construye su condicion importando esta constante, y no
+ * repitiendo el literal: no pueden divergir porque son el mismo valor.
+ */
+export const PREFIJO_PARTICION_AUDITORIA = "AUDIT#";
+
+/**
  * Los identificadores son ULIDs propios y nunca contienen `#`, que es el
  * separador de todas las claves. Verificarlo no es paranoia gratuita: un `#`
  * dentro de un identificador desplazaria el resto de la clave y podria
@@ -180,7 +193,7 @@ export const clave = {
     ocurridoEn: string,
     eventoId: string,
   ): Clave => ({
-    PK: `AUDIT#${agregado}#${exigirIdentificador(agregadoId, "agregadoId")}`,
+    PK: `${PREFIJO_PARTICION_AUDITORIA}${agregado}#${exigirIdentificador(agregadoId, "agregadoId")}`,
     SK: `${exigirIdentificador(ocurridoEn, "ocurridoEn")}#${exigirIdentificador(eventoId, "eventoId")}`,
   }),
 
@@ -193,8 +206,21 @@ export const clave = {
     agregado: TipoDeAgregado,
     agregadoId: string,
   ): { PK: string } => ({
-    PK: `AUDIT#${agregado}#${exigirIdentificador(agregadoId, "agregadoId")}`,
+    PK: `${PREFIJO_PARTICION_AUDITORIA}${agregado}#${exigirIdentificador(agregadoId, "agregadoId")}`,
   }),
+
+  /**
+   * Prefijo de **todas** las particiones de bitacora de un tipo de agregado,
+   * para un `begins_with(PK, ...)`.
+   *
+   * Lo usa PA-13 cuando hay que acotar una lectura por dia a un solo tipo de
+   * registro: el tipo vive en la `PK` de la tabla base y no en ningun atributo,
+   * asi que es la unica forma de filtrarlo sin traer el dia entero. El `#`
+   * final no es cosmetico — sin el, `VEHICULO` tambien casaria con un tipo
+   * futuro que empezara igual.
+   */
+  prefijoDeParticionDeEvento: (agregado: TipoDeAgregado): string =>
+    `${PREFIJO_PARTICION_AUDITORIA}${agregado}#`,
 
   mensaje: (mensajeId: string): Clave => ({
     PK: `OUTBOX#${exigirIdentificador(mensajeId, "mensajeId")}`,
@@ -363,13 +389,25 @@ export const gsi2 = {
   cotaSuperiorPorFecha: (fecha: string): string =>
     `${exigirIdentificador(fecha, "fecha")}#${String.fromCharCode(0xffff)}`,
 
-  /** PA-13 — bitacora cronologica global. `dia` viene de `diaDeNegocio`. */
+  /**
+   * PA-13 en su forma vieja — **transitoria**.
+   *
+   * El acceso cronologico de la bitacora pasa a `GSI5` (`bitacora.cronologico`),
+   * que particiona por mes y acota el rango en la clave de ordenamiento. Esta
+   * clave se conserva mientras `consultarBitacoraGlobal` siga leyendola: se
+   * retira al reescribir los lectores, y con ella GSI2 vuelve a servir solo los
+   * cinco patrones de negocio por estatus.
+   *
+   * No se borra antes por una razon de secuencia y no de diseno: borrarla y
+   * reescribir los lectores en el mismo paso dejaria una etapa que no se puede
+   * verificar por si sola.
+   */
   bitacoraDelDia: (
     dia: string,
     ocurridoEn: string,
     eventoId: string,
   ): { GSI2PK: string; GSI2SK: string } => ({
-    GSI2PK: `AUDIT#${exigirIdentificador(dia, "dia")}`,
+    GSI2PK: `${PREFIJO_PARTICION_AUDITORIA}${exigirIdentificador(dia, "dia")}`,
     GSI2SK: `${exigirIdentificador(ocurridoEn, "ocurridoEn")}#${exigirIdentificador(eventoId, "eventoId")}`,
   }),
 } as const;
@@ -423,9 +461,111 @@ export const gsi4 = {
   }),
 } as const;
 
+/**
+ * GSI5 a GSI9 — la bitacora, uno por pregunta del auditor.
+ *
+ * **Las claves llevan nombre semantico y no `GSI5PK`**, a diferencia de los
+ * cuatro indices anteriores. La convencion generica esta justificada donde el
+ * indice esta sobrecargado —GSI2 sirve cinco entidades distintas—, pero estos
+ * cinco tienen un solo proposito cada uno, y el nombre hace evidente la
+ * propiedad que sostiene el diseno: **un vehiculo no tiene `mesPK`, asi que no
+ * esta en ese indice**. Los GSIs son dispersos, de modo que los items de
+ * negocio no pagan ninguna escritura por estos cinco.
+ *
+ * `mesPK`, `diaPK` y `actorMesPK` reparten la escritura; `cronoSK`,
+ * `agregadoSK` y `actorSK` deciden que se puede acotar como condicion de clave
+ * en vez de filtrar en memoria. Un mismo atributo sirve a varios indices a la
+ * vez —`cronoSK` a tres, `diaPK` a dos—, que es lo que mantiene el item de
+ * evento por debajo del minimo facturable de 1 KB.
+ */
+/**
+ * `<ocurridoEn>#<eventoId>` — el mismo valor que la `SK` de la tabla base.
+ *
+ * Se repite como atributo propio porque tres indices lo necesitan de clave de
+ * ordenamiento, y un GSI no puede usar la `SK` de la tabla base como suya. Que
+ * coincidan no es casualidad: los dos ordenan por instante y desempatan por
+ * identificador, que es la unica forma de que la bitacora se lea siempre igual.
+ */
+const cronoSK = (ocurridoEn: string, eventoId: string): string =>
+  `${exigirIdentificador(ocurridoEn, "ocurridoEn")}#${exigirIdentificador(eventoId, "eventoId")}`;
+
+const diaPK = (dia: string): string => `DIA#${exigirIdentificador(dia, "dia")}`;
+
+export const bitacora = {
+  /** GSI5 — todo el rango, cronologico. Un mes por particion. */
+  cronologico: (
+    mes: string,
+    ocurridoEn: string,
+    eventoId: string,
+  ): { mesPK: string; cronoSK: string } => ({
+    mesPK: `MES#${exigirIdentificador(mes, "mes")}`,
+    cronoSK: cronoSK(ocurridoEn, eventoId),
+  }),
+
+  /** GSI6 — un tipo de evento en el rango. El mes acota la particion. */
+  porTipoDeEvento: (tipo: string, mes: string): { tipoPK: string } => ({
+    tipoPK: `TIPO#${exigirIdentificador(tipo, "tipo")}#${exigirIdentificador(mes, "mes")}`,
+  }),
+
+  /**
+   * GSI7 — los agregados con actividad en un dia.
+   *
+   * `agregadoSK` agrupa **por valor antes que por tiempo**, y eso es
+   * deliberado: es lo que permite obtener los identificadores distintos de un
+   * dia saltando de grupo en grupo con `ExclusiveStartKey`, en vez de leer
+   * todos sus eventos. `diaPK` y no `mesPK` porque una opcion "activa en el mes
+   * pero no en el rango" devolveria una tabla vacia, y evitar eso es la razon
+   * de existir de esas listas.
+   */
+  porAgregadoDelDia: (
+    dia: string,
+    agregado: TipoDeAgregado,
+    agregadoId: string,
+    ocurridoEn: string,
+    eventoId: string,
+  ): { diaPK: string; agregadoSK: string } => ({
+    diaPK: diaPK(dia),
+    agregadoSK: `${agregado}#${exigirIdentificador(agregadoId, "agregadoId")}#${cronoSK(ocurridoEn, eventoId)}`,
+  }),
+
+  /** GSI8 — las personas con actividad en un dia. Mismo salto que GSI7. */
+  porActorDelDia: (
+    dia: string,
+    actorId: string,
+    ocurridoEn: string,
+    eventoId: string,
+  ): { diaPK: string; actorSK: string } => ({
+    diaPK: diaPK(dia),
+    actorSK: `ACTOR#${exigirIdentificador(actorId, "actorId")}#${cronoSK(ocurridoEn, eventoId)}`,
+  }),
+
+  /**
+   * GSI9 — lo que una persona firmo, con el rango en la clave de ordenamiento.
+   *
+   * Por mes y no por dia: con un rango de 90 dias, la version por dia costaria
+   * hasta 90 `Query` y esta cuesta 1-4. Aqui el mes no arriesga nada, porque el
+   * rango se acota con `cronoSK` dentro de la particion.
+   */
+  porActor: (actorId: string, mes: string): { actorMesPK: string } => ({
+    actorMesPK: `ACTOR#${exigirIdentificador(actorId, "actorId")}#${exigirIdentificador(mes, "mes")}`,
+  }),
+
+  /** Prefijo de un agregado dentro de `agregadoSK`, para el salto de GSI7. */
+  prefijoDeAgregado: (agregado: TipoDeAgregado): string => `${agregado}#`,
+
+  /** Prefijo de una persona dentro de `actorSK`, para el salto de GSI8. */
+  prefijoDeActor: (actorId: string): string =>
+    `ACTOR#${exigirIdentificador(actorId, "actorId")}#`,
+} as const;
+
 export const NOMBRES_DE_INDICE = {
   identidadAlterna: "GSI1",
   porEstatus: "GSI2",
   porParticipante: "GSI3",
   trabajoPendiente: "GSI4",
+  cronologico: "GSI5",
+  porTipoDeEvento: "GSI6",
+  porAgregadoDelDia: "GSI7",
+  porActorDelDia: "GSI8",
+  porActor: "GSI9",
 } as const;

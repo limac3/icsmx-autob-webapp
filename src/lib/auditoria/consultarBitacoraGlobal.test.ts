@@ -464,3 +464,68 @@ describe("consultarPorTipoDeEvento", () => {
     expect(falso.comandos[0]?.input.FilterExpression).toBe("#tipo = :tipo");
   });
 });
+
+describe("consultarBitacoraGlobal acotada a un tipo de registro", () => {
+  it("filtra por el prefijo de la PK, que es donde vive el tipo", async () => {
+    // El tipo de agregado no es un atributo del evento: esta en la clave de la
+    // particion. `begins_with(PK, ...)` es la unica forma de acotarlo sin
+    // traerse el dia entero.
+    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
+
+    await consultarBitacoraGlobal(
+      { desde: "2026-09-08", hasta: "2026-09-08", agregado: "VEHICULO" },
+      { cliente: falso.cliente as never },
+    );
+
+    expect(falso.comandos[0]?.input.FilterExpression).toBe(
+      "begins_with(#PK, :prefijoDeAgregado)",
+    );
+    expect(falso.comandos[0]?.input.ExpressionAttributeNames).toEqual({
+      "#PK": "PK",
+    });
+    expect(
+      (
+        falso.comandos[0]?.input.ExpressionAttributeValues as Record<
+          string,
+          unknown
+        >
+      )[":prefijoDeAgregado"],
+    ).toBe("AUDIT#VEHICULO#");
+  });
+
+  it("el prefijo lleva el # final, para no casar con un tipo que empiece igual", async () => {
+    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
+
+    await consultarBitacoraGlobal(
+      { desde: "2026-09-08", hasta: "2026-09-08", agregado: "SOLICITUD" },
+      { cliente: falso.cliente as never },
+    );
+
+    expect(
+      (
+        falso.comandos[0]?.input.ExpressionAttributeValues as Record<
+          string,
+          unknown
+        >
+      )[":prefijoDeAgregado"],
+    ).toBe("AUDIT#SOLICITUD#");
+  });
+
+  it("se combina con el filtro de tipo de evento", async () => {
+    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
+
+    await consultarBitacoraGlobal(
+      {
+        desde: "2026-09-08",
+        hasta: "2026-09-08",
+        tipo: "VEHICULO_EDITADO",
+        agregado: "VEHICULO",
+      },
+      { cliente: falso.cliente as never },
+    );
+
+    expect(falso.comandos[0]?.input.FilterExpression).toBe(
+      "#tipo = :tipo AND begins_with(#PK, :prefijoDeAgregado)",
+    );
+  });
+});

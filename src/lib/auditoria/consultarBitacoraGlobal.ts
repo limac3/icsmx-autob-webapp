@@ -19,7 +19,12 @@ import {
   type QueryCommandOutput,
 } from "@aws-sdk/lib-dynamodb";
 
-import { gsi2, NOMBRES_DE_INDICE } from "@/lib/data/claves";
+import {
+  clave,
+  gsi2,
+  NOMBRES_DE_INDICE,
+  type TipoDeAgregado,
+} from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, type DepsDeServicio } from "@/lib/data/deps";
 import { diasDeNegocioEntre } from "@/lib/domain/fechas";
@@ -51,6 +56,16 @@ export type BusquedaGlobal = {
   tipo?: TipoDeEvento;
   /** Compara contra `actorId`: quien firmo el evento. */
   actorId?: string;
+  /**
+   * Acota a un tipo de registro, por el prefijo de la `PK`.
+   *
+   * **Sin esto, el cupo lo puede consumir un solo tipo.** Medido en el
+   * sandbox: 3 288 eventos de lote en un dia agotaban los 2 000 del tope, y
+   * los 9 de vehiculo y 7 de convocatoria del dia anterior quedaban fuera —
+   * asi que la pantalla ofrecia cero identificadores de vehiculo y afirmaba
+   * "sin actividad en este rango", que era falso.
+   */
+  agregado?: TipoDeAgregado;
 };
 
 export type BitacoraGlobal = {
@@ -91,6 +106,16 @@ const filtroDeEvento = (
     nombres["#actorId"] = "actorId";
     valores[":actorId"] = busqueda.actorId;
     condiciones.push("#actorId = :actorId");
+  }
+  if (busqueda.agregado) {
+    // `PK` es la clave de la tabla base, no del indice, asi que **si** se
+    // puede filtrar por ella en una `Query` de GSI2 (comprobado contra
+    // DynamoDB real, no supuesto).
+    nombres["#PK"] = "PK";
+    valores[":prefijoDeAgregado"] = clave.prefijoDeParticionDeEvento(
+      busqueda.agregado,
+    );
+    condiciones.push("begins_with(#PK, :prefijoDeAgregado)");
   }
 
   return {

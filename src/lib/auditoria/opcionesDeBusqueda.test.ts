@@ -387,3 +387,73 @@ describe("construirOpciones", () => {
     });
   });
 });
+
+describe("las dos listas salen de lecturas distintas", () => {
+  it("**los identificadores salen de la lectura acotada al tipo**, no de la general", async () => {
+    // El defecto reportado: la lectura general la puede consumir entera un
+    // tipo con mucho volumen, y entonces los demas aparecen como "sin
+    // actividad en este rango" siendo falso. Aqui la lectura general no trae
+    // **ningun** evento de vehiculo y la acotada si: la opcion debe aparecer.
+    const falso = clienteConItems([VEHICULO, PERFIL]);
+
+    const resultado = await construirOpciones(
+      {
+        eventos: [evento({ agregado: "LOTE", agregadoId: "L1", loteId: "L1" })],
+        eventosDelAgregado: [
+          evento({ eventoId: "E2", agregado: "VEHICULO", agregadoId: "V1" }),
+        ],
+        agregado: "VEHICULO",
+        diccionario,
+      },
+      { cliente: falso.cliente as never },
+    );
+
+    expect(
+      resultado.ok && resultado.data.identificadores.map((o) => o.valor),
+    ).toEqual(["V1"]);
+  });
+
+  it("los participantes salen de la lectura general: no dependen del tipo elegido", async () => {
+    const falso = clienteConItems([PERFIL]);
+
+    const resultado = await construirOpciones(
+      {
+        // Quien firma esta solo en la lectura general.
+        eventos: [evento({ actorId: "okta|ana" })],
+        eventosDelAgregado: [
+          evento({
+            eventoId: "E2",
+            agregado: "VEHICULO",
+            agregadoId: "V1",
+            actorTipo: "SISTEMA",
+            actorId: "SISTEMA",
+          }),
+        ],
+        agregado: "VEHICULO",
+        diccionario,
+      },
+      { cliente: falso.cliente as never },
+    );
+
+    expect(
+      resultado.ok && resultado.data.participantes.map((o) => o.valor),
+    ).toEqual(["okta|ana"]);
+  });
+
+  it("sin lectura acotada cae a la general, que es el caso sin tipo elegido", async () => {
+    const falso = clienteConItems([VEHICULO, PERFIL]);
+
+    const resultado = await construirOpciones(
+      {
+        eventos: [evento({ agregado: "VEHICULO", agregadoId: "V1" })],
+        agregado: "VEHICULO",
+        diccionario,
+      },
+      { cliente: falso.cliente as never },
+    );
+
+    expect(
+      resultado.ok && resultado.data.identificadores.map((o) => o.valor),
+    ).toEqual(["V1"]);
+  });
+});

@@ -117,17 +117,39 @@ const AuditoriaPagina = async ({
       ? undefined
       : rangoVisible;
 
-  const eventosDelRango =
-    rangoDeOpciones &&
-    (await consultarBitacoraGlobal({
-      desde: rangoDeOpciones.desde,
-      hasta: rangoDeOpciones.hasta,
-    }));
+  // Dos lecturas, y no una, cuando hay tipo de registro elegido:
+  //
+  //   - Sin acotar, para el select de **participantes**: ese no depende del
+  //     tipo de registro.
+  //   - Acotada al tipo, para el de **identificadores**. Derivar los dos de la
+  //     misma lectura es lo que provoco el defecto que reporto el usuario: un
+  //     tipo con mucho volumen agota el cupo y los demas aparecen como "sin
+  //     actividad en este rango" siendo falso. En el sandbox, 3 288 eventos de
+  //     lote de un dia dejaban fuera del corte los 9 de vehiculo y los 7 de
+  //     convocatoria del dia anterior.
+  const [eventosDelRango, eventosDelAgregado] = rangoDeOpciones
+    ? await Promise.all([
+        consultarBitacoraGlobal({
+          desde: rangoDeOpciones.desde,
+          hasta: rangoDeOpciones.hasta,
+        }),
+        agregadoElegido
+          ? consultarBitacoraGlobal({
+              desde: rangoDeOpciones.desde,
+              hasta: rangoDeOpciones.hasta,
+              agregado: agregadoElegido,
+            })
+          : undefined,
+      ])
+    : [undefined, undefined];
 
   const opciones =
     eventosDelRango?.ok === true
       ? await construirOpciones({
           eventos: eventosDelRango.data.eventos,
+          ...(eventosDelAgregado?.ok === true
+            ? { eventosDelAgregado: eventosDelAgregado.data.eventos }
+            : {}),
           ...(agregadoElegido ? { agregado: agregadoElegido } : {}),
           diccionario,
         })
