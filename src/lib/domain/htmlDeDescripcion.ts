@@ -42,8 +42,25 @@ export const ETIQUETAS_PERMITIDAS = [
   "a",
 ] as const;
 
-/** Esquemas admisibles en un enlace. Nada de `javascript:` ni `data:`. */
-const ENLACE_ADMISIBLE = /^(https?:\/\/|\/)/i;
+/**
+ * Esquemas admisibles en un enlace. Nada de `javascript:` ni `data:`, que son
+ * los dos que ejecutan codigo.
+ *
+ * **`mailto:` se admite, y no es una concesion.** La descripcion de la
+ * participacion es donde el negocio pone su direccion de contacto —"envie un
+ * correo a ventavehiculos@..."— y la barra del editor ofrece el control de
+ * enlace, asi que un usuario honesto lo produce sin salirse de lo que la
+ * aplicacion le habilita. Dejarlo fuera hacia lo que la cabecera de este
+ * archivo advierte que no debe pasar: **la lista blanca mas estrecha que los
+ * controles del editor**, o sea el servidor rechazando lo que el editor acaba
+ * de crear. Y no abre nada: `mailto:` no ejecuta codigo — abre el cliente de
+ * correo con la direccion puesta, y sus parametros (`?subject=`, `?body=`) solo
+ * rellenan texto.
+ *
+ * Costo real de la omision: un formulario imposible de guardar y un mensaje que
+ * no decia por que (`desafios-implementacion.md` 58).
+ */
+const ENLACE_ADMISIBLE = /^(https?:\/\/|mailto:|\/)/i;
 
 // Cada `<...>` del documento. Se recorre entero: lo que no encaje con esta
 // forma —un `<` suelto en el texto— no es una etiqueta y no se examina.

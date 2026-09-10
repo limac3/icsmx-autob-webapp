@@ -3196,3 +3196,84 @@ antes del `Update` que la registra, la condicion no impide el segundo efecto: so
 
 Y "es idempotente" hay que leerlo preguntando *para quien*: el barrido lo era para DynamoDB y no lo
 era para el buzon del participante.
+
+## 58) No se podia crear una convocatoria, y el mensaje senalaba lo que no era
+
+### Problema
+Alta de convocatoria con la descripcion de participacion real del negocio, que incluye la direccion
+de contacto: "Envie un correo a ventavehiculos@churchofjesuschrist.org". El editor enriquecido tiene
+el control de enlace habilitado y el usuario lo uso.
+
+### Sintoma
+El formulario no guardaba nunca. Arriba, el aviso generico "Revisa los datos capturados"; debajo del
+editor, **"Please fill out this field."** — en ingles — sobre un campo visiblemente lleno. Escribir
+mas texto no cambiaba nada, y el contador de caracteres del propio editor confirmaba que habia
+contenido.
+
+Son **dos defectos encadenados**, y el segundo es el que hizo el primero indescifrable.
+
+### Causa raiz
+
+**El rechazo: `mailto:` no estaba en la lista blanca.** `ENLACE_ADMISIBLE` de
+`htmlDeDescripcion.ts` era `/^(https?:\/\/|\/)/i`. El motivo real viajaba en la respuesta
+(`detalles: { descripcionParticipacion: "enlace_no_admitido" }`) y era correcto: la lista blanca
+habia quedado **mas estrecha que los controles que el editor habilita**, que es exactamente lo que
+la cabecera de ese archivo advierte que no debe pasar — "si se habilita uno mas, hay que agregarlo
+aqui o el servidor rechazara lo que el editor acaba de producir". El comentario de la constante
+nombraba `javascript:` y `data:` como lo que hay que bloquear, y `mailto:` no ejecuta nada.
+
+**El mensaje enganoso: la descripcion era el unico campo cuyo error del servidor no podia
+mostrarse.** Y por dos razones independientes, las dos por como Eden arma el editor. El
+`RichTextEditor` monta **dos** `textarea` hermanos: uno con `name`, que serializa el HTML para el
+`FormData`, y otro con `required` y el texto plano, que es el que valida el navegador y el que Eden
+resuelve con `document.getElementById(id)` para su `onValidate`. Ese segundo **no tiene `name`**.
+
+1. `validarConElServidor` buscaba el motivo con `erroresDelServidor.current[control.name]`, y ahi
+   llegaba `""`.
+2. El efecto que reevalua los controles al volver del servidor los busca con
+   `formulario.elements.namedItem(nombre)`, que devuelve el `textarea` **con** `name`. El evento
+   `validate` se despachaba sobre el hermano equivocado: burbujea hacia los ancestros y **nunca
+   alcanza a un hermano**, asi que el control que Eden escucha no se reevaluaba.
+
+Con las dos, el `setCustomValidity` nunca llegaba, y lo que quedaba visible era la validacion nativa
+del navegador — que decia "rellena este campo" porque es lo unico que sabe decir, no porque el campo
+estuviera vacio.
+
+### Solucion aplicada
+`mailto:` admitido en `ENLACE_ADMISIBLE`, con su razon escrita; un `validarDescripcionConElServidor`
+que nombra el campo en vez de leerlo del control; y el efecto despachando `validate` tambien sobre
+`textarea[required]:not([name])`.
+
+Se busca **por forma y no por la clase de Eden**: un `textarea` con `required` y sin `name` es
+precisamente "el control que valida un campo cuyo valor vive en otro sitio". Si Eden le pone nombre
+algun dia, la prueba falla en vez de que el mensaje desaparezca en silencio.
+
+Son dos funciones planas y no una currificada porque `react-hooks/refs` rechaza que una funcion
+creada en render devuelva otra que lee un ref.
+
+### Lo que costo, y por que conviene anotarlo
+Dos hipotesis se investigaron y se **descartaron con evidencia** antes de llegar a la real, y las dos
+parecian sensatas leyendo el codigo:
+
+- Que Eden no sembrara sus `textarea` desde `initialContent` al montar — `SerializePlugin` usa
+  `registerUpdateListener`, que en teoria no dispara al montar. Una prueba lo refuto: en jsdom los
+  dos `textarea` quedan poblados.
+- Que el HTML de Lexical no pasara la lista blanca por `class`, `dir`, `style` o `<span>`. Se midio
+  el HTML real que produce el editor y **es limpio** (`<p>…</p><p>…</p>`), y el validador lo acepta.
+
+Lo que cerro el caso no fue leer codigo: fue **el payload de la peticion rechazada**, con
+`detalles` dentro. Un defecto de formulario se diagnostica mirando lo que el servidor contesto,
+no adivinando en el cliente.
+
+### Regla para futuro
+Dos reglas, y la segunda es la que ahorra tiempo.
+
+**La lista blanca de HTML y los controles del editor son una sola decision en dos archivos.** Al
+tocar `CONTROLES_DEL_EDITOR` o `ETIQUETAS_PERMITIDAS`/`ENLACE_ADMISIBLE`, hay que mirar el otro. La
+prueba del caso `mailto:` existe para eso.
+
+**Un campo cuyo control de validacion no es el que lleva el `name` necesita su propio camino**, y
+conviene sospecharlo de cualquier componente compuesto de una libreria: el `name`, el `id`, el
+`required` y el valor pueden estar repartidos en elementos distintos. La comprobacion es barata —
+listar los controles del formulario con su `name`, `id` y `required`— y es lo que hubiera senalado
+esto en un minuto.

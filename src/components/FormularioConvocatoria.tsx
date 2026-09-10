@@ -145,10 +145,51 @@ const FormularioConvocatoria = ({
         control.dispatchEvent(new Event("validate", { bubbles: true }));
       }
     }
+
+    // **La descripcion necesita su propio aviso**, y es el unico campo que lo
+    // necesita. Eden valida el editor enriquecido con un `textarea` propio que
+    // **no lleva `name`** —el `name` va en otro, el que serializa el contenido
+    // para el `FormData`— y esos dos son **hermanos**. Un evento despachado
+    // sobre el que se encuentra por nombre burbujea hacia los ancestros y nunca
+    // alcanza al hermano, asi que el bucle de arriba no lo reevalua nunca.
+    //
+    // Se busca por forma y no por la clase de Eden: `textarea[required]` sin
+    // `name` es exactamente "el control que valida un campo cuyo valor vive en
+    // otro sitio". Si Eden algun dia le pone nombre, la prueba de este archivo
+    // lo delata en vez de que el mensaje desaparezca en silencio.
+    if (porControl.descripcionParticipacion !== undefined) {
+      formulario
+        .querySelector<HTMLTextAreaElement>("textarea[required]:not([name])")
+        ?.dispatchEvent(new Event("validate", { bubbles: true }));
+    }
   }, [estado, validacion]);
 
+  /** Copia al control el error que el servidor devolvio para su campo. */
   const validarConElServidor = (control: HTMLInputElement): void => {
     control.setCustomValidity(erroresDelServidor.current[control.name] ?? "");
+  };
+
+  /**
+   * Lo mismo para la descripcion, con el campo nombrado aqui.
+   *
+   * **Hace falta porque su control no tiene `name`.** Eden pone el `name` en el
+   * `textarea` que serializa el editor y deja sin nombre el que marca
+   * `required`, que es justo el que llega a este callback. Con la busqueda por
+   * `control.name`, la descripcion era el unico campo del formulario cuyo error
+   * del servidor **nunca** podia mostrarse: el motivo viajaba en `detalles` y se
+   * perdia aqui, y en su lugar el navegador escribia su propio "Please fill out
+   * this field" en ingles, sobre un campo lleno y por una razon que no era la
+   * real. Costo un reporte de defecto descubrir que el problema era un enlace
+   * `mailto:` (`desafios-implementacion.md` 58).
+   *
+   * Son dos funciones planas y no una currificada porque `react-hooks/refs`
+   * rechaza que una funcion creada en render **devuelva** otra que lee un ref:
+   * no puede probar que la devuelta no se invoque durante el render.
+   */
+  const validarDescripcionConElServidor = (control: HTMLInputElement): void => {
+    control.setCustomValidity(
+      erroresDelServidor.current.descripcionParticipacion ?? "",
+    );
   };
 
   const olvidarErrorDelServidor = (destino: EventTarget | null): void => {
@@ -295,7 +336,7 @@ const FormularioConvocatoria = ({
 
           <FormField
             label={etiquetas.campoDescripcion}
-            onValidate={validarConElServidor}
+            onValidate={validarDescripcionConElServidor}
           >
             <RichTextEditor
               key={intento}

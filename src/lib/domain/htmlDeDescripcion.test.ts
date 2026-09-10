@@ -126,6 +126,32 @@ describe("enlaces", () => {
       revisarHtmlDeDescripcion('<a href="https://ejemplo.test">ir</a>'),
     ).toBeUndefined();
   });
+
+  it("acepta mailto: — es la direccion de contacto del negocio", () => {
+    // El defecto reportado: la descripcion real de una convocatoria lleva
+    // "envie un correo a ventavehiculos@...", el editor ofrece el control de
+    // enlace, y el servidor rechazaba lo que el editor acababa de crear. Que la
+    // lista blanca sea mas estrecha que los controles habilitados es lo que la
+    // cabecera de `htmlDeDescripcion.ts` advierte que no debe pasar.
+    expect(
+      revisarHtmlDeDescripcion(
+        '<a href="mailto:ventavehiculos@churchofjesuschrist.org">escribir</a>',
+      ),
+    ).toBeUndefined();
+  });
+
+  it("sigue rechazando los esquemas que ejecutan codigo", () => {
+    // La guarda de que admitir `mailto:` no relajo el resto: es la unica
+    // adicion, y se hizo porque no ejecuta nada.
+    for (const html of [
+      '<a href="javascript:alert(1)">ir</a>',
+      '<a href="JaVaScRiPt:alert(1)">ir</a>',
+      '<a href="mailtoo:algo">ir</a>',
+      '<a href="x-mailto:algo">ir</a>',
+    ]) {
+      expect(revisarHtmlDeDescripcion(html)).toBe("enlace_no_admitido");
+    }
+  });
 });
 
 describe("textoPlanoDeDescripcion", () => {

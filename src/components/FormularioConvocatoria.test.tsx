@@ -106,4 +106,124 @@ describe("errores que devuelve el servidor", () => {
       diccionario.validacionConvocatoria.duplicado,
     );
   });
+
+  it("conserva la descripcion de forma que se pueda volver a enviar", async () => {
+    // El hueco por el que paso el defecto: esta suite comprobaba folio, nombre,
+    // horas y tipo, y **nunca la descripcion**. Y la descripcion es el unico
+    // campo que no es un `input`: es el editor enriquecido de Eden, que
+    // sincroniza su contenido a dos `textarea` propios —uno con `name` para el
+    // `FormData`, otro con `required` para la validacion del navegador— desde
+    // un `registerUpdateListener`, que **no dispara al montar**. Con el editor
+    // restaurado desde `initialContent`, Lexical pintaba el texto y los dos
+    // textarea seguian vacios: el navegador decia "Please fill out this field"
+    // sobre un campo lleno, y el envio habria mandado la descripcion en blanco.
+    vi.mocked(guardarConvocatoriaDesdeFormulario).mockResolvedValue({
+      estado: "error",
+      error: "validation_failed",
+      detalles: { folio: "duplicado" },
+      intento: 1,
+      capturado: {
+        folio: "1",
+        nombre: "Septiembre de 2026",
+        tipo: "EMPLEADOS",
+        descripcionParticipacion: "<p>Usted puede comprar un vehiculo.</p>",
+        publicadaEnFecha: "2026-11-01",
+        publicadaEnHora: "08:00",
+        inicioVentaFecha: "2026-11-05",
+        inicioVentaHora: "08:00",
+        finVentaFecha: "2026-11-12",
+        finVentaHora: "18:00",
+        horasLiquidacion: "72",
+      },
+    });
+
+    await act(async () => {
+      context.root.render(
+        <FormularioConvocatoria diccionario={diccionario} valores={VALORES} />,
+      );
+    });
+
+    const formulario = context.container.querySelector("form")!;
+    await act(async () => {
+      formulario.requestSubmit();
+    });
+    await act(async () => {
+      await new Promise<void>((resolver) => {
+        requestAnimationFrame(() => {
+          resolver();
+        });
+      });
+    });
+
+    // Lo que viaja en el `FormData`.
+    expect(control("descripcionParticipacion").value).toContain(
+      "Usted puede comprar un vehiculo",
+    );
+
+    // Y lo que el navegador valida: sin esto, el formulario queda imposible de
+    // reenviar aunque el campo se vea lleno.
+    expect(
+      context.container.querySelector<HTMLTextAreaElement>(
+        ".eden-rich-text-editor__textarea textarea, textarea.eden-rich-text-editor__textarea",
+      )?.validationMessage,
+    ).toBe("");
+  });
+
+  it("muestra en la descripcion el motivo que devolvio el servidor", async () => {
+    // El defecto que costo un reporte: el servidor rechazaba la descripcion por
+    // un enlace `mailto:` y devolvia el motivo en `detalles`, pero la pantalla
+    // no lo mostraba. Eden pone `name` en el `textarea` que serializa el editor
+    // y **no** en el que marca `required`, que es el que llega a `onValidate`;
+    // con la busqueda por `control.name`, la descripcion era el unico campo
+    // cuyo error del servidor no podia llegar nunca. En su lugar el navegador
+    // escribia su propio "Please fill out this field" en ingles, sobre un campo
+    // lleno y por una razon que no era la real.
+    vi.mocked(guardarConvocatoriaDesdeFormulario).mockResolvedValue({
+      estado: "error",
+      error: "validation_failed",
+      detalles: { descripcionParticipacion: "enlace_no_admitido" },
+      intento: 1,
+      capturado: {
+        folio: "1",
+        nombre: "Septiembre de 2026",
+        tipo: "EMPLEADOS",
+        descripcionParticipacion:
+          '<p>Escriba a <a href="mailto:ventas@ejemplo.test">ventas</a>.</p>',
+        publicadaEnFecha: "2026-11-01",
+        publicadaEnHora: "08:00",
+        inicioVentaFecha: "2026-11-05",
+        inicioVentaHora: "08:00",
+        finVentaFecha: "2026-11-12",
+        finVentaHora: "18:00",
+        horasLiquidacion: "48",
+      },
+    });
+
+    await act(async () => {
+      context.root.render(
+        <FormularioConvocatoria diccionario={diccionario} valores={VALORES} />,
+      );
+    });
+
+    const formulario = context.container.querySelector("form")!;
+    await act(async () => {
+      formulario.requestSubmit();
+    });
+    await act(async () => {
+      await new Promise<void>((resolver) => {
+        requestAnimationFrame(() => {
+          resolver();
+        });
+      });
+    });
+
+    // El control que valida el navegador es el `textarea` sin `name` de Eden.
+    const validado = [
+      ...context.container.querySelectorAll<HTMLTextAreaElement>("textarea"),
+    ].find((campo) => campo.required);
+
+    expect(validado?.validationMessage).toBe(
+      diccionario.validacionConvocatoria.enlace_no_admitido,
+    );
+  });
 });
