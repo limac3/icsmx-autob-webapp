@@ -3,11 +3,15 @@
 # `backend` despliega la pila de `amplify/` con `ampx pipeline-deploy`; `frontend` compila
 # Next.js. Amplify detecta el App Router y publica el resultado como aplicacion SSR.
 #
-# Requiere dos variables en la consola de Amplify (App settings > Environment variables):
+# Variables en la consola de Amplify (App settings > Environment variables). Son las que hacen
+# falta **para construir**; las de tiempo de ejecucion estan en `runbooks.md` R-14:
 #
 #   NODE_AUTH_TOKEN   token de Artifactory. Sin el, `npm ci` falla con 401 al resolver los
 #                     paquetes @churchofjesuschrist/* (riesgo R10).
-#   SES_IDENTIDAD     dominio o correo verificado. Lo lee `amplify/backend.ts` al sintetizar.
+#   ALARMAS_CORREO    destinatario de las seis alarmas. Solo la lee `ampx` al sintetizar, y es lo
+#                     unico que **no se puede poner despues sin redesplegar**: sin ella el tema de
+#                     SNS se crea sin suscriptores (`amplify/alarmas.ts`). Se omite a proposito en
+#                     un entorno que nadie vigila.
 #
 # Los secretos de la aplicacion (AUTH0_CLIENT_SECRET, AUTH_SECRET, EAS_API_KEY,
 # CLOUDFRONT_PRIVATE_KEY) van en el gestor de secretos, nunca aqui.

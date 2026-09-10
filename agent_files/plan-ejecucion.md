@@ -1502,7 +1502,10 @@ nombres. **Cumplida.**
 - [x] Diccionarios completos, sin claves faltantes — ya garantizado por dos mecanismos; se
       verifico y se documento cual cubre que
 - [ ] **[OPERADOR]** `runbooks.md` verificado ejecutando cada procedimiento al menos una vez
-- [ ] **[OPERADOR]** Despliegue a produccion y prueba de humo
+- [ ] **[OPERADOR]** Despliegue a produccion y prueba de humo — procedimiento en `runbooks.md`
+      **R-14**. Lo primero que falta no es de AWS: **el repositorio no tiene remoto**, y Amplify
+      Hosting construye desde un repositorio conectado. Verificado el 2026-09-10: no existe
+      ninguna app de Amplify Hosting de este proyecto; lo desplegado es un sandbox personal
 
 **Verificacion:**
 

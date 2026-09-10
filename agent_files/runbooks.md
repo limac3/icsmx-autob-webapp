@@ -438,6 +438,111 @@ datos es preferible a convivir con una alarma que nadie cree.
 
 ---
 
+## R-14 — Desplegar la aplicacion en AWS
+
+**R-11 prepara el backend; esto publica la aplicacion.** Son dos cosas distintas y confundirlas
+cuesta tiempo: `ampx sandbox` crea la tabla, el bucket, CloudFront, la Lambda del barrido y el rol
+SSR, pero **no** publica Next.js en ningun sitio. La aplicacion sigue corriendo en la maquina de
+quien la desarrolla hasta que existe una app de **Amplify Hosting**.
+
+### Estado de partida, y como comprobarlo
+
+Antes de seguir, verificar en que punto se esta. Los tres son comandos de lectura:
+
+```bash
+aws amplify list-apps --query 'apps[].{nombre:name,appId:appId,repo:repository}'
+git remote -v
+node -e "console.log(require('./amplify_outputs.json').custom.autob)"
+```
+
+Al 2026-09-10 el resultado era: **ninguna app de Amplify Hosting de este proyecto**, **ningun
+remoto de Git**, y un sandbox personal desplegado
+(`amplify-icsmxautobwebapp-CesarLima-sandbox-cbbf835390`). O sea, el paso 1 de abajo es el que
+falta.
+
+### Paso 1 — Un remoto que Amplify pueda leer · **[OPERADOR]**
+
+**Es el bloqueo primero y no tiene rodeo:** Amplify Hosting construye desde un repositorio Git
+conectado, no desde un directorio local. Sin remoto no hay despliegue.
+
+### Paso 2 — Rotar los secretos expuestos · **[OPERADOR]**
+
+**Antes de cargar un solo valor en Amplify.** En una sesion de desarrollo, una edicion de
+`.env.local` hizo que la herramienta devolviera el archivo completo, asi que quedaron expuestos en
+un transcripto `AUTH0_CLIENT_SECRET`, `AUTH_SECRET` y la llave privada de CloudFront. Desplegar con
+esos valores es desplegar con secretos comprometidos.
+
+Rotar la llave de CloudFront **invalida todas las URLs firmadas vigentes** (R-11 paso 1), asi que
+conviene hacerlo antes de que existan usuarios y no despues.
+
+### Paso 3 — Crear la app y conectar la rama · **[OPERADOR]**
+
+Amplify detecta [`amplify.yml`](../amplify.yml), que ya esta escrito y no hay que tocar. Hace dos
+cosas que conviene conocer:
+
+- `backend` corre `ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID`, o sea despliega
+  la pila de `amplify/` con la misma definicion que el sandbox.
+- `frontend` corre **`typecheck`, `test` y `build`** antes de publicar. Una rama que no compila o
+  cuyas pruebas fallan no llega a produccion; el fallo se ve en el registro de build.
+
+### Paso 4 — Variables de construccion · **[OPERADOR]**
+
+En *App settings > Environment variables*:
+
+| Variable | Por que |
+| --- | --- |
+| `NODE_AUTH_TOKEN` | Token de Artifactory. Sin el `npm ci` falla con 401 en los paquetes `@churchofjesuschrist/*` (riesgo R10) |
+| `ALARMAS_CORREO` | Destinatario de las seis alarmas. **Lo unico que no se puede poner despues sin redesplegar**: sin ella el tema de SNS se crea vacio |
+
+### Paso 5 — Variables y secretos de tiempo de ejecucion · **[OPERADOR]**
+
+La lista completa esta en [`.env.local.example`](../.env.local.example), que documenta cada una. Lo
+que importa para un despliegue:
+
+| Grupo | Variables | De donde sale el valor |
+| --- | --- | --- |
+| Okta | `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH_SECRET`, `APP_BASE_URL` | Del tenant. `APP_BASE_URL` **debe** coincidir con la URL de callback registrada en Okta |
+| EAS | `EAS_PROFILE_URL`, `EAS_API_KEY` | Del equipo de EAS (contrato aun sin confirmar: riesgo R19) |
+| Datos | `AUTOB_TABLE_NAME`, `AUTOB_MEDIA_BUCKET` | `amplify_outputs.json`, bajo `custom.autob` |
+| CloudFront | `CLOUDFRONT_DOMAIN`, `CLOUDFRONT_KEY_PAIR_ID`, `CLOUDFRONT_PRIVATE_KEY` | Los dos primeros de `custom.autob`. **`llavePublicaCloudFront`, no `grupoDeLlavesCloudFront`**: confundirlos da un 403 que no dice cual de los dos esta mal (desafios 50) |
+| Herramientas | `ENABLE_DEV_TOOLS=OFF` | **Obligatorio.** La aplicacion lanza un error de arranque si `NODE_ENV=production` y el valor no es `OFF` |
+
+Los cuatro de **CES** —`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`— van por
+`ampx ... secret set` y no como variables de la app: los consume la **Lambda del barrido**, que los
+recibe por `secret()` en `amplify/backend.ts`. El backend despliega igual sin sus valores —declarar
+la referencia no exige que el valor exista— y CES aun no esta aprobado (riesgo R17): hasta que lo
+este, cada envio falla explicito y los mensajes se acumulan `PENDIENTE`, sin afectar la fila ni la
+adjudicacion (D-6).
+
+### Paso 6 — Los dos pasos de consola que no son de codigo · **[OPERADOR]**
+
+1. **Adjuntar el rol de computo SSR** (R-11 paso 5). Sin esto la aplicacion desplegada no puede
+   leer la tabla. Se puede cambiar sin redesplegar.
+2. **Aceptar el correo de confirmacion de SNS** (R-11 paso 6). Una suscripcion
+   `PendingConfirmation` parece configurada y no entrega nada.
+
+### Paso 7 — Verificar · **[AGENTE]** lo automatizable, **[OPERADOR]** el resto
+
+```bash
+npx vitest run amplify/auditoriaInmutable.integracion.test.ts   # la bitacora es inmutable
+npm run carga:apertura                                           # contra el entorno desplegado
+```
+
+De la carga sale el dato con el que **calibrar `UMBRAL_CONFLICTOS_POR_PERIODO`** contra la metrica
+`TransactionConflict` de CloudWatch (R-13). Los umbrales de `amplify/alarmas.ts` son valores de
+partida, no medidas.
+
+Falta ademas la prueba de humo del ciclo completo, que exige **dos identidades distintas**: R-05
+impide aprobar la propia convocatoria y una fila de un solo participante no tiene orden. En un
+entorno desplegado con `ENABLE_DEV_TOOLS=OFF` no hay conmutador de identidad simulada, asi que son
+dos personas de verdad — ver R-12 para el recorrido y por que.
+
+### Si el build falla
+
+Ver **R-10**.
+
+---
+
 ## Consultas de diagnostico frecuentes
 
 | Necesidad | Consulta |
