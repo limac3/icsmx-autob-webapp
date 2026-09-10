@@ -3461,3 +3461,47 @@ que es texto suelto—. Verificado: las siete filas arrancan en la misma x.
 **Un boton de Eden con un bloque dentro necesita `justify-content` en el boton.** Vale para
 cualquier boton con contenido de dos renglones o con icono mas texto. Si lo que se ve es contenido
 descentrado y `text-align` no hace nada, el culpable es el `justify-content` del contenedor flex.
+
+## 63) El ADR se recarga hablandole al servidor MCP por stdio, no transcribiendolo
+
+### Problema
+El paso 3 del protocolo del ADR es
+`manage_adr(project, mode="update", content=<contenido de .claude/adr.md>)`, y hay que ejecutarlo
+despues de **cualquier** `index_repository` (seccion 21).
+
+### Sintoma
+El ADR pesa ~68 KB. La unica forma aparente de pasarlo por la herramienta es que el agente lo lea
+—unos 20 000 tokens— y lo **vuelva a escribir** completo en la llamada, otros 20 000. Ademas de
+caro, es **inseguro**: 834 lineas de prosa con guiones largos, flechas, exponentes y acentos
+reescritas a mano pueden perder una linea o mutar un caracter, y el fallo es **silencioso** —el
+espejo queda corrupto y nadie se entera hasta que alguien lo lee meses despues—.
+
+Y `manage_adr(mode="update")` **sin** `content` no sirve de atajo: devuelve el ADR almacenado en vez
+de recargarlo del disco, y su respuesta se pasa del limite de tokens de un resultado.
+
+### Causa raiz
+`codebase-memory-mcp` es un servidor **stdio local**
+(`~/.local/bin/codebase-memory-mcp.exe`, declarado en `~/.claude.json`), no un servicio remoto. Un
+servidor stdio se puede invocar desde la terminal como cualquier proceso: el protocolo es JSON-RPC
+delimitado por saltos de linea sobre `stdin`/`stdout`. Que el agente sea un cliente MCP no obliga a
+que **toda** llamada pase por su contexto.
+
+### Solucion aplicada
+Un script que lanza el ejecutable, hace el saludo (`initialize` mas
+`notifications/initialized`) y envia `tools/call` con el contenido **leido del disco**. El texto
+nunca entra ni sale del contexto del agente, asi que no hay transcripcion posible: la carga es
+exacta por construccion, y cuesta una llamada a la terminal en vez de 40 000 tokens.
+
+El mismo script con `--verificar` pide `mode="get"` y compara **byte a byte** contra
+`.claude/adr.md`. Eso convierte "creo que se subio bien" en un hecho comprobado: 68 547 bytes en los
+dos lados, identicos.
+
+### Regla para futuro
+**Un servidor MCP de stdio es un proceso, y el contenido grande se le pasa desde el disco.** Cuando
+una herramienta MCP pide como argumento algo que ya existe en un archivo —un documento, un volcado,
+un lote de datos—, leerlo para volver a escribirlo es el camino caro y el unico que puede corromper
+el dato. Comprobar en `~/.claude.json` si el servidor es `stdio`: si lo es, el atajo existe.
+
+Y **toda carga masiva se cierra verificandola en la direccion contraria**. Subir y comparar cuesta
+una llamada mas; sin ella, la unica prueba de que el espejo esta bien es que la subida no dio error,
+que es justo lo que un truncamiento silencioso tambien parece.

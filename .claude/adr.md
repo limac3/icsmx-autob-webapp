@@ -219,44 +219,6 @@ Anclas: `src/lib/auth/personasSimuladas.ts::PERSONAS_SIMULADAS`,
 `src/lib/auth/session.ts::getSession`, `src/app/actions/devTools.ts::cambiarPersonaSimulada`,
 `src/components/BarraDeIdentidadSimulada.tsx`, `src/components/PanelDeIdentidadSimulada.tsx`.
 
-### D-18 — El entorno se declara con `APP_ENV`, no se deduce de `NODE_ENV`
-La compuerta de D-10 exige modo, entorno y sesion. El **entorno** dejo de ser
-`NODE_ENV !== "production"` y pasa a ser `APP_ENV`, con dos valores: `produccion` | `pruebas`.
-**Ausente o desconocido se asume `produccion`.**
-Razon: `NODE_ENV` no distingue produccion de un ambiente de pruebas. Amplify Hosting compila y
-sirve **toda** rama en modo produccion, asi que la condicion anterior hacia imposible desplegar un
-ambiente de prueba con el conmutador de identidades — y es ahi donde hace falta, porque el flujo
-completo exige dos identidades distintas (R-05 y el orden de la fila) y con `OFF` eso obliga a dos
-personas reales.
-La asimetria del valor por omision es la propiedad que sostiene la decision: **olvidar la variable
-deja las herramientas bloqueadas, no abiertas** (regla 18). Y un `APP_ENV` invalido —`production`
-en ingles es el error probable— tambien cierra, mientras que un `ENABLE_DEV_TOOLS` invalido cae a
-`OFF`: los dos errores de escritura caen del lado seguro, por caminos distintos.
-Consecuencia aceptada y escrita: con cualquier modo distinto de `OFF`, `eas.ts` **no consulta
-EAS**. La autenticacion de Okta sigue siendo obligatoria, pero deja de implicar autorizacion —
-cualquier cuenta del tenant que alcance la URL recibe los permisos simulados. Admisible con datos
-desechables, no con datos reales.
-**La matriz de las dos variables es la especificacion, y esta verificada por enumeracion**:
-`identidad-autorizacion.md` 4.1.2 la escribe y `src/lib/auth/modoYEntorno.test.ts` recorre las 40
-combinaciones —ausentes e invalidas incluidas— mas las propiedades que la tabla existe para
-garantizar. Las propiedades vigilan la **tabla**, no solo el codigo: editarla hacia un valor
-inseguro rompe la compuerta.
-Descartado:
-- Seguir con `NODE_ENV`. Impide el ambiente de pruebas desplegado, que es el requisito.
-- Atar la habilitacion a `APP_BASE_URL` (una variable cuyo valor es la URL exacta del despliegue,
-  en vez de un nombre de entorno). Da una propiedad mas fuerte —no sobrevive al clonarse la
-  configuracion de una app de Amplify a otra, porque la URL cambia obligatoriamente— pero es un
-  mecanismo inusual, obliga a duplicar un valor y no sirve para nada mas. Se eligio el nombre de
-  entorno por convencional y reutilizable; queda disponible si se quiere la propiedad fuerte.
-- Un `NEXT_PUBLIC_*`. Quedaria en el paquete del cliente, y esto es una decision de servidor.
-- Tomar la rama de Amplify (`AWS_BRANCH`). Es una variable de **construccion**; no esta garantizada
-  en el computo SSR, asi que la guarda dependeria de algo que puede faltar en tiempo de ejecucion —
-  y faltar tiene que cerrar, no abrir.
-- Exigir `APP_ENV` en todo despliegue y no arrancar sin ella. Mas explicito, pero agrega un modo de
-  fallo a un despliegue de produccion que hoy funciona con `OFF` y sin la variable.
-Anclas: `src/lib/auth/devMode.ts::exigirModoSeguro`, `::obtenerEntornoApp`,
-`src/lib/auth/eas.ts::obtenerPermisos`.
-
 ### D-11 — La navegacion declara la accion que abre cada seccion, y comprueba solo la capacidad
 Cada entrada del menu (`src/lib/navegacion.ts`) declara la **`Accion`** de su pantalla, no una
 lista de permisos, y se resuelve con `tieneCapacidad` — el primer tiempo de `puedeEjecutar`, sin
@@ -539,6 +501,44 @@ Anclas: `src/lib/data/claves.ts::clave`,
 `src/lib/vehiculos/editarVehiculo.ts::editarVehiculo`,
 `src/lib/convocatorias/editarConvocatoria.ts::editarConvocatoria`.
 
+### D-18 — El entorno se declara con `APP_ENV`, no se deduce de `NODE_ENV`
+La compuerta de D-10 exige modo, entorno y sesion. El **entorno** dejo de ser
+`NODE_ENV !== "production"` y pasa a ser `APP_ENV`, con dos valores: `produccion` | `pruebas`.
+**Ausente o desconocido se asume `produccion`.**
+Razon: `NODE_ENV` no distingue produccion de un ambiente de pruebas. Amplify Hosting compila y
+sirve **toda** rama en modo produccion, asi que la condicion anterior hacia imposible desplegar un
+ambiente de prueba con el conmutador de identidades — y es ahi donde hace falta, porque el flujo
+completo exige dos identidades distintas (R-05 y el orden de la fila) y con `OFF` eso obliga a dos
+personas reales.
+La asimetria del valor por omision es la propiedad que sostiene la decision: **olvidar la variable
+deja las herramientas bloqueadas, no abiertas** (regla 18). Y un `APP_ENV` invalido —`production`
+en ingles es el error probable— tambien cierra, mientras que un `ENABLE_DEV_TOOLS` invalido cae a
+`OFF`: los dos errores de escritura caen del lado seguro, por caminos distintos.
+Consecuencia aceptada y escrita: con cualquier modo distinto de `OFF`, `eas.ts` **no consulta
+EAS**. La autenticacion de Okta sigue siendo obligatoria, pero deja de implicar autorizacion —
+cualquier cuenta del tenant que alcance la URL recibe los permisos simulados. Admisible con datos
+desechables, no con datos reales.
+**La matriz de las dos variables es la especificacion, y esta verificada por enumeracion**:
+`identidad-autorizacion.md` 4.1.2 la escribe y `src/lib/auth/modoYEntorno.test.ts` recorre las 40
+combinaciones —ausentes e invalidas incluidas— mas las propiedades que la tabla existe para
+garantizar. Las propiedades vigilan la **tabla**, no solo el codigo: editarla hacia un valor
+inseguro rompe la compuerta.
+Descartado:
+- Seguir con `NODE_ENV`. Impide el ambiente de pruebas desplegado, que es el requisito.
+- Atar la habilitacion a `APP_BASE_URL` (una variable cuyo valor es la URL exacta del despliegue,
+  en vez de un nombre de entorno). Da una propiedad mas fuerte —no sobrevive al clonarse la
+  configuracion de una app de Amplify a otra, porque la URL cambia obligatoriamente— pero es un
+  mecanismo inusual, obliga a duplicar un valor y no sirve para nada mas. Se eligio el nombre de
+  entorno por convencional y reutilizable; queda disponible si se quiere la propiedad fuerte.
+- Un `NEXT_PUBLIC_*`. Quedaria en el paquete del cliente, y esto es una decision de servidor.
+- Tomar la rama de Amplify (`AWS_BRANCH`). Es una variable de **construccion**; no esta garantizada
+  en el computo SSR, asi que la guarda dependeria de algo que puede faltar en tiempo de ejecucion —
+  y faltar tiene que cerrar, no abrir.
+- Exigir `APP_ENV` en todo despliegue y no arrancar sin ella. Mas explicito, pero agrega un modo de
+  fallo a un despliegue de produccion que hoy funciona con `OFF` y sin la variable.
+Anclas: `src/lib/auth/devMode.ts::exigirModoSeguro`, `::obtenerEntornoApp`,
+`src/lib/auth/eas.ts::obtenerPermisos`.
+
 ## Decisiones de modelo de datos
 
 Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
@@ -820,6 +820,13 @@ Procedimiento cuando cambia `agent_files/`, `CLAUDE.md` o `AGENTS.md`:
 Despues de **cualquier** `index_repository`, aunque no haya cambiado la documentacion, repetir
 el paso 3 o el ADR queda perdido en el grafo. Verificar con `manage_adr(mode="sections")`: si
 devuelve `[]`, se borro.
+
+> **El paso 3 no se hace transcribiendo el archivo.** `codebase-memory-mcp` es un servidor
+> **stdio local**, asi que se le puede hablar desde la terminal por JSON-RPC pasandole el contenido
+> **leido del disco**: exacto por construccion y sin los ~40 000 tokens que cuesta leer 68 KB y
+> volver a escribirlos. Reescribir 834 lineas a mano ademas puede perder una linea en silencio, y
+> el espejo corrupto no se nota hasta que alguien lo lee. Cerrar siempre comparando byte a byte con
+> `mode="get"`. Receta completa en `agent_files/desafios-implementacion.md` seccion 63.
 
 > **El reindexado no ve el trabajo sin commit.** El grafo se ancla al `head_sha`, asi que
 > `index_repository` sobre un arbol con cambios sin confirmar devuelve el mismo conteo de nodos
