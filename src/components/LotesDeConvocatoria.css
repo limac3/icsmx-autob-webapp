@@ -11,11 +11,29 @@
   width: 100%;
 }
 
+/* `start` y no `end`, que es lo que habia. El campo de precio lleva nota
+   —"cifra cerrada en pesos, sin centavos"— y el del vehiculo no, asi que los
+   dos `FormField` no miden lo mismo. Alineando por abajo, el borde inferior del
+   campo de precio es **su nota** y no su caja: el input quedaba un renglon por
+   encima del select y las dos etiquetas a distinta altura. Alineando por
+   arriba, etiquetas y cajas coinciden y la nota cuelga debajo, que es su sitio.
+
+   Vale para cualquier fila de campos de Eden: `align-items: end` solo alinea
+   las cajas mientras todos los campos tengan la misma cantidad de partes. */
 .lotes__inclusion {
-  align-items: end;
+  align-items: start;
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+}
+
+/* Renglon propio para el boton, igual que `.filtros-bitacora__acciones` y por
+   la misma razon de fondo: como un elemento mas del `flex` no hay forma de
+   dejarlo a la altura de las cajas sin un numero magico —su altura no incluye
+   etiqueta ni nota—, y cualquier margen fijo se desalinea en cuanto una
+   etiqueta pasa a dos renglones en una pantalla estrecha. */
+.lotes__inclusion-accion {
+  flex-basis: 100%;
 }
 
 .lotes__retiro {
@@ -23,7 +41,11 @@
   gap: 1rem;
 }
 
+/* Grupo de acciones: las de la celda de la tabla y las del dialogo de retiro.
+   `center` para que un enlace de texto no quede pegado al borde superior
+   cuando comparte renglon con un boton, que es mas alto. */
 .lotes__acciones {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;

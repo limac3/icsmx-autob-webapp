@@ -9,6 +9,8 @@ import {
 import { Danger, Primary, Secondary } from "@churchofjesuschrist/eden-buttons";
 import { DialogModal } from "@churchofjesuschrist/eden-dialog-modal";
 import { Row } from "@churchofjesuschrist/eden-row";
+import { Stack } from "@churchofjesuschrist/eden-stack";
+import { ToolModal } from "@churchofjesuschrist/eden-tool-modal";
 import { FormField, TextArea } from "@churchofjesuschrist/eden-form-parts";
 import { Text2 } from "@churchofjesuschrist/eden-text";
 import {
@@ -65,7 +67,9 @@ type DefinicionDeAccion = {
     | "confirmar_ENVIAR_A_APROBACION"
     | "confirmar_APROBAR"
     | "confirmar_PUBLICAR"
-    | "confirmar_CONCLUIR";
+    | "confirmar_CONCLUIR"
+    | "confirmar_RECHAZAR"
+    | "confirmar_OCULTAR";
   tono: "primaria" | "secundaria" | "peligro";
   ejecutar: (convocatoriaId: string) => Ejecutor;
 };
@@ -89,6 +93,11 @@ const ACCIONES: Record<EventoConvocatoria, DefinicionDeAccion> = {
   RECHAZAR: {
     permiso: "Autob_Aprobar_Convocatorias",
     exigeMotivo: true,
+    // Las acciones que piden motivo **tambien** confirman, y por eso el motivo
+    // se captura dentro del modal: el campo suelto antes del boton no decia a
+    // que accion pertenecia, y el boton se quedaba inerte hasta llenarlo sin
+    // explicar por que.
+    confirma: "confirmar_RECHAZAR",
     tono: "peligro",
     ejecutar: (id) => (motivo) => rechazarConvocatoria(id, motivo),
   },
@@ -102,6 +111,7 @@ const ACCIONES: Record<EventoConvocatoria, DefinicionDeAccion> = {
   OCULTAR: {
     permiso: "Autob_Administrar_Convocatorias",
     exigeMotivo: true,
+    confirma: "confirmar_OCULTAR",
     tono: "peligro",
     ejecutar: (id) => (motivo) => ocultarConvocatoria(id, motivo),
   },
@@ -191,21 +201,58 @@ const AccionesDeConvocatoria = ({
   };
 
   /**
-   * Puerta de entrada de cada boton: valida el motivo y decide si hace falta
-   * confirmar. Se separa de `aplicar` para que la confirmacion no tenga que
-   * repetir la validacion ni al reves.
+   * Puerta de entrada de cada boton: decide si hace falta pasar por el modal.
+   *
+   * Lo necesitan las acciones que confirman **y** las que piden motivo, que
+   * desde ahora son las mismas: el motivo se captura dentro del modal, asi que
+   * ya no hay nada que validar antes de abrirlo.
    */
   const intentar = (evento: EventoConvocatoria) => {
-    if (ACCIONES[evento].exigeMotivo && (motivos[evento] ?? "").trim() === "") {
-      setError("validation_failed");
-      return;
-    }
     if (ACCIONES[evento].confirma !== undefined) {
       setPorConfirmar(evento);
       return;
     }
     aplicar(evento);
   };
+
+  /** La accion que el modal tiene en la mano, si esta abierto. */
+  const enModal = porConfirmar ? ACCIONES[porConfirmar] : undefined;
+  const motivoDelModal = porConfirmar ? (motivos[porConfirmar] ?? "") : "";
+  const pideMotivo = enModal?.exigeMotivo === true;
+  const faltaMotivoEnModal = pideMotivo && motivoDelModal.trim() === "";
+
+  const cabeceraDelModal = porConfirmar
+    ? etiquetas[`evento_${porConfirmar}`]
+    : "";
+  const textoDeConfirmacion = enModal?.confirma
+    ? etiquetas[enModal.confirma]
+    : "";
+  const cerrarModal = () => {
+    setPorConfirmar(undefined);
+  };
+
+  /** El pie es el mismo en los dos modales: continuar y cancelar. */
+  const pieDelModal = (
+    <Row gapSize="8">
+      {/* Deshabilitado sin motivo, y **comprobado otra vez** al pulsar: un
+          boton deshabilitado no es una validacion. */}
+      <Primary
+        type="button"
+        disabled={faltaMotivoEnModal}
+        onClick={() => {
+          const evento = porConfirmar;
+          if (!evento || faltaMotivoEnModal) return;
+          setPorConfirmar(undefined);
+          aplicar(evento);
+        }}
+      >
+        {etiquetas.continuar}
+      </Primary>
+      <Secondary type="button" onClick={cerrarModal}>
+        {etiquetas.cancelar}
+      </Secondary>
+    </Row>
+  );
 
   const avisoDeCreador =
     cerradasPorSerCreador.length > 0 ? (
@@ -248,40 +295,15 @@ const AccionesDeConvocatoria = ({
               ? Primary
               : Secondary;
 
-        const faltaMotivo =
-          definicion.exigeMotivo && (motivos[evento] ?? "").trim() === "";
-
         return (
           <div key={evento} className="acciones-convocatoria__accion">
-            {definicion.exigeMotivo ? (
-              // `TextArea` y no `Input`: el motivo va a la bitacora y lo lee
-              // quien audite meses despues, asi que hay que poder escribir una
-              // frase entera y verla completa antes de enviar.
-              <FormField
-                label={etiquetas.motivo}
-                description={etiquetas.motivoAyuda}
-              >
-                <TextArea
-                  name={`motivo-${evento}`}
-                  required
-                  value={motivos[evento] ?? ""}
-                  onChange={(cambio) => {
-                    setMotivos((previos) => ({
-                      ...previos,
-                      [evento]: cambio.target.value,
-                    }));
-                  }}
-                />
-              </FormField>
-            ) : null}
-
-            {/* El boton espera al motivo en vez de aceptar y quejarse: es una
-                accion irreversible, y `required` en el campo ya explica que
-                falta. La guarda de `intentar` se queda igualmente, porque un
-                boton deshabilitado no es una validacion. */}
+            {/* Solo el boton. El motivo de las acciones que lo piden se captura
+                en el modal: aqui quedaba un campo antes del boton, sin nada que
+                dijera a que accion pertenecia, y el boton inerte hasta que se
+                llenaba. */}
             <Boton
               type="button"
-              disabled={enProceso || faltaMotivo}
+              disabled={enProceso}
               onClick={() => {
                 intentar(evento);
               }}
@@ -292,46 +314,62 @@ const AccionesDeConvocatoria = ({
         );
       })}
 
-      {/* Un solo modal para todas las acciones que confirman: el evento
-          pendiente vive en el estado. Es `<dialog>` nativo y bloquea el resto
-          de la pagina, al contrario que un `confirm()`, que el navegador puede
-          suprimir despues del primero. */}
-      <DialogModal
-        open={porConfirmar !== undefined}
-        header={porConfirmar ? etiquetas[`evento_${porConfirmar}`] : ""}
-        onClose={() => {
-          setPorConfirmar(undefined);
-        }}
-        closeLabel={etiquetas.cancelar}
-        footer={
-          <Row gapSize="8">
-            <Primary
-              type="button"
-              onClick={() => {
-                const evento = porConfirmar;
-                setPorConfirmar(undefined);
-                if (evento) aplicar(evento);
-              }}
+      {/* **Dos modales, porque son dos cosas distintas.** `DialogModal` es un
+          mensaje con respuesta de botones; `ToolModal` tiene cuerpo para campos
+          —el motivo es un formulario— con encabezado y pie propios. Las cuatro
+          acciones que solo confirman usan el primero; las dos que piden motivo,
+          el segundo.
+
+          Lo que comparten —el evento pendiente, el pie y el cierre— vive en las
+          variables de arriba, asi que la eleccion del modal no duplica logica.
+          Los dos son `<dialog>` nativo y bloquean el resto de la pagina, al
+          contrario que un `confirm()`, que el navegador puede suprimir despues
+          del primero. */}
+      {pideMotivo ? (
+        <ToolModal
+          open={porConfirmar !== undefined}
+          header={cabeceraDelModal}
+          onClose={cerrarModal}
+          closeLabel={etiquetas.cancelar}
+          footer={pieDelModal}
+        >
+          <Stack gapSize="16">
+            <Text2 renderAs="p">{textoDeConfirmacion}</Text2>
+
+            {/* `TextArea` y no `Input`: el motivo va a la bitacora y lo lee
+                quien audite meses despues, asi que hay que poder escribir una
+                frase entera y verla completa antes de enviar. */}
+            <FormField
+              label={etiquetas.motivo}
+              description={etiquetas.motivoAyuda}
             >
-              {etiquetas.continuar}
-            </Primary>
-            <Secondary
-              type="button"
-              onClick={() => {
-                setPorConfirmar(undefined);
-              }}
-            >
-              {etiquetas.cancelar}
-            </Secondary>
-          </Row>
-        }
-      >
-        <Text2 renderAs="p">
-          {porConfirmar && ACCIONES[porConfirmar].confirma
-            ? etiquetas[ACCIONES[porConfirmar].confirma]
-            : ""}
-        </Text2>
-      </DialogModal>
+              <TextArea
+                name="motivo"
+                required
+                value={motivoDelModal}
+                onChange={(cambio) => {
+                  const evento = porConfirmar;
+                  if (!evento) return;
+                  setMotivos((previos) => ({
+                    ...previos,
+                    [evento]: cambio.target.value,
+                  }));
+                }}
+              />
+            </FormField>
+          </Stack>
+        </ToolModal>
+      ) : (
+        <DialogModal
+          open={porConfirmar !== undefined}
+          header={cabeceraDelModal}
+          onClose={cerrarModal}
+          closeLabel={etiquetas.cancelar}
+          footer={pieDelModal}
+        >
+          <Text2 renderAs="p">{textoDeConfirmacion}</Text2>
+        </DialogModal>
+      )}
     </section>
   );
 };

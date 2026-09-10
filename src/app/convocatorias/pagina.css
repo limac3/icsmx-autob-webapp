@@ -11,3 +11,28 @@
   display: grid;
   gap: 0.5rem;
 }
+
+/* `Card` no trae relleno propio: lo pone quien la usa, igual que las secciones
+   de `FormularioConvocatoria`. */
+.catalogo__recuadro {
+  display: grid;
+  gap: 0.75rem;
+  padding: var(--unity-spacing16);
+}
+
+/* La insignia y su explicacion, uno al lado del otro mientras caben; en movil la
+   explicacion baja sola, porque son dos o tres renglones. */
+.catalogo__estado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+/* Sin una base flexible el parrafo pide su ancho de max-content —la frase
+   entera en un renglon—, no cabe junto a la insignia y se va al renglon
+   siguiente. Con esto se encoge y se queda al lado hasta que la columna baja de
+   unos 12 rem. */
+.catalogo__estado-explicacion {
+  flex: 1 1 12rem;
+}

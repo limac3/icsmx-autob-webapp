@@ -9,6 +9,16 @@
   grid-template-rows: auto 1fr auto;
 }
 
+/* La columna de la rejilla toma como minimo el min-content mas grande de sus
+   tres hijos, y el encabezado de Eden no baja de unos 380 px: en una pantalla
+   mas angosta la columna crece a 380 y **toda** la pagina —encabezado, contenido
+   y pie— se sale unos 20 px por la derecha. Con el minimo en cero la columna se
+   queda en el ancho de la ventana y cada hijo se encoge o desplaza por su
+   cuenta; `.envoltura__contenido` ya trae su `overflow-x: hidden`. */
+.envoltura > * {
+  min-inline-size: 0;
+}
+
 /* Reserva del alto del encabezado mientras resuelve su `<Suspense>`, para que
    el contenido no salte cuando llega. */
 .envoltura__hueco-encabezado {

@@ -34,6 +34,7 @@
     "@churchofjesuschrist/eden-buttons": "^15.2.1",
     "@churchofjesuschrist/eden-card": "^9.0.4",
     "@churchofjesuschrist/eden-contextual-menu": "^6.0.15",
+    "@churchofjesuschrist/eden-description-list": "^3.0.6",
     "@churchofjesuschrist/eden-dialog-modal": "^3.0.26",
     "@churchofjesuschrist/eden-fonts": "^6.0.1",
     "@churchofjesuschrist/eden-form-parts": "^12.4.6",

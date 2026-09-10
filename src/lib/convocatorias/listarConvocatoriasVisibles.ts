@@ -29,8 +29,10 @@ import { obtenerConvocatoria } from "./obtenerConvocatoria";
  */
 export type ConvocatoriaVisible = {
   convocatoriaId: string;
+  /** Con lo que la organizacion la nombra; es el dato con el que se pregunta. */
+  folio: string;
+  nombre: string;
   tipo: TipoConvocatoria;
-  descripcionParticipacion: string;
   publicadaEn: string;
   inicioVenta: string;
   finVenta: string;
@@ -88,8 +90,9 @@ export const listarConvocatoriasVisibles = async (
       const detalle = await obtenerConvocatoria(c.convocatoriaId, deps);
       return {
         convocatoriaId: c.convocatoriaId,
+        folio: c.folio,
+        nombre: c.nombre,
         tipo: c.tipo,
-        descripcionParticipacion: c.descripcionParticipacion,
         publicadaEn: c.publicadaEn,
         inicioVenta: c.inicioVenta,
         finVenta: c.finVenta,

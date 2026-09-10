@@ -16,6 +16,17 @@ import type { Diccionario } from "@/dictionaries";
  * identidad no sobrevive la frontera de RSC (`desafios-implementacion.md`
  * 23). Las URLs llegan **ya firmadas desde el servidor** (regla 13) y no se
  * guardan en ningun lado.
+ *
+ * **Sin `title` de galeria.** `MediaThumbnailGallery` pinta su `title` como un
+ * `H3` **debajo** de la tira de miniaturas; con el nombre del vehiculo ahi, la
+ * pantalla del lote lo mostraba dos veces seguidas —ese `H3` y el `H1` de
+ * identificacion—. El encabezado de la seccion lo pone la pagina.
+ *
+ * **El pie de cada foto es `title`, no `caption`.** Es contraintuitivo y esta
+ * verificado en el codigo del paquete: la galeria lee el `title` de cada hijo y
+ * lo pasa como `description` al `Thumbnail`, que lo pinta debajo de la imagen.
+ * `caption` solo viaja al visor ampliado (`MediaModal`), asi que por si solo no
+ * se ve en la tira.
  */
 
 export type FotografiaEnGaleria = {
@@ -40,12 +51,19 @@ const GaleriaPublica = ({
   }
 
   return (
-    <MediaThumbnailGallery title={titulo} description="">
+    <MediaThumbnailGallery title="" description="">
       {fotografias.map((foto) => (
         <GalleryImageItem
           key={foto.fotoId}
           src={foto.url}
-          alt={foto.descripcion ?? titulo}
+          // Con pie visible la imagen **no** repite ese texto: axe lo marca
+          // como violacion —el lector de pantalla lo anunciaria dos veces— y
+          // tiene razon. `alt=""` la deja decorativa y quien anuncia es el pie,
+          // que ademas es el nombre accesible del boton que la abre. Sin pie el
+          // `alt` es el nombre del vehiculo, porque una imagen sin alternativa
+          // si es un defecto.
+          alt={foto.descripcion ? "" : titulo}
+          {...(foto.descripcion ? { title: foto.descripcion } : {})}
         />
       ))}
     </MediaThumbnailGallery>

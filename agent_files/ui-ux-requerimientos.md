@@ -25,9 +25,23 @@ Los contratos de datos estan en `api-contracts.md`; los permisos, en `permission
 Disponibles en la organizacion: `eden-buttons` (`Primary`, `Secondary`), `eden-form-parts`
 (`Label`, `Input`, `Radio`, `Select`, `TextArea`), `eden-headings` (`H1`…`H4`), `eden-text`
 (`Text2`), `eden-table`, `eden-alert`, `eden-badge`, `eden-tabs`, `eden-accordion`,
-`eden-tool-modal`, `eden-media-thumbnail-gallery`, `eden-progress-stepper`,
-`eden-contextual-menu`, `eden-workforce-header`, `eden-workforce-footer`, `eden-fonts`,
-`eden-normalize`.
+`eden-tool-modal`, `eden-media-thumbnail-gallery`, `eden-description-list` (`DL`, `DT`, `DD`),
+`eden-progress-stepper`, `eden-contextual-menu`, `eden-workforce-header`, `eden-workforce-footer`,
+`eden-fonts`, `eden-normalize`.
+
+> **Las hojas de Eden viven en `@layer`, asi que el CSS de la aplicacion gana sin `!important`.**
+> Todo paquete `eden-*` inyecta su CSS dentro de `@layer eden.atom` / `eden.molecule` /
+> `eden.organism`, y en la cascada **lo no estratificado vence a lo estratificado**, sin importar la
+> especificidad. Una regla propia de una sola clase sobreescribe una de Eden de dos. Es lo que
+> permite corregir el comportamiento de un componente —el rebote de `ScrollTrack`
+> (`desafios-implementacion.md` 61), el centrado de un boton (62)— sin `!important` y sin envolverlo
+> en algo propio.
+
+> **`eden-description-list` es el par etiqueta/valor, y llego tarde.** La ficha tecnica y las
+> fichas de datos se habian escrito con `dl`/`dt`/`dd` a mano mas un `.css` propio que ponia la
+> etiqueta arriba del valor. El paquete hace exactamente eso con los tokens de Unity, y su ejemplo
+> agrupa cada par en un `div` igual que el marcado que se habia escrito. Se reemplazo y se borro el
+> CSS. Es el costo de no buscar primero (regla 10).
 
 > **`CardView` si existe: lo exporta `eden-table`** (comprobado al implementar la Etapa 5,
 > inspeccionando `lib/es/index.d.ts` del paquete). No hay que escribir uno propio. Envuelve una
@@ -103,8 +117,8 @@ En movil la navegacion colapsa; el destino mas usado de cada rol queda accesible
 
 **Movil:** una tarjeta por convocatoria. **Escritorio:** `eden-table`.
 
-Cada elemento muestra: titulo, `Badge` de tipo, cantidad de vehiculos, y el dato temporal mas
-relevante segun el momento:
+Cada elemento muestra: **el `nombre` como enlace y el `folio` debajo**, cantidad de vehiculos, y el
+dato temporal mas relevante segun el momento:
 
 | Momento | Se muestra |
 | --- | --- |
@@ -114,6 +128,13 @@ relevante segun el momento:
 
 > Anteponer el tiempo restante al titulo es deliberado: durante la ventana entre publicacion y
 > apertura (R-03), lo unico que el participante quiere saber es **cuando puede actuar**.
+
+> **Nombre y folio, no el tipo ni un resumen de la descripcion.** La primera version mostraba el
+> tipo como titulo —dos convocatorias de empleados quedaban indistinguibles— y debajo un resumen de
+> 160 caracteres de la descripcion, que se repite casi palabra por palabra de una convocatoria a la
+> siguiente y ocupaba tres renglones por fila. El folio es el dato con el que la organizacion
+> pregunta por una. La descripcion es de `ConvocatoriaDetalleDTO` y no del listado, que es lo que
+> `api-contracts.md` 8 ya decia: el servicio la arrastraba de mas.
 
 **Cuenta regresiva:** el valor inicial lo calcula el servidor y el cliente solo decrementa.
 Jamas se compara contra `Date.now()` del navegador para decidir si la venta abrio (R-04) — un
@@ -127,8 +148,26 @@ ocultas.
 
 **Datos:** `ConvocatoriaDetalleDTO`. Si no pasa el gating triple → **404** (R-01).
 
-Encabezado con titulo, tipo, descripcion de participacion, fechas y horas de liquidacion. Aviso
-`Alert` con el estado de la venta.
+**El titulo es el `nombre` de la convocatoria, con el `folio` debajo.** No el tipo: "De
+empleados" no distingue una venta de la siguiente, y todas las de empleados aparecian con el
+mismo encabezado. El tipo baja a ser un campo mas. Aviso `Alert` con el estado de la venta.
+
+**Dos recuadros (`Card`) y no un encabezado corrido:**
+
+1. **Descripcion de la participacion** — texto libre de varios parrafos, lo que hay que *leer*.
+2. **Datos de la convocatoria** — tipo, inicio y fin de venta, horas de liquidacion y **el estado
+   de venta otra vez, con lo que significa**, en un `eden-description-list`; lo que hay que
+   *consultar*. La nota de hora de negocio (regla 9) va una vez al pie del recuadro, no colgada de
+   cada fecha.
+
+   **El estado aparece dos veces a proposito y no es una repeticion.** Arriba la insignia sola
+   basta para reconocerlo de un vistazo; en la ficha de datos lleva al lado una frase de lo que se
+   puede hacer en ese estado, que es la pregunta real: "abierta" no dice por si sola que hay que
+   formarse en una fila, ni "cerrada" que un plazo de pago adjudicado puede seguir corriendo. Las
+   tres frases estan en el diccionario y el mapa fase → frase es **exhaustivo**: agregar una fase a
+   `EstadoDeVentaUi` rompe la compilacion, que es cuando hay que decidir su explicacion.
+
+Mezclados en un solo encabezado, la descripcion se traga las fechas.
 
 Rejilla de lotes: fotografia principal, marca/version/modelo, kilometraje, precio, `Badge` de
 estatus y `tamanoFila` (**"3 en fila"** — cantidad, jamas identidades).
@@ -143,12 +182,22 @@ La pantalla mas importante para el participante.
 
 **Estructura (movil, de arriba abajo):**
 
-1. **Galeria** — `eden-media-thumbnail-gallery` con URLs firmadas en SSR (regla 13).
-2. **Identificacion** — marca, version, modelo, precio destacado.
+1. **Volver a la convocatoria** — boton `Secondary`. Sin el, quien llega por un enlace directo al
+   lote no tiene ninguna salida mas que el boton "atras" del navegador.
+2. **Identificacion** — marca, version y modelo como titulo; **numero economico y numero de
+   serie** en un `eden-description-list`, porque dos unidades de la misma marca, version y anio se
+   llaman igual y solo esos dos numeros las distinguen; precio destacado y `Badge` de estatus.
 3. **Bloque de accion** — seccion 3.4. En escritorio queda fijo en columna derecha; en movil, en
    una barra inferior adherida, para que el boton este siempre al alcance del pulgar.
-4. **Ficha tecnica** — `eden-accordion`: equipamiento, especificacion mecanica, condiciones
-   mecanicas, detalles esteticos, kilometraje.
+4. **Ficha tecnica** — `eden-accordion` con **dos** desplegables, la misma division que el
+   formulario de alta (4.2): especificacion es lo que el vehiculo *es* —kilometraje, nivel de
+   equipamiento, especificacion mecanica— y condicion lo que *tiene* —condiciones mecanicas,
+   detalles esteticos—. Un desplegable por campo obligaba a abrir cinco de uno en uno.
+5. **Galeria** — `eden-media-thumbnail-gallery` con URLs firmadas en SSR (regla 13), **al final y
+   no arriba**: arriba empujaba la identificacion y el bloque de accion —precio, fila, boton de
+   formarse— fuera de la primera pantalla en movil, que es donde se decide. Cada foto lleva su
+   descripcion **debajo**, y el encabezado de la seccion lo pone la pagina, no la galeria (ver
+   `desafios-implementacion.md` 59).
 
 **La ficha tecnica es cacheable; el bloque de accion nunca.** Se separan con `Suspense`.
 
@@ -287,6 +336,10 @@ pasa los seis grupos ya resueltos.
 > habria que justificar por que vale su mantenimiento.
 
 ### 4.4 `/admin/convocatorias/nueva` y `/[id]/editar`
+
+**El titulo de la pantalla es el `nombre`**, por la misma razon que en 3.2: el tipo no distingue
+una convocatoria de otra. Aqui el folio **no** se repite en el encabezado porque ya es un campo del
+formulario de abajo.
 
 Formulario en tres secciones: **identificacion** (folio y nombre corto), participacion (tipo con
 `Radio` y la descripcion en editor enriquecido) y calendario — las tres fechas con hora,

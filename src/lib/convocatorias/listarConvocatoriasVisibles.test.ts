@@ -144,14 +144,33 @@ describe("proyeccion", () => {
     expect(Object.keys(resultado.data[0] ?? {}).sort()).toEqual(
       [
         "convocatoriaId",
+        "folio",
+        "nombre",
         "tipo",
-        "descripcionParticipacion",
         "publicadaEn",
         "inicioVenta",
         "finVenta",
         "cantidadDeLotes",
       ].sort(),
     );
+  });
+
+  it("no arrastra la descripcion: el listado no la muestra", async () => {
+    // Es lo que dice `api-contracts.md` 8: la descripcion es de
+    // `ConvocatoriaDetalleDTO`, no del listado. El listado la traia y la
+    // pantalla la resumia a 160 caracteres; ese resumen se repetia casi igual
+    // en cada renglon y ocupaba el lugar del folio.
+    const falso = crearClienteFalso({
+      responder: responder([convocatoria("C1", "EMPLEADOS")]),
+    });
+
+    const resultado = await listarConvocatoriasVisibles(
+      ["EMPLEADOS"],
+      new Date("2026-09-07T18:00:00.000Z"),
+      { cliente: falso.cliente },
+    );
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data[0]).not.toHaveProperty("descripcionParticipacion");
   });
 
   const lote = (loteId: string, convocatoriaId: string) => ({

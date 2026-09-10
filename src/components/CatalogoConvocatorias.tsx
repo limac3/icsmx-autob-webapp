@@ -17,7 +17,6 @@ import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import CuentaRegresiva from "@/components/CuentaRegresiva";
 import type { Diccionario } from "@/dictionaries";
 import type { EstadoDeVentaUi } from "@/lib/domain/ventanas";
-import type { TipoConvocatoria } from "@/types/convocatoria";
 import "./CatalogoConvocatorias.css";
 
 /**
@@ -36,8 +35,8 @@ import "./CatalogoConvocatorias.css";
 
 export type ConvocatoriaEnCatalogo = {
   convocatoriaId: string;
-  tipo: TipoConvocatoria;
-  resumenDescripcion: string;
+  folio: string;
+  nombre: string;
   cantidadDeLotes: number;
   estadoDeVenta: EstadoDeVentaUi;
 };
@@ -120,11 +119,18 @@ const CatalogoConvocatorias = ({
         <TBody>
           {convocatorias.map((convocatoria) => (
             <TR key={convocatoria.convocatoriaId}>
+              {/* Nombre y folio, no el tipo ni un resumen de la descripcion. El
+                  tipo no distingue una venta de la siguiente —todas las de
+                  empleados se llamaban igual— y el resumen ocupaba tres
+                  renglones de texto que se repite convocatoria a convocatoria.
+                  El folio es el dato con el que se pregunta por una. */}
               <TD>
                 <Link href={`/convocatorias/${convocatoria.convocatoriaId}`}>
-                  {diccionario.tiposConvocatoria[convocatoria.tipo]}
+                  {convocatoria.nombre}
                 </Link>
-                <Text4 renderAs="p">{convocatoria.resumenDescripcion}</Text4>
+                <Text4 renderAs="p">
+                  {`${diccionario.convocatorias.campoFolio}: ${convocatoria.folio}`}
+                </Text4>
               </TD>
               <TD>{`${String(convocatoria.cantidadDeLotes)} ${etiquetas.cantidadDeVehiculos}`}</TD>
               <TD>

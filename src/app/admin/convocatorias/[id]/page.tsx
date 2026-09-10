@@ -16,6 +16,7 @@ import { enlaceDeBitacora } from "@/lib/auditoria/enlace";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { aCampoLocal, desdeIso, formatearFechaHora } from "@/lib/domain/fechas";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
+import { leerPerfiles } from "@/lib/participantes/leerPerfiles";
 import { listarVehiculos } from "@/lib/vehiculos/listarVehiculos";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import type { Vehiculo } from "@/types/vehiculo";
@@ -79,6 +80,30 @@ const DetalleDeConvocatoria = async ({
 
   const puedeAuditar = sesion.permisos.has("Autob_Auditar");
 
+  /**
+   * Quien la creo, con nombre y no con su identificador.
+   *
+   * `creadoPor` guarda el `sub` de Okta —`00utlcbauirab...`—, que es lo
+   * correcto para anclar la historia (D-15) y no dice nada en pantalla. El
+   * nombre vive en `PART#<id> / PERFIL`, y se resuelve aqui con la misma cadena
+   * de respaldo que la bitacora: nombre, correo si no hay nombre, y el
+   * identificador crudo si no hay perfil. Lo ultimo es normal y no es un fallo:
+   * el perfil se escribe al iniciar sesion y es de mejor esfuerzo, asi que una
+   * convocatoria creada antes de eso no lo tiene. Mostrar el identificador es
+   * mostrar el dato que hay.
+   *
+   * Importa porque de este dato depende R-05: quien dictamina necesita
+   * reconocer si la creo el mismo, y un codigo no se reconoce.
+   */
+  const perfiles = await leerPerfiles([convocatoria.creadoPor]);
+  const perfilDelCreador = perfiles.ok
+    ? perfiles.data.get(convocatoria.creadoPor)
+    : undefined;
+  const creadaPor =
+    perfilDelCreador?.nombre ??
+    perfilDelCreador?.correo ??
+    convocatoria.creadoPor;
+
   // Una lectura por lote. Son los vehiculos de **esta** convocatoria, que se
   // cuentan por decenas: `listarVehiculos` traeria el catalogo entero para
   // quedarse con unos pocos, y ademas no encontraria un vehiculo ya vendido.
@@ -125,14 +150,17 @@ const DetalleDeConvocatoria = async ({
     <main className="convocatorias">
       <header className="convocatorias__encabezado">
         <div>
-          <H1>{diccionario.tiposConvocatoria[convocatoria.tipo]}</H1>
+          {/* El nombre, no el tipo: "De empleados" no distingue una venta de
+              la siguiente. El tipo y el folio ya son campos del formulario de
+              abajo, asi que aqui no se repiten. */}
+          <H1>{convocatoria.nombre}</H1>
           <Badge color="info">
             {diccionario.estatusConvocatoria[convocatoria.estatus]}
           </Badge>
           {/* Quien dictamina necesita saber quien la creo: R-05 le impide
               aprobar la suya, y sin este dato no sabria por que. */}
           <Text4 renderAs="p">
-            {`${diccionario.convocatorias.creadaPor}: ${convocatoria.creadoPor}` +
+            {`${diccionario.convocatorias.creadaPor}: ${creadaPor}` +
               (creadoEn ? ` — ${formatearFechaHora(creadoEn)}` : "")}
           </Text4>
           {/* Atajo a la bitacora con el tipo y el identificador ya puestos:

@@ -9,3 +9,41 @@
 *::after {
   box-sizing: border-box;
 }
+
+/*
+ * `ScrollTrack` de Eden: los dos huecos de las flechas, reservados desde el
+ * principio.
+ *
+ * Eden le pone al carril `margin-left: 44px` **solo cuando aparece** la flecha
+ * izquierda, con `transition: margin .3s`. Eso estrecha el visor a mitad del
+ * desplazamiento: el contenido se corre a la derecha mientras `scrollLeft` no
+ * cambia, asi que la tira **retrocede** —medido en la galeria del lote a 360 px:
+ * llega a -170 px y vuelve a -136 a los ~350 ms—. Se siente como un rebote. De
+ * paso, el visor mas angosto sube el tope de desplazamiento (228 -> 272), y por
+ * eso una tira "desplazada del todo" ya no llega al final.
+ *
+ * Con los dos huecos puestos en cuanto hay desborde —cualquiera de las dos
+ * flechas presente implica los dos margenes— la geometria **no cambia** durante
+ * la interaccion y no hay nada que rebotar. Sin desborde no hay flechas ni
+ * clases, y la tira sigue usando el ancho completo, asi que no se pierde
+ * espacio donde no hace falta.
+ *
+ * **Reservar y no superponer.** Dejar los margenes en cero y que las flechas
+ * cabalguen sobre la tira daria mas ancho util —y tambien deja la geometria
+ * fija—, pero se probo y **no se pueden pulsar**: quedan por debajo del carril y
+ * la miniatura intercepta el clic. Ninguno de los tres paquetes
+ * —`scroll-track`, `fade`, `media-thumbnail-gallery`— declara un solo
+ * `z-index`, asi que arreglarlo seria rehacer el apilamiento del componente. El
+ * precio de reservar es que antes de desplazar se ve un hueco vacio a la
+ * izquierda; Eden ya reservaba el de la derecha, asi que lo que se agrega es
+ * ese.
+ *
+ * Va aqui y no en la pagina del lote porque es del componente, no de esa
+ * pantalla: aplica igual a la galeria del vehiculo en administracion. Y no
+ * necesita `!important`: la hoja de Eden vive en `@layer eden.organism` y en la
+ * cascada lo no estratificado gana a lo estratificado.
+ */
+.eden-scroll-track__fade.eden-scroll-track--has-left,
+.eden-scroll-track__fade.eden-scroll-track--has-right {
+  margin-inline: 44px;
+}

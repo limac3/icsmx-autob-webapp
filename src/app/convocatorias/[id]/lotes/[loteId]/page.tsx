@@ -1,5 +1,8 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Badge } from "@churchofjesuschrist/eden-badge";
+import { Secondary } from "@churchofjesuschrist/eden-buttons";
+import { DD, DL, DT } from "@churchofjesuschrist/eden-description-list";
 import { H1, H2 } from "@churchofjesuschrist/eden-headings";
 import { Text2 } from "@churchofjesuschrist/eden-text";
 import BloqueDeAccionDeLote, {
@@ -128,20 +131,48 @@ const DetalleDeLote = async ({
     }),
   );
 
+  // El vehiculo fisico, no su modelo: dos unidades de la misma marca, version y
+  // anio se llaman igual y solo estos dos numeros las distinguen. Quien compra
+  // los necesita para cotejar la unidad que le adjudicaron.
+  const identificacion: readonly { etiqueta: string; valor: string }[] = [
+    {
+      etiqueta: diccionario.vehiculos.campos.numeroEconomico,
+      valor: vehiculo.data.numeroEconomico,
+    },
+    {
+      etiqueta: diccionario.vehiculos.campos.numeroDeSerie,
+      valor: vehiculo.data.numeroDeSerie,
+    },
+  ];
+
   return (
     <main className="detalle-lote">
-      <GaleriaPublica
-        titulo={titulo}
-        fotografias={fotografias}
-        diccionario={diccionario}
-      />
+      {/* Volver a la convocatoria: desde aqui la unica salida era el boton
+          "atras" del navegador, y quien llego por un enlace directo al lote no
+          tenia ninguna. */}
+      <Secondary renderAs={Link} href={`/convocatorias/${id}`}>
+        {etiquetas.volverALaConvocatoria}
+      </Secondary>
 
       <header className="detalle-lote__identificacion">
         <H1>{titulo}</H1>
+        <DL>
+          {identificacion.map(({ etiqueta, valor }) => (
+            <div key={etiqueta}>
+              <DT>{etiqueta}</DT>
+              <DD>
+                <Text2 renderAs="span">{valor}</Text2>
+              </DD>
+            </div>
+          ))}
+        </DL>
         <Text2 renderAs="p" className="detalle-lote__precio">
           {`${etiquetas.precioDestacado}: ${formatearPrecio(lote.precio, idioma)}`}
         </Text2>
-        <Badge color={COLOR_POR_ESTATUS[lote.estatus]}>
+        <Badge
+          color={COLOR_POR_ESTATUS[lote.estatus]}
+          className="detalle-lote__insignia"
+        >
           {diccionario.estatusLote[lote.estatus]}
         </Badge>
         <Text2 renderAs="p">
@@ -184,6 +215,20 @@ const DetalleDeLote = async ({
           detallesEsteticos={vehiculo.data.detallesEsteticos}
           diccionario={diccionario}
           idioma={idioma}
+        />
+      </section>
+
+      {/* Las fotos van despues de la ficha y no antes. Arriba empujaban la
+          identificacion y el bloque de accion —el precio, la fila, el boton de
+          formarse— fuera de la primera pantalla en movil, que es donde se
+          decide. Primero que vehiculo es y en que estado esta; luego como se
+          ve. */}
+      <section>
+        <H2>{diccionario.vehiculos.seccionFotografias}</H2>
+        <GaleriaPublica
+          titulo={titulo}
+          fotografias={fotografias}
+          diccionario={diccionario}
         />
       </section>
     </main>

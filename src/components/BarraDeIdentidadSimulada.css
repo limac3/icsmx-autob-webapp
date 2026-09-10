@@ -38,6 +38,22 @@
   gap: 0.375rem;
 }
 
+/* Cada boton del roster alinea su contenido a la izquierda.
+
+   Sin esto queda una escalera: `.eden-button` es un `inline-flex` con
+   `justify-content: center`, asi que centra el bloque de nombre + permisos, y
+   como el texto de permisos mide distinto en cada persona —de "Auditar" a
+   "Comprar en venta a empleados · Comprar en venta al publico general"— cada
+   renglon arranca en una x distinta. El `text-align` de dentro no lo corregia:
+   alinea el texto dentro del bloque, no el bloque dentro del boton.
+
+   Va en el boton y no en el bloque para que alcance tambien a "Dejar de
+   simular", que es texto suelto y no lleva bloque. */
+.identidad-simulada__opciones > button {
+  justify-content: start;
+  text-align: left;
+}
+
 /* Nombre arriba, permisos abajo, dentro de un mismo boton. */
 .identidad-simulada__persona {
   display: grid;

@@ -237,37 +237,52 @@ const LotesDeConvocatoria = ({
                       {diccionario.estatusLote[lote.estatus]}
                     </Badge>
                   </TD>
+                  {/* Las acciones van en un contenedor con `gap`: como
+                      hermanos sueltos, el enlace y el boton se atropellaban
+                      —el boton tapaba el final del texto del enlace— porque la
+                      celda no ponia ninguna separacion. */}
                   <TD>
-                    {/* La fila del lote se consulta desde que existe el motor
-                        que la escribe (Etapa 8). Muestra agregados, nunca
-                        identidades. */}
-                    <Link
-                      href={`/admin/convocatorias/${convocatoriaId}/lotes/${lote.loteId}/fila`}
-                    >
-                      {diccionario.filaAdministrativa.titulo}
-                    </Link>
-                    {/* La historia de la fila **es** la del lote: no hay un
-                        registro de fila aparte, y su identificador es este
-                        `loteId`. El enlace lo lleva ya puesto para que no haya
-                        que buscarlo. */}
-                    {puedeAuditar ? (
-                      <Link href={enlaceDeBitacora("LOTE", lote.loteId)}>
-                        {diccionario.auditoria.verEnBitacora}
-                      </Link>
-                    ) : null}
-                    {!editable ||
-                    lote.estatus === "RETIRADO" ? null : lote.puedeRetirarse ? (
-                      <Danger
-                        type="button"
-                        onClick={() => {
-                          setPorRetirar(lote);
-                        }}
+                    <div className="lotes__acciones">
+                      {/* La fila del lote se consulta desde que existe el motor
+                          que la escribe (Etapa 8). Muestra agregados, nunca
+                          identidades.
+
+                          **Boton con `href`, no un `button`.** Esto navega, asi
+                          que tiene que ser un enlace: Eden lo resuelve solo
+                          —`renderAs = href && !disabled ? "a" : "button"`— y
+                          con `renderAs={Link}` la navegacion la hace Next sin
+                          recargar la pagina. Apariencia de boton, semantica de
+                          enlace. */}
+                      <Secondary
+                        renderAs={Link}
+                        href={`/admin/convocatorias/${convocatoriaId}/lotes/${lote.loteId}/fila`}
                       >
-                        {etiquetas.retirarDeConvocatoria}
-                      </Danger>
-                    ) : (
-                      <Text4 renderAs="p">{etiquetas.loteConFila}</Text4>
-                    )}
+                        {etiquetas.verFila}
+                      </Secondary>
+                      {/* La historia de la fila **es** la del lote: no hay un
+                          registro de fila aparte, y su identificador es este
+                          `loteId`. El enlace lo lleva ya puesto para que no haya
+                          que buscarlo. */}
+                      {puedeAuditar ? (
+                        <Link href={enlaceDeBitacora("LOTE", lote.loteId)}>
+                          {diccionario.auditoria.verEnBitacora}
+                        </Link>
+                      ) : null}
+                      {!editable ||
+                      lote.estatus ===
+                        "RETIRADO" ? null : lote.puedeRetirarse ? (
+                        <Danger
+                          type="button"
+                          onClick={() => {
+                            setPorRetirar(lote);
+                          }}
+                        >
+                          {etiquetas.retirarDeConvocatoria}
+                        </Danger>
+                      ) : (
+                        <Text4 renderAs="p">{etiquetas.loteConFila}</Text4>
+                      )}
+                    </div>
                   </TD>
                 </TR>
               ))}
@@ -318,9 +333,15 @@ const LotesDeConvocatoria = ({
               />
             </FormField>
 
-            <Primary type="submit" disabled={incluyendo}>
-              {etiquetas.incluirVehiculo}
-            </Primary>
+            {/* En su propio renglon: un boton no tiene etiqueta ni nota, asi
+                que dentro de la fila no hay forma de dejarlo a la altura de las
+                cajas sin un margen fijo que se desalinea solo. Mismo patron que
+                `.filtros-bitacora__acciones`. */}
+            <div className="lotes__inclusion-accion">
+              <Primary type="submit" disabled={incluyendo}>
+                {etiquetas.incluirVehiculo}
+              </Primary>
+            </div>
           </Form>
         )
       ) : null}

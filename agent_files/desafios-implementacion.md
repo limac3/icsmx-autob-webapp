@@ -3277,3 +3277,187 @@ conviene sospecharlo de cualquier componente compuesto de una libreria: el `name
 `required` y el valor pueden estar repartidos en elementos distintos. La comprobacion es barata —
 listar los controles del formulario con su `name`, `id` y `required`— y es lo que hubiera senalado
 esto en un minuto.
+
+## 59) El pie de una foto de la galeria de Eden es `title`, no `caption`
+
+### Problema
+Poner el texto de cada fotografia **debajo de su miniatura** en la pantalla del lote, y quitar el
+nombre del vehiculo que aparecia dos veces seguidas.
+
+### Sintoma
+`GalleryImageItem` documenta una prop `caption` —"Text to describe or go along with this media
+item"—, y pasarsela no pinta nada. Con el nombre del vehiculo como `title` de la galeria, la
+pantalla mostraba "Toyota Prius 2021" en un `H3` y otra vez en el `H1` de abajo.
+
+### Causa raiz
+Dos hechos que solo estan en el codigo del paquete, no en su documentacion:
+
+- **`MediaThumbnailGallery` lee el `title` de cada hijo** y lo pasa como `description` al
+  `Thumbnail`, que es quien lo pinta debajo de la imagen. `caption` viaja unicamente al visor
+  ampliado (`MediaModal` lo reenvia a `ItemLayout`); mas aun, `ModalImage` hace
+  `delete props.caption` y `delete props.title` antes de renderizar la imagen, asi que por si solas
+  ninguna de las dos llega al DOM de la miniatura.
+- **El `title` de la galeria se pinta como `H3` *despues* de la tira de miniaturas**, no antes. No
+  es un encabezado de seccion: es un pie de la tira. Con el nombre del vehiculo ahi y el `H1` de
+  identificacion inmediatamente debajo, el nombre salia duplicado y pegado.
+
+### Solucion aplicada
+`title={foto.descripcion}` en cada `GalleryImageItem`; `title=""` en la galeria, con el encabezado
+de la seccion puesto por la pagina como un `H2` propio.
+
+**Y `alt=""` cuando la foto tiene pie.** Lo encontro axe, no una revision: `genericTests` fallo con
+"Alternative text of images should not be repeated as text". Tenia razon — el lector de pantalla
+anunciaba dos veces lo mismo, porque el pie ya es el nombre accesible del boton que abre la foto.
+Sin pie, el `alt` sigue siendo el nombre del vehiculo: una imagen sin alternativa **si** es un
+defecto. El `alt` y el pie no son dos copias del mismo dato; son la alternativa *o* el texto
+visible, nunca los dos.
+
+### Regla para futuro
+**En un componente compuesto de Eden, la prop que se ve en pantalla se confirma en su codigo, no en
+su lista de props.** La API declarada de `GalleryImageItem` es la de `ModalImage` —el visor—, y la
+tira de miniaturas consume otras. Un `grep` de la prop en `node_modules/@churchofjesuschrist/<paq>/lib/es`
+cuesta un minuto y dice quien la lee y donde la pinta. Es la misma leccion que el `Option` de
+`Select` (seccion 28) y que los dos `textarea` del editor (seccion 58): **el codigo gana siempre**,
+tambien sobre la documentacion del propio paquete.
+
+Y **antes de escribir un `dl` con su CSS, buscar el componente**: existe `eden-description-list`
+(`DL`/`DT`/`DD`) y hace exactamente eso con los tokens de Unity. La ficha tecnica se habia escrito a
+mano con un `.css` propio; se reemplazo y el archivo se borro (regla 10).
+
+## 60) En movil se cortaba la pantalla entera, no solo la galeria
+
+### Problema
+Que las pantallas publicas quepan en un telefono (regla 12).
+
+### Sintoma
+En una ventana angosta —360 px— la pantalla del lote quedaba cortada **por la derecha**: la tarjeta
+"Tu participacion" perdia su borde y su texto, la ficha tecnica se salia, y la tira de miniaturas
+mostraba media foto sin forma de llegar a las demas. `document.documentElement.scrollWidth` daba 380
+con `clientWidth` de 360, y **todas** las pantallas se salian esos 20 px, no solo esta.
+
+### Causa raiz
+Dos desbordes independientes, con la misma mecanica: **un elemento de rejilla aporta su ancho de
+`min-content` como minimo de la columna**, y una columna `auto` no baja de ahi aunque el contenedor
+sea mas angosto. El contenedor se queda del ancho de la ventana y los hijos se salen.
+
+- `main.detalle-lote` es una rejilla y la galeria es uno de sus hijos. La tira de miniaturas pide
+  464 px —cuatro miniaturas de 100 px con sus huecos— asi que la columna crecia a 464 y **arrastraba
+  a los demas hijos**: el encabezado, la tarjeta de accion y la ficha median 464 dentro de un `main`
+  de 348. El sintoma parecia de la galeria y el efecto era de toda la pagina.
+- `.envoltura` es otra rejilla, de tres filas, y el `WorkforceHeader` de Eden no baja de unos
+  380 px. De ahi los 20 px que se salian en cualquier pantalla, incluidas las que no tienen galeria.
+  Este era **previo** y no lo habia notado ninguna revision.
+
+Lo que enmascaraba el segundo: una captura `fullPage` de Playwright **ensancha el lienzo hasta el
+`scrollWidth`**, asi que una pagina que desborda sale entera y bien encuadrada. El defecto solo
+aparece con la captura del area visible, o midiendo `scrollWidth` contra `clientWidth`.
+
+### Solucion aplicada
+`min-inline-size: 0` en los hijos de las dos rejillas (`.detalle-lote > *` y `.envoltura > *`). Con
+el minimo en cero la columna se queda en el ancho disponible, cada hijo se encoge, y la galeria pasa
+a usar el desplazamiento horizontal que `ScrollTrack` ya le da —con sus flechas— que es para lo que
+Eden la envuelve. No hizo falta tocar la galeria.
+
+Es el mismo remedio que ya llevaban las secciones de `FormularioConvocatoria`, donde se habia
+descubierto por el otro camino: un `fieldset` con un campo largo.
+
+### Regla para futuro
+**Toda rejilla o flex que contenga algo de ancho intrinseco grande —una tabla, una tira de
+miniaturas, un bloque de codigo, una URL sin espacios— necesita `min-inline-size: 0` en sus hijos.**
+Es el caso por omision, no la excepcion: `min-width: auto` es el valor inicial y casi nunca es el
+que se quiere.
+
+Y **la comprobacion de movil es `scrollWidth` contra `clientWidth`, no una captura**. Una captura
+`fullPage` miente por construccion. Dos lineas en el navegador dicen si la pagina desborda y que
+elemento lo hace.
+
+## 61) La galeria rebotaba al pulsar su flecha en pantalla angosta
+
+### Problema
+Recorrer la tira de miniaturas con las flechas de `ScrollTrack` en un telefono.
+
+### Sintoma
+Al pulsar la flecha derecha la tira avanzaba y, a mitad del movimiento, **retrocedia unos pixeles**:
+una sensacion de rebote. Ademas, con la tira "desplazada del todo" seguia quedando contenido sin
+alcanzar. Solo se notaba en pantalla angosta.
+
+### Causa raiz
+`ScrollTrack` le pone al carril `margin-left: 44px` **solo cuando aparece** la flecha izquierda, con
+`transition: margin .3s ease-out`. La flecha aparece en cuanto `scrollLeft > 0`, o sea a mitad del
+desplazamiento que uno acaba de pedir. Ese margen **estrecha el visor**, y como `scrollLeft` no
+cambia, el contenido visible se corre a la derecha: retrocede.
+
+Medido en la galeria del lote a 360 px, con la x de la primera miniatura:
+
+| Momento | Visor | `scrollLeft` | Tope | x de la 1.ª |
+| --- | --- | --- | --- | --- |
+| Reposo | 226 | 0 | 228 | 48 |
+| 80 ms | 226 | 106 | 228 | −58 |
+| 200 ms | 218 | 226 | 236 | **−170** |
+| 350 ms | 182 | 228 | 272 | **−136** |
+
+34 px de retroceso, a los ~350 ms. Y el tope de desplazamiento sube de 228 a 272 —el visor mas
+angosto deja 44 px mas de contenido fuera—, que es por lo que la tira ya no llega al final.
+
+Es proporcional al ancho: los dos huecos de 44 px son 88 de un carril de 270 en un telefono —un
+tercio— y 88 de 900 en escritorio, donde ademas suele no haber desborde y el efecto no existe.
+
+### Solucion aplicada
+En `globals.css`, reservar **los dos** huecos en cuanto hay desborde, con cualquiera de las dos
+flechas presente:
+
+```css
+.eden-scroll-track__fade.eden-scroll-track--has-left,
+.eden-scroll-track__fade.eden-scroll-track--has-right {
+  margin-inline: 44px;
+}
+```
+
+Asi la geometria no cambia durante la interaccion y no hay nada que rebotar. Sin desborde no hay
+clases, los margenes siguen en cero y la tira usa el ancho completo: en escritorio no se pierde
+espacio. Verificado a 360 px —`scrollLeft` solo crece, visor y tope constantes— y a 1000 px
+—`maxScroll: 0`, margenes en cero—.
+
+**Se descarto superponer las flechas** (margenes en cero y los botones cabalgando sobre la tira),
+que daria mas ancho util y tambien fija la geometria: se probo y **las flechas dejan de poderse
+pulsar**, la miniatura intercepta el clic. Ninguno de los tres paquetes —`eden-scroll-track`,
+`eden-fade`, `eden-media-thumbnail-gallery`— declara un solo `z-index`, asi que arreglarlo seria
+rehacer el apilamiento del componente. El precio de reservar es un hueco vacio a la izquierda antes
+de desplazar; el de la derecha ya lo reservaba Eden.
+
+### Regla para futuro
+**Un ancho que depende del estado del desplazamiento es un rebote esperando ocurrir.** Cuando un
+carrusel decide su tamano segun "hay mas contenido hacia ese lado", la decision cambia justo durante
+el movimiento. La forma de matarlo es reservar el espacio desde el principio, no acortar la
+animacion.
+
+Y **la prueba es la geometria en el tiempo, no la captura**: medir visor, `scrollLeft` y la x de un
+elemento a los 80, 200 y 350 ms muestra el retroceso como un numero. A ojo solo se sabe que "algo
+salta".
+
+## 62) El panel de desarrollo se veia en escalera
+
+### Problema
+El conmutador de identidad simulada lista siete personas con sus permisos debajo del nombre.
+
+### Sintoma
+Cada renglon arrancaba en una x distinta —"Gina Gaytan" muy metida, "Dario Duarte" casi al borde—,
+como una escalera. El bloque ya tenia `text-align: left`.
+
+### Causa raiz
+`.eden-button` es un `inline-flex` con `justify-content: center`, asi que **centra el bloque** de
+nombre + permisos dentro del boton. El ancho del bloque es el de su contenido, y el texto de
+permisos mide desde "Auditar" hasta "Comprar en venta a empleados · Comprar en venta al publico
+general": cada persona tiene un bloque de distinto ancho y por tanto un centrado distinto.
+
+`text-align: left` no lo corregia porque alinea el texto **dentro** del bloque, no el bloque dentro
+del boton. Son dos ejes distintos y es facil confundirlos.
+
+### Solucion aplicada
+`justify-content: start` en el boton, no en el bloque —asi alcanza tambien a "Dejar de simular",
+que es texto suelto—. Verificado: las siete filas arrancan en la misma x.
+
+### Regla para futuro
+**Un boton de Eden con un bloque dentro necesita `justify-content` en el boton.** Vale para
+cualquier boton con contenido de dos renglones o con icono mas texto. Si lo que se ve es contenido
+descentrado y `text-align` no hace nada, el culpable es el `justify-content` del contenedor flex.

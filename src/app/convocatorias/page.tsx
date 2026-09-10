@@ -8,7 +8,6 @@ import { obtenerDiccionario } from "@/dictionaries";
 import { getSession } from "@/lib/auth/session";
 import { listarConvocatoriasVisibles } from "@/lib/convocatorias/listarConvocatoriasVisibles";
 import { desdeIso } from "@/lib/domain/fechas";
-import { textoPlanoDeDescripcion } from "@/lib/domain/htmlDeDescripcion";
 import { calcularEstadoDeVentaUi } from "@/lib/domain/ventanas";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
 import "./pagina.css";
@@ -50,11 +49,8 @@ const CatalogoDeConvocatorias = async () => {
 
       return {
         convocatoriaId: convocatoria.convocatoriaId,
-        tipo: convocatoria.tipo,
-        resumenDescripcion: textoPlanoDeDescripcion(
-          convocatoria.descripcionParticipacion,
-          160,
-        ),
+        folio: convocatoria.folio,
+        nombre: convocatoria.nombre,
         cantidadDeLotes: convocatoria.cantidadDeLotes,
         // Las tres fechas ya se validaron al capturarse (R-14); si alguna no
         // parseara aqui, tratarla como cerrada es lo mas conservador que se

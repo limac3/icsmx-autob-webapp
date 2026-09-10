@@ -32,8 +32,8 @@ const convocatoria = (
   estadoDeVenta: ConvocatoriaEnCatalogo["estadoDeVenta"],
 ): ConvocatoriaEnCatalogo => ({
   convocatoriaId,
-  tipo: "EMPLEADOS",
-  resumenDescripcion: "Abierta al personal de flotilla.",
+  folio: `CONV-2026-${convocatoriaId}`,
+  nombre: "Venta de septiembre",
   cantidadDeLotes: 3,
   estadoDeVenta,
 });
@@ -108,6 +108,27 @@ describe("CatalogoConvocatorias", () => {
     });
     expect(context.container.textContent).toContain("Abierta");
     expect(context.container.textContent).toContain("12 sep 2026, 18:00");
+  });
+
+  it("identifica cada convocatoria por su nombre y su folio", async () => {
+    // Antes la columna era el **tipo** mas un resumen de la descripcion: dos
+    // convocatorias de empleados quedaban indistinguibles, y el resumen se
+    // repite casi palabra por palabra de una a otra.
+    await act(async () => {
+      context.root.render(
+        <CatalogoConvocatorias
+          convocatorias={[convocatoria("C1", { fase: "VENTA_CERRADA" })]}
+          diccionario={obtenerDiccionario("es")}
+          idioma="es"
+        />,
+      );
+    });
+
+    const enlace = context.container.querySelector("a");
+    expect(enlace?.textContent).toBe("Venta de septiembre");
+    expect(enlace?.getAttribute("href")).toBe("/convocatorias/C1");
+    expect(context.container.textContent).toContain("Folio: CONV-2026-C1");
+    expect(context.container.textContent).not.toContain("De empleados");
   });
 
   it("nunca expone identidad de terceros", async () => {
