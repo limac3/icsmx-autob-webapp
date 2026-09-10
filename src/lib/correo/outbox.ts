@@ -1,5 +1,3 @@
-import "server-only";
-
 // Patron outbox (D-6, riesgo R8): el correo se encola en la **misma**
 // transaccion que adjudica, y el envio real ocurre despues, aparte, en el
 // procesador del barrido (`procesarOutbox.ts`). `arquitectura-tecnica-aws.md`

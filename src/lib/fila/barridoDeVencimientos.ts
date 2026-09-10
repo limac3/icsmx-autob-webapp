@@ -1,5 +1,3 @@
-import "server-only";
-
 // Camino A del vencimiento (D-7) — `arquitectura-tecnica-aws.md` 2.6 y 4.4:
 //
 //   Lambda cada N minutos -> Query GSI4 VENCE#<dia>, GSI4SK <= ahora -> T5

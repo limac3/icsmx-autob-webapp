@@ -1,5 +1,3 @@
-import "server-only";
-
 // Dependencias inyectables de los servicios — estrategia 2.2.
 //
 // Vive aqui y no en cada carpeta de caracteristica porque las tres son las

@@ -1,5 +1,3 @@
-import "server-only";
-
 // Fuente: modelo-datos-dynamodb.md seccion 6, y reglas 4, 5 y 6 de CLAUDE.md.
 //
 // Helpers de `TransactWriteItems` y traduccion de sus fallos a errores de

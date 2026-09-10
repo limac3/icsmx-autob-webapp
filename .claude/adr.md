@@ -11,24 +11,23 @@
 > motor de fila— se verifica leyendo el archivo antes de afirmarlo o de editarlo. Ver
 > `CLAUDE.md`, seccion "Grafo de Codigo — Consulta, No Evidencia".
 >
-> Sincronizado con: rama `main`, 2026-09-09, Etapas 7 a 10 cerradas mas la **Etapa 2.2**
-> (impersonacion de identidad en desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y
-> navegacion por permiso, decision **D-11**), la **Etapa 11** (auditoria: verificacion de
-> integridad recalculada desde el evento crudo, decision **D-12**), la **Etapa 12 parcial**
-> (observabilidad y alarmas, decision **D-13**; sus puntos `[OPERADOR]` —navegador, despliegue,
-> runbooks ejecutados— siguen abiertos y no son codigo), la **Etapa 11.1** (la bitacora se vuelve
-> consultable, decision **D-15**) y la **Etapa 11.2** completa: bitacora consultable por clave
-> (**D-14** reescrito, con la **correccion de D-2**), identificador interno de 12 caracteres
-> (**D-16**) e identificador de negocio renombrable con centinela (**D-17**).
+> Sincronizado con: rama `main`, 2026-09-10, Etapas 7 a 11.2 confirmadas (`5d746e7`, `496d98e`,
+> `6e45c4e`, `58852e2`, sobre `cc5af85`) mas la **Etapa 2.2** (impersonacion de identidad en
+> desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y navegacion por permiso, decision
+> **D-11**), la **Etapa 11** (auditoria: verificacion de integridad recalculada desde el evento
+> crudo, decision **D-12**), la **Etapa 12 parcial** (observabilidad y alarmas, decision **D-13**;
+> sus puntos `[OPERADOR]` —navegador, despliegue, runbooks ejecutados— siguen abiertos y no son
+> codigo), la **Etapa 11.1** (la bitacora se vuelve consultable, decision **D-15**) y la
+> **Etapa 11.2** completa: bitacora consultable por clave (**D-14** reescrito, con la
+> **correccion de D-2**), identificador interno de 12 caracteres (**D-16**) e identificador de
+> negocio renombrable con centinela (**D-17**).
 >
-> Las Etapas 8 a 11 quedaron confirmadas en `cc5af85`; **las Etapas 12, 11.1 y 11.2 siguen sin
-> commit** al escribir esto, asi que el reindexado no vera `src/lib/observabilidad/`,
-> `amplify/alarmas.ts`, `src/lib/participantes/` ni los modulos nuevos de `src/lib/auditoria/`
-> —`rangoDeBitacora.ts`, `valoresConActividad.ts`, `etiquetasDeBitacora.ts`— hasta que se
-> confirmen. El conteo de nodos volvio a dar 2143, que es la misma senal ya medida tres veces:
-> **las anclas a esos simbolos no resolveran en el grafo todavia**, aunque el codigo si exista en
-> disco. Los headings de `agent_files/*.md` ya estan indexados como nodos `Section` —consultables
-> con `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`—. Este ADR no los duplica.
+> **2026-09-10, dentro de la Etapa 12:** siguiendo la alarma `barrido-con-errores` contra un
+> sandbox real se encontro que el barrido fallaba en el 100% de sus invocaciones desde la Etapa 10
+> — `server-only` resolviendo a su rama de `throw` bajo el empaquetado `esbuild` de
+> `defineFunction` — y se corrigio quitando esa guarda de los 17 archivos que el handler alcanza.
+> Corrige tambien una afirmacion de este ADR (seccion Etapa 10, mas abajo) que daba por cerrado el
+> problema con solo instalar el paquete. Ver `desafios-implementacion.md` 53.
 >
 > Este archivo es la copia local y versionada del ADR. El ADR que vive en el grafo se pierde
 > en cada `index_repository`; se recarga desde aqui. Ver "Mantenimiento de este ADR" y
@@ -533,8 +532,16 @@ El correo vive en `src/lib/correo/`: `outbox.ts` encola dentro de la transaccion
 El barrido programado (`amplify/barrido/resource.ts`, cada 5 min) pasa de andamio a logica real;
 reusar `src/lib` desde su Lambda exigio instalar el paquete real `server-only` (`esbuild` no
 conoce el caso especial de Next) y agregar el alias `@/` a `amplify/tsconfig.json`
-(desafios-implementacion.md 33-34). La regresion permanente de la regla 16 para T5 es
-`src/lib/fila/vencimiento.integracion.test.ts`, contra DynamoDB real.
+(desafios-implementacion.md 33-34). **Instalar el paquete solo resolvia que `esbuild` encontrara
+el nombre, no que lo empaquetara sin efecto**: sin la condicion de exportacion `"react-server"`
+que activa el build de Next, `server-only` siempre resolvia a su rama de `throw`, y el barrido
+fallo en el 100% de sus invocaciones desde que Etapa 10 empezo a llamarlo — descubierto en
+Etapa 12 siguiendo la alarma `barrido-con-errores` contra un sandbox real, no por ninguna prueba.
+`defineFunction` no expone forma de pasarle `--conditions` a su esbuild, asi que la guarda se
+quito de los 17 archivos que el handler alcanza (motor de fila, capa de datos, observabilidad) y
+se dejo en los otros 63 de `src/lib` (desafios-implementacion.md 53). La regresion permanente de
+la regla 16 para T5 es `src/lib/fila/vencimiento.integracion.test.ts`, contra DynamoDB real —
+ninguna prueba, sin embargo, invoca el Lambda empaquetado de verdad.
 
 **La impersonacion de desarrollo es la Etapa 2.2** (decision **D-10**), y no estaba en el plan:
 `src/lib/auth/personasSimuladas.ts` (roster cerrado), `impersonacion.ts` (cookie por navegador,

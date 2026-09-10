@@ -1,5 +1,3 @@
-import "server-only";
-
 // Registro operativo estructurado — `arquitectura-tecnica-aws.md` 7:
 // "una linea por operacion, con `correlacionId` compartido con la bitacora".
 //

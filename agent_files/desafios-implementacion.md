@@ -2912,3 +2912,58 @@ Contar consultas no es medir latencia. N consultas **encadenadas** cuestan N vec
 y ese numero no aparece en ningun analisis de RCU. Cuando un recorrido se optimiza para un caso
 extremo, hay que preguntar explicitamente cuanto cuesta el caso normal — aqui el diseno optimo para
 "un grupo de 3 288 eventos" era el peor para "200 grupos de 3".
+
+## 53) El barrido fallaba en el 100% de sus invocaciones desde que se desplego
+
+### Problema
+El Lambda de barrido (vencimientos + outbox, Etapa 10) se despliega cada 5 minutos via
+`amplify/barrido/handler.ts`, que llama a `barridoDeVencimientos()` y `procesarOutbox()`.
+
+### Sintoma
+Descubierto siguiendo el propio runbook R-13 contra el sandbox real: la alarma
+`barrido-con-errores` estaba en `ALARM`. El log de cada invocacion, sin excepcion, mostraba:
+
+```
+Error: This module cannot be imported from a Client Component module. It should only be used from a Server Component.
+```
+
+Ocurria en la fase `initStart` del Lambda — antes de que `handler` corriera una sola linea — y por
+eso `storedBytes` del grupo de logs se veia en cero durante horas: no es que no hubiera invocaciones,
+es que ninguna llegaba a producir un log de aplicacion.
+
+### Causa raiz
+El paquete `server-only` decide entre un no-op (`empty.js`) y un `throw` (`index.js`) segun la
+condicion de exportacion de su `package.json` con la que se resuelva: `"react-server"` para el
+no-op, `"default"` para el `throw`. El build de Next activa `"react-server"`; el Lambda de barrido
+se empaqueta con `esbuild` puro via `NodejsFunction` (dentro de `defineFunction`), que no activa esa
+condicion y siempre cae en `"default"`.
+
+`barridoDeVencimientos.ts` y `procesarOutbox.ts` — y, transitivamente, 17 archivos de
+`src/lib/fila`, `src/lib/data`, `src/lib/correo` y `src/lib/observabilidad` — llevaban
+`import "server-only";`. Cualquier invocacion del Lambda cargaba ese import al inicializar el
+modulo y reventaba antes de ejecutar nada, siempre, en cualquier entorno donde se desplegara —no
+solo este sandbox.
+
+Ninguna prueba lo vio porque Vitest no pasa por el mismo empaquetado: corre el TypeScript
+directamente, sin la resolucion de condiciones de `esbuild`, asi que `server-only` nunca llegaba a
+decidir entre sus dos ramas en los tests.
+
+Se investigo y se descarto pasarle `--conditions=react-server` al `esbuild` de `defineFunction`:
+la opcion publica `bundling` de `defineFunction` solo expone `minify` (`FunctionBundlingOptions` en
+`@aws-amplify/backend-function`) — cualquier otra clave se descarta antes de llegar al
+`NodejsFunction` de CDK, que si soporta `esbuildArgs` pero no es alcanzable desde aqui.
+
+### Solucion aplicada
+Se quito `import "server-only";` de los 17 archivos que el handler del barrido alcanza
+transitivamente (el motor de fila, la capa de datos y observabilidad). Los otros 63 archivos de
+`src/lib` que llevan la misma guarda **no** se tocaron: ninguno de los 17 es una decision de negocio
+particular, son la capa de servicio que cualquier Lambda que hable con la tabla necesita, y ninguno
+de ellos lo importa hoy un componente cliente.
+
+### Regla para futuro
+`"server-only"` protege la frontera Next.js cliente/servidor, no cualquier empaquetado de Node. Un
+codigo que se ejecuta fuera del build de Next —una Lambda de Amplify, un script, un worker— puede
+no compartir la condicion de exportacion que hace inofensivo ese import, y la unica forma de saberlo
+es mirar los logs de una invocacion real despues de desplegar, porque Vitest no lo va a ver. Antes
+de marcar "Lambda desplegada y probada" como hecho, invocarla al menos una vez —o revisar sus logs
+si ya tiene un horario— y no solo verificar que la sintesis de CDK no truena.

@@ -1,5 +1,3 @@
-import "server-only";
-
 // PA-04 — la convocatoria con todos sus lotes, en una sola lectura.
 
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";

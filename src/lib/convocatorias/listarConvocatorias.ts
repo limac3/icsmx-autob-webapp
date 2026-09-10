@@ -1,5 +1,3 @@
-import "server-only";
-
 // PA-05 — convocatorias por estatus, para la pantalla de administracion y para
 // la bandeja del aprobador.
 

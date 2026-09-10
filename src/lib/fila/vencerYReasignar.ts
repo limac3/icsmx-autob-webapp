@@ -1,5 +1,3 @@
-import "server-only";
-
 // T5 — vencer y reasignar (R-15). `modelo-datos-dynamodb.md` seccion 6.
 //
 // **Un solo acto atomico**, a diferencia de T5b/T6 (cancelacion y rechazo):

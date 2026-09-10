@@ -1,5 +1,3 @@
-import "server-only";
-
 // Traduccion entre el item crudo de DynamoDB y el registro tipado.
 //
 // Es el unico lugar donde un item puede estar mal formado: todo lo que sale de

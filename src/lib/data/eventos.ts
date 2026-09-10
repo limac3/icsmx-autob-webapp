@@ -1,5 +1,3 @@
-import "server-only";
-
 // Construccion de los eventos de la bitacora — regla 4 y 5 de CLAUDE.md.
 //
 // Existe por la misma razon que `claves.ts`: que la forma de un evento sea una

@@ -1,5 +1,3 @@
-import "server-only";
-
 // Fuente: modelo-datos-dynamodb.md seccion 8, y reglas 10 y 15 de CLAUDE.md.
 //
 // Cliente unico de DynamoDB, **construido de forma diferida**.

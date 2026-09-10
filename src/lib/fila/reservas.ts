@@ -1,5 +1,3 @@
-import "server-only";
-
 // Reserva de turno — el mecanismo que cierra R18
 // (`modelo-datos-dynamodb.md` 4.4, validado contra DynamoDB real por el
 // prototipo de la Etapa 4.1).

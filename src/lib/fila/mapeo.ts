@@ -1,5 +1,3 @@
-import "server-only";
-
 // Traduccion entre el item crudo de DynamoDB y la solicitud tipada.
 //
 // Mismo criterio que `convocatorias/mapeo.ts`: todo lo que sale de DynamoDB es

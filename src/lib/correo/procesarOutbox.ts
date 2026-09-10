@@ -1,5 +1,3 @@
-import "server-only";
-
 // Camino 2 del barrido — `arquitectura-tecnica-aws.md` 2.6 y 4.5:
 //
 //   Barrido -> Query GSI4 OUTBOX_PENDIENTE

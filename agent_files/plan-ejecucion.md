@@ -1024,7 +1024,11 @@ sandbox sigue las mismas credenciales que ya bloquean las etapas anteriores.
   `node_modules` —el proyecto dependia de que el plugin de TypeScript de Next.js lo resolviera
   como caso especial—, y `esbuild` (el empaquetador del Lambda de `defineFunction`) no tiene esa
   logica: fallaba con "Could not resolve 'server-only'" al empaquetar el barrido, que ahora
-  reusa `src/lib` de verdad. Ver `desafios-implementacion.md`.
+  reusa `src/lib` de verdad. **Esto solo resolvia la resolucion del nombre, no su efecto**: sin
+  la condicion de exportacion `"react-server"` que activa el build de Next, `server-only` siempre
+  empaquetaba su rama de `throw`, y el barrido fallo en el 100% de sus invocaciones desde esta
+  etapa hasta que la Etapa 12 lo encontro contra un sandbox real y quito la guarda de los 17
+  archivos que el handler alcanza. Ver `desafios-implementacion.md` 33 y 53.
 - **`amplify/tsconfig.json` ganó el alias `@/*`.** El barrido importa `src/lib` por ruta
   relativa (no por el alias, que ese `tsconfig` no comparte con el raiz), pero esos archivos
   usan `@/` internamente en todo el proyecto; sin el mapeo, `tsc -p amplify/tsconfig.json`
@@ -1632,13 +1636,29 @@ nombres. **Cumplida.**
     parecidos— y por tanto fallaba con el motor de fila funcionando bien
     (`desafios-implementacion.md` 42).
 
+13. **Siguiendo `runbooks.md` R-13 contra el sandbox real se encontraron dos alarmas en `ALARM`,
+    y solo una era un defecto.** `contencion-de-transacciones` estaba disparada por una carga de
+    `carga:apertura` reciente — el diseno de dos periodos consecutivos filtro correctamente los
+    picos aislados de corridas anteriores (185, 173 conflictos en un periodo) y solo se disparo
+    ante un par de periodos consecutivos por encima del umbral (93 y 102 contra 50); se autolimpio
+    sola al pasar la contencion. `barrido-con-errores` si era real: **el barrido fallaba en el
+    100% de sus invocaciones desde la Etapa 10**, sin excepcion, por la razon que se pensaba
+    cerrada en esa etapa (ver arriba, y `desafios-implementacion.md` 53). Corregido, redesplegado
+    contra el mismo sandbox y verificado con una invocacion real ya exitosa. Al procesar por
+    primera vez datos reales, `barridoDeVencimientos` reporto 95 "errores" contra convocatorias
+    inexistentes: son fixtures `e10-*` de pruebas de integracion anteriores que quedaron en GSI4
+    sin limpiar, no un defecto — es exactamente el comportamiento de "dato inconsistente cuenta
+    como error y el barrido sigue" que el codigo declara.
+
 **Salida esperada:** aplicacion en produccion, operable y auditable.
 
-> **Lo que falta para produccion no es codigo.** Son cinco pasos de operador, y tres de ellos
-> estan bloqueados por lo mismo que bloquea las Etapas 5 a 11: no hay sesion de Okta ni entorno
-> desplegado en esta maquina. El cuarto —`ALARMAS_CORREO` y confirmar la suscripcion de SNS— es
-> el que mas facil pasa inadvertido, porque su modo de fallo es el silencio: alarmas que
-> funcionan y no avisan a nadie (`runbooks.md` R-13). El quinto es la aprobacion de CES, que
+> **Lo que falta para produccion no es codigo.** Son cinco pasos de operador. El acceso AWS de
+> esta maquina si alcanza para un sandbox desplegado —lo probo la seccion 13 de arriba,
+> consultando alarmas y metricas reales—, pero no para produccion ni para una sesion de Okta:
+> eso sigue bloqueado igual que las Etapas 5 a 11. El cuarto paso de operador —`ALARMAS_CORREO`
+> y confirmar la suscripcion de SNS— es el que mas facil pasa inadvertido, porque su modo de
+> fallo es el silencio: alarmas que funcionan y no avisan a nadie (`runbooks.md` R-13). El quinto
+> es la aprobacion de CES, que
 > sigue siendo R17 y no depende de esta etapa.
 
 ---

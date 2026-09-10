@@ -1,5 +1,3 @@
-import "server-only";
-
 // Trazas de las operaciones criticas — `arquitectura-tecnica-aws.md` 7:
 // "Trazas | Operaciones criticas: solicitar, adjudicar, vencer".
 //

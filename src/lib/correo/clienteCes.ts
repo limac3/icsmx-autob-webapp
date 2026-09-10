@@ -1,5 +1,3 @@
-import "server-only";
-
 // Adaptador de CES (Church Email Service) — `arquitectura-tecnica-aws.md` 2.5.
 // `POST` de un JSON con autenticacion `Authorization: Basic`. **No es SES**:
 // no hay SDK, no hay permiso de IAM, solo una URL y credenciales.

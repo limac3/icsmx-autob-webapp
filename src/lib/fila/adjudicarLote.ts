@@ -1,5 +1,3 @@
-import "server-only";
-
 // T2 — adjudicacion. `modelo-datos-dynamodb.md` seccion 6.
 //
 // **Aqui vive la equidad del sistema.** Tres reglas gobiernan este archivo y
