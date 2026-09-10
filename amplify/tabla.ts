@@ -80,7 +80,7 @@ export class TablaAutob extends Construct {
           projectionType: ProjectionType.ALL,
         },
 
-        // --- GSI5 a GSI9: la bitacora, uno por pregunta del auditor ---------
+        // --- GSI6 a GSI9: la bitacora, uno por pregunta del auditor ---------
         //
         // **Claves con nombre semantico**, a diferencia de los cuatro de arriba.
         // La convencion generica esta justificada donde el indice esta
@@ -95,14 +95,24 @@ export class TablaAutob extends Construct {
         // un solo WCU — solo obligaria a un `BatchGetItem` de hidratacion por
         // pagina. Y la proyeccion **no se puede modificar** sin recrear el
         // indice, asi que lo generoso va aqui (`modelo-datos-dynamodb.md` 8.1).
-        {
-          // GSI5 — todo el rango, cronologico. Un mes por particion: un rango
-          // de 90 dias son 1-4 `Query` en vez de 90.
-          indexName: "GSI5",
-          partitionKey: { name: "mesPK", type: AttributeType.STRING },
-          sortKey: { name: "cronoSK", type: AttributeType.STRING },
-          projectionType: ProjectionType.ALL,
-        },
+        // **GSI5 no existe, y su ausencia es una decision.** Iba a servir "todo
+        // el rango, cronologico", con `mesPK`/`cronoSK`. Al reescribir los
+        // lectores quedo sin ninguno: la pantalla exige al menos un criterio
+        // —identificador, tipo de evento o participante— y los tres tienen su
+        // propio indice, asi que nadie pregunta por el rango a secas. Un indice
+        // con proyeccion `ALL` y sin lector cobra una escritura por evento a
+        // cambio de nada, que es el mismo argumento con el que la bitacora
+        // salio de GSI2.
+        //
+        // **Los atributos `mesPK` y `cronoSK` se siguen escribiendo.** Es la
+        // regla que gobierna todo este modelo: lo irreversible son los
+        // atributos, no los indices. A un evento append-only no se le pueden
+        // agregar despues —IAM deniega `UpdateItem` y `attribute_not_exists(PK)`
+        // rechaza un `Put` de reemplazo—, asi que un atributo que hoy no se
+        // escribe es una pregunta que nunca se podra responder sobre los eventos
+        // de hoy. El indice, en cambio, se crea cuando aparezca el lector y su
+        // relleno vera todo lo ya escrito.
+
         {
           // GSI6 — un tipo de evento en el rango. El mes acota la particion
           // para que el tipo dominante no crezca sin cota.

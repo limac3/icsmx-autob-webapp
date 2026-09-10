@@ -39,6 +39,8 @@ const vehiculo = (
   fotografias: Fotografia[] = [],
   extras: Partial<VehiculoConFotografias> = {},
 ): VehiculoConFotografias => ({
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   vehiculoId: "V1",
   marca: "Nissan",
   version: "NP300",

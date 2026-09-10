@@ -10,9 +10,13 @@ import {
 } from "./vehiculos";
 import type { DatosVehiculo } from "@/types/vehiculo";
 
+import { CAMPOS_VEHICULO } from "@/types/vehiculo";
+
 const AHORA = new Date("2026-09-05T18:00:00.000Z");
 
 const validos: DatosVehiculo = {
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   marca: "Nissan",
   version: "NP300 Doble Cabina",
   modelo: 2019,
@@ -38,6 +42,8 @@ describe("datos validos", () => {
     // `api-contracts.md` enumera las validaciones exigidas y no incluye estos
     // cuatro campos. Exigirlos aqui rechazaria capturas que el contrato admite.
     const minimo: DatosVehiculo = {
+      numeroEconomico: "VEH-001",
+      numeroDeSerie: "3N6AD33A9KK870001",
       marca: "Ford",
       version: "Ranger XL",
       modelo: 2020,
@@ -154,16 +160,43 @@ describe("campos descriptivos", () => {
   });
 });
 
+describe("CAMPOS_VEHICULO", () => {
+  it("enumera todos los campos capturables, sin quedarse corto", () => {
+    // `as const satisfies readonly (keyof DatosVehiculo)[]` comprueba que cada
+    // elemento **sea** una clave valida, no que esten **todas**: al agregar el
+    // numero economico y el de serie la lista se quedo sin ellos y el
+    // typecheck paso. Cuesta caro, porque de esa lista dependen dos cosas:
+    // `camposModificados` —una edicion de un campo ausente devolveria exito sin
+    // escribir nada— y el reenvio de errores del formulario, que recorre la
+    // lista para volver a marcar los controles.
+    //
+    // La referencia es el literal que devuelve `normalizarDatosVehiculo`, que
+    // el compilador **si** obliga a cubrir entero.
+    expect([...CAMPOS_VEHICULO].sort()).toEqual(
+      Object.keys(normalizarDatosVehiculo(validos)).sort(),
+    );
+  });
+});
+
 describe("informa todos los errores de una vez", () => {
   it("no se detiene en el primero", () => {
     // Un formulario que corrige un campo, reenvia y descubre el siguiente error
     // es un formulario que se abandona.
     expect(
       revisarDatosVehiculo(
-        { marca: "", version: "", modelo: 1800, kilometraje: -5 },
+        {
+          numeroEconomico: "",
+          numeroDeSerie: "VIN#1",
+          marca: "",
+          version: "",
+          modelo: 1800,
+          kilometraje: -5,
+        },
         AHORA,
       ),
     ).toEqual({
+      numeroEconomico: "requerido",
+      numeroDeSerie: "caracter_no_permitido",
       marca: "requerido",
       version: "requerido",
       modelo: "fuera_de_rango",

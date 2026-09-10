@@ -11,19 +11,24 @@
 > motor de fila— se verifica leyendo el archivo antes de afirmarlo o de editarlo. Ver
 > `CLAUDE.md`, seccion "Grafo de Codigo — Consulta, No Evidencia".
 >
-> Sincronizado con: rama `main`, 2026-09-08, Etapas 7 a 10 cerradas mas la **Etapa 2.2**
+> Sincronizado con: rama `main`, 2026-09-09, Etapas 7 a 10 cerradas mas la **Etapa 2.2**
 > (impersonacion de identidad en desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y
 > navegacion por permiso, decision **D-11**), la **Etapa 11** (auditoria: verificacion de
 > integridad recalculada desde el evento crudo, decision **D-12**), la **Etapa 12 parcial**
 > (observabilidad y alarmas, decision **D-13**; sus puntos `[OPERADOR]` —navegador, despliegue,
-> runbooks ejecutados— siguen abiertos y no son codigo) y la **Etapa 11.1** (la bitacora se vuelve
-> consultable: rango de dias como llave y perfil de participante, decisiones **D-14** y **D-15**).
-> Las Etapas 8 a 11 quedaron confirmadas en `cc5af85`; **las Etapas 12 y 11.1 siguen sin commit**
-> al escribir esto, asi que el reindexado no vera `src/lib/observabilidad/`, `amplify/alarmas.ts`,
-> `src/lib/participantes/` ni los servicios nuevos de `src/lib/auditoria/` hasta que se confirmen
-> — el conteo de nodos volvio a dar 2143, que es la misma senal ya medida dos veces. Los headings
-> de `agent_files/*.md` ya estan indexados como nodos `Section` — consultables con
-> `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`. Este ADR no los duplica.
+> runbooks ejecutados— siguen abiertos y no son codigo), la **Etapa 11.1** (la bitacora se vuelve
+> consultable, decision **D-15**) y la **Etapa 11.2** completa: bitacora consultable por clave
+> (**D-14** reescrito, con la **correccion de D-2**), identificador interno de 12 caracteres
+> (**D-16**) e identificador de negocio renombrable con centinela (**D-17**).
+>
+> Las Etapas 8 a 11 quedaron confirmadas en `cc5af85`; **las Etapas 12, 11.1 y 11.2 siguen sin
+> commit** al escribir esto, asi que el reindexado no vera `src/lib/observabilidad/`,
+> `amplify/alarmas.ts`, `src/lib/participantes/` ni los modulos nuevos de `src/lib/auditoria/`
+> —`rangoDeBitacora.ts`, `valoresConActividad.ts`, `etiquetasDeBitacora.ts`— hasta que se
+> confirmen. El conteo de nodos volvio a dar 2143, que es la misma senal ya medida tres veces:
+> **las anclas a esos simbolos no resolveran en el grafo todavia**, aunque el codigo si exista en
+> disco. Los headings de `agent_files/*.md` ya estan indexados como nodos `Section` —consultables
+> con `MATCH (s:Section) WHERE s.file_path CONTAINS 'agent_files'`—. Este ADR no los duplica.
 >
 > Este archivo es la copia local y versionada del ADR. El ADR que vive en el grafo se pierde
 > en cada `index_repository`; se recarga desde aqui. Ver "Mantenimiento de este ADR" y
@@ -69,11 +74,19 @@ esta limpia — todo el acceso a datos pasa por `src/lib/data/`, migrar el IaC n
 Anclas: `amplify/backend.ts`, `amplify/tabla.ts`, `src/lib/data/cliente.ts`.
 
 ### D-2 — Single-table
-Descartado: una tabla por entidad.
+Descartado: una tabla por entidad; y en la Etapa 11.2, una tabla dedicada para la bitacora.
 Razon: las lecturas son jerarquicas (convocatoria → lotes → fila) y una sola `Query` resuelve
-cada pantalla. Sobre todo, permite escribir la mutacion y su evento de auditoria en la misma
-`TransactWriteItems` — es lo que hace cumplible la regla 4 de `CLAUDE.md`.
-Anclas: `src/lib/data/claves.ts`, `src/lib/data/transacciones.ts::ejecutarTransaccion`.
+cada pantalla.
+**Correccion de la Etapa 11.2:** este ADR afirmaba tambien que la tabla unica "permite escribir la
+mutacion y su evento en la misma `TransactWriteItems`". **Es falso como argumento a favor**:
+`TransactWriteItems` puede abarcar tablas distintas (`TransactWriteItemsCommand.d.ts:29`), asi que
+la regla 4 se cumple igual con dos tablas. La razon buena es la de arriba, y la que decidio no
+partir la bitacora es que el diseno de datos, el rendimiento y el costo salen identicos —los
+indices de bitacora son dispersos, asi que sus claves solo existen en los items de evento— mientras
+la unica ventaja real de separarla, que el `Deny` de inmutabilidad dejara de depender del prefijo
+`AUDIT#`, se cubre haciendo que la politica IAM y la clave salgan de **la misma constante**.
+Anclas: `src/lib/data/claves.ts`, `src/lib/data/transacciones.ts::ejecutarTransaccion`,
+`src/lib/data/claves.ts::PREFIJO_PARTICION_AUDITORIA`.
 
 ### D-3 — El lote como entidad de la fila
 Descartado: la fila sobre el vehiculo.
@@ -296,67 +309,83 @@ Anclas: `amplify/alarmas.ts::AlarmasAutob`, `amplify/backend.ts::grupoDeLogsDelB
 `src/lib/observabilidad/traza.ts::conTraza`, `src/lib/data/transacciones.ts::ejecutarTransaccion`,
 `src/lib/data/transacciones.ts::esConflictoDeTransaccion`.
 
-### D-14 — La bitacora se busca por rango de dias, y el rango es la llave
-La pantalla de auditoria tiene **dos modos de consulta** y la diferencia no es de interfaz sino de
-patron de acceso. Con un identificador concreto se lee la particion de ese agregado (PA-12), que
-trae su historia entera: el rango de fechas es un filtro en memoria y **no se acota**. Sin
-identificador —por tipo de evento o por participante— se lee una particion **por dia** del rango
-(PA-13, GSI2 `AUDIT#<dia>`): ahi el rango **es la llave**, no puede estar vacio y se acota a 31
-dias, validado en la pantalla **y otra vez en el servicio**.
-Razon: PA-13 estaba declarado desde la Etapa 0 y `eventos.ts` escribia su clave desde la Etapa 5,
-pero **ningun codigo lo leia**, asi que toda busqueda exigia conocer de antemano el identificador
-—y el de una solicitud es derivado (`<loteId>-<turno>`) y no aparecia en ninguna pantalla. El tope
-de 31 dias es el techo de `Query` que el servicio esta dispuesto a lanzar; aplicarlo tambien al
-modo por identificador solo esconderia historia sin ahorrar nada.
-Rastrear a un participante son **dos preguntas**: lo que firmo (`actorId`) y lo que le ocurrio
-(los eventos que `SISTEMA` escribio sobre sus solicitudes, via GSI3 mas la particion de cada una).
-Buscar solo por `actorId` daria una respuesta que parece completa y no lo es — el vencimiento que
-explica por que alguien perdio su adjudicacion lo firma `SISTEMA`.
-Las opciones de los selects salen de la **bitacora del rango** y no del catalogo de entidades, de
-modo que toda opcion ofrecida devuelve resultados; y de la **clave** del evento, no de sus
-atributos, porque la lectura es por particion de agregado. `EventoDTO` gano por eso `agregado` y
-`agregadoId`, opcionales: quien lee PA-12 ya sabe de que pregunto, quien lee PA-13 no.
-`tipo` y `actorId` se filtran con `FilterExpression`, contra el criterio general del modulo de
-filtros: ese criterio vale para la particion de un agregado —cientos de eventos en toda su vida—,
-no para una de dia, que puede traer todos los eventos del sistema de ese dia.
-**El rango se lee del dia mas nuevo al mas viejo, en secuencia, y se voltea al final.** Es lo que
-hace correcto el truncamiento: cuando no cabe todo, lo que sobra tiene que ser lo mas viejo. La
-primera version leia ascendente en paralelo y cortaba al llegar al tope, o sea descartaba lo mas
-reciente; con los datos del sandbox —un dia de prueba de carga con 3 069 eventos contra un tope de
-2 000— eso escondia justamente lo de hoy, y las opciones de los selects, que se ordenan por
-actividad reciente, se armaban del dia anterior. La secuencia es la contrapartida del orden:
-permite dejar de consultar los dias que ya no caben.
+### D-14 — Cada criterio de la bitacora tiene su indice, y el rango es condicion de clave
+La pantalla de auditoria tiene **dos modos** y la diferencia no es de interfaz sino de patron de
+acceso. Con un identificador concreto se lee la particion de ese agregado (PA-12), que trae su
+historia entera: el rango es un filtro en memoria y **no se acota**. Sin identificador, el criterio
+elige el indice y el rango va como **condicion de clave de ordenamiento**: el tipo de evento en
+GSI6 (`TIPO#<tipo>#<mes>`), la persona que firmo en GSI9 (`ACTOR#<id>#<mes>`), el tipo de registro
+en GSI7 (`DIA#<dia>` con `begins_with`). El rango no puede estar vacio, se acota a 90 dias y se
+valida en la pantalla **y otra vez en el servicio**.
+Razon: la version anterior leia una particion por dia sobre GSI2 `AUDIT#<dia>` y filtraba todo lo
+demas en memoria contra un tope de 2 000 eventos. Ese tope produjo **tres** defectos seguidos, los
+tres de la misma clase —una cota que cambia la respuesta en silencio— y ninguno visible con pruebas
+que solo cuenten cuantos eventos sobreviven: el truncamiento descartaba lo mas reciente; reusar una
+lectura truncada devolvia 483 filas donde habia 841; y un tipo de registro con mucho volumen
+consumia el cupo dejando a los demas como "sin actividad en este rango" siendo falso.
+**El criterio es obligatorio en el tipo**, no solo en la validacion de la pantalla:
+`BusquedaGlobal` es una union de tres ramas, cada una exigiendo uno de los tres, asi que un rango
+sin criterio no se puede construir.
+**La cota vive en un solo lugar** y es `cronoSK BETWEEN <medianoche del primer dia> AND <medianoche
+del dia siguiente al ultimo>`. Dos propiedades que hay que leer juntas: la frontera es la
+medianoche de **Mexico** —la misma con la que se calculan el `dia` y el `mes` del evento— y el
+limite superior queda **exclusivo del instante sin ningun centinela**, porque `cronoSK` es
+`<ocurridoEn>#<eventoId>` y toda cadena ordena despues que su propio prefijo. Es `BETWEEN` y no dos
+comparaciones porque DynamoDB admite **una sola condicion por clave**.
+Rastrear a un participante son **dos preguntas**: lo que firmo (GSI9) y lo que le ocurrio. La
+segunda se responde con GSI3 mas las particiones de **lote** de sus solicitudes, agrupadas por lote
+y filtrando por `solicitudId`. Buscar solo por `actorId` daria una respuesta que parece completa y
+no lo es: el vencimiento que explica por que alguien perdio su adjudicacion lo firma `SISTEMA`.
+Las opciones de los dos selects salen de la **bitacora del rango** —no del catalogo de entidades,
+de modo que toda opcion ofrecida devuelve resultados— y con **dos lecturas independientes**
+(PA-15): un sondeo por valor distinto con salto de grupo sobre GSI7 y GSI8, que lee una pagina, se
+queda con los valores que trae y salta al siguiente grupo con un `ExclusiveStartKey` sintetizado.
+**Un solo lugar decide que indice sirve a que criterio** (`consultasDe`), y solo queda un filtro:
+tipo de evento **combinado con** tipo de registro, el unico que no cabe en ninguna clave. Si esa
+funcion crece, es la senal de que alguien agrego un criterio sin darle clave.
 Descartado:
+- **Una tabla dedicada para la bitacora.** Ver la correccion de D-2.
+- **Un GSI5 cronologico** (`mesPK`/`cronoSK`) para "todo el rango". Quedo sin lector —la pantalla
+  exige un criterio y los tres tienen indice— y un indice con proyeccion `ALL` sin lector cobra una
+  escritura por evento a cambio de nada. **Los atributos se siguen escribiendo**, porque lo
+  irreversible son los atributos y no los indices: a un evento append-only no se le pueden agregar
+  despues, asi que un atributo que hoy no se escribe es una pregunta que nunca se podra responder
+  sobre los eventos de hoy.
+- Particionar los indices de opciones **por mes** en vez de por dia. Una opcion "activa en el mes
+  pero no en el rango" devolveria una tabla vacia, que es justo lo que esas listas existen para
+  evitar. No es rendimiento: es correccion.
+- Un **item marcador** por (dia, agregado) para enumerar valores distintos. Con
+  `attribute_not_exists` el segundo evento del dia cancelaria la transaccion de negocio completa;
+  sin condicion, N solicitantes del mismo lote escribirian el mismo item dentro de sus
+  transacciones y reabririan R18.
+- Un atributo `sujetoId` en el evento para responder "que le ocurrio a esta persona" por clave.
+  Solo respondera sobre los eventos futuros, y esa consulta es retrospectiva por definicion.
+- Sondear los valores distintos de a **un** item (`Limit: 1`), que es optimo cuando cada grupo es
+  enorme. Con muchos grupos chicos son N viajes de red **encadenados**: 200 valores distintos
+  dejaban la pantalla en 20 segundos. Contar consultas no es medir latencia.
 - Poblar los selects desde el catalogo de entidades, que es mas barato. Ofreceria convocatorias sin
-  un solo evento en el rango, y elegirlas devolveria una tabla vacia.
+  un solo evento en el rango.
 - Mostrar microsegundos, que es lo que se pidio. `ocurridoEn` viene de un `Date`: milisegundos y no
-  hay mas. El desempate real de dos eventos del mismo milisegundo es el `eventoId` de la `SK`, y por
-  eso la tabla lo muestra en columna propia en vez de fingir precision.
+  hay mas. El desempate real de dos eventos del mismo milisegundo es el `eventoId` de la `SK`, y
+  por eso la tabla lo muestra en columna propia en vez de fingir precision.
 - Extender la exportacion CSV al modo global. `BITACORA_EXPORTADA` es un evento y todo evento se
-  ancla a un agregado: no tendria a que anclarse y saldria sin registrarse, que es el hueco que
-  cerro `desafios-implementacion.md` 36. El boton se oculta.
-- Dejar el filtro de rango comparando `ocurridoEn` contra `yyyy-mm-dd`. Ponia la frontera en la
-  medianoche UTC mientras PA-13 la pone en la de Mexico: el mismo rango devolvia conjuntos
-  distintos segun como se buscara (`desafios-implementacion.md` 44).
-- Subir `LIMITE_DE_EVENTOS_GLOBAL` para que el caso del sandbox entrara completo, en vez de
-  corregir el sentido de la lectura. Solo mueve el problema: un dia de apertura real con mas lotes
-  vuelve a truncar, y seguiria descartando lo reciente.
-- Reusar siempre la lectura sin filtrar del rango —la que arma las opciones— para responder la
-  busqueda por tipo de evento, ahorrando una consulta. Solo vale **si esa lectura fue completa**:
-  con truncamiento, el corte se lleva los eventos mas viejos y entre ellos los del tipo buscado.
-  Medido en el sandbox: 483 filas reusando contra 841 preguntando con el filtro, y las 483
-  marcadas como truncadas, que le dice al auditor "acota el rango" cuando hacia falta lo
-  contrario (`consultarPorTipoDeEvento`).
-- Leer los dias en paralelo, que es mas rapido. Obligaria a traer hasta el cupo de **cada** dia
-  para quedarse con el cupo total, y no permite dejar de leer lo que ya no cabe.
+  ancla a un agregado: no tendria a que anclarse y saldria sin registrarse.
+- Leer las particiones de resultados en paralelo, que es mas rapido. Obligaria a traer hasta el cupo
+  de **cada** una para quedarse con el cupo total, y no permite dejar de leer lo que ya no cabe. Los
+  sondeos de las opciones **si** van en tandas concurrentes: ahi no hay cupo por dia que respetar.
+- Ordenar en memoria con `localeCompare` donde se afirma reproducir el orden de una `SK`. Usa la
+  colacion del idioma y puede invertir dos claves respecto del byte a byte que hace la tabla.
 Anclas: `src/lib/auditoria/consultarBitacoraGlobal.ts::consultarBitacoraGlobal`,
+`src/lib/auditoria/rangoDeBitacora.ts::cotaDeRango`,
+`src/lib/auditoria/valoresConActividad.ts::identificadoresConActividad`,
+`src/lib/auditoria/etiquetasDeBitacora.ts::construirEtiquetador`,
 `src/lib/auditoria/consultarActividadDeParticipante.ts::consultarActividadDeParticipante`,
 `src/lib/auditoria/filtrosDeBitacora.ts::validarBusqueda`,
-`src/lib/auditoria/filtrosDeBitacora.ts::eventoCoincideConFiltros`,
 `src/lib/auditoria/opcionesDeBusqueda.ts::construirOpciones`,
-`src/lib/auditoria/mapeo.ts::agregadoDeParticion`,
-`src/lib/domain/fechas.ts::diasDeNegocioEntre`,
-`src/lib/domain/fechas.ts::formatearFechaHoraPrecisa`.
+`src/lib/data/claves.ts::bitacora`,
+`src/lib/data/claves.ts::comparandoClaves`,
+`src/lib/domain/fechas.ts::inicioDelDiaDeNegocio`,
+`src/lib/domain/fechas.ts::mesesDeNegocioEntre`.
 
 ### D-15 — Del upsert de participante se implemento el perfil, nunca la identidad
 `PART#<id> / PERFIL` guarda `nombre` y `correo`, escrito por `registrarPerfil` desde
@@ -386,6 +415,53 @@ Anclas: `src/lib/participantes/registrarPerfil.ts::registrarPerfil`,
 `src/lib/participantes/leerPerfiles.ts::leerPerfiles`,
 `src/lib/auth/session.ts::getSession`, `src/lib/data/lecturaPorLotes.ts::leerPorClaves`.
 
+### D-16 — El identificador interno son 12 caracteres, no un ULID
+7 caracteres de segundos desde epoch en base32 de Crockford (~1 090 anos) mas 5 de azar
+criptografico (33,5 millones de valores). Sigue ordenando lexicograficamente igual que
+cronologicamente, ahora al segundo.
+Razon: un ULID son 26 caracteres y aparece 8-10 veces por evento de bitacora, en pantallas donde no
+dice nada. Lo que vuelve seguro acortarlo es que **las tres creaciones llevan
+`attribute_not_exists`**: una colision falla de forma visible y nunca sobrescribe. La probabilidad
+es 1,5 × 10⁻⁶ con 10 identificadores en el mismo segundo y 1,5 × 10⁻⁴ con 100.
+Descartado:
+- Conservar el ULID. Es la opcion segura y su costo es de legibilidad, que es justo el problema que
+  la Etapa 11.2 existe para resolver.
+- Dejar el `Put` de la reserva de turno **sin** condicion, como estaba. Con 80 bits de azar era
+  irrelevante; con 25 una reserva sobrescrita en silencio borraria una reserva en vuelo y R18
+  dejaria de sostenerse. La condicion convierte eso en un rechazo reintentable, y por eso no es
+  opcional.
+Anclas: `src/lib/data/identificadores.ts::nuevoId`,
+`src/lib/fila/reservas.ts::anotarReserva`.
+
+### D-17 — El identificador que teclea el operador es un atributo unico y renombrable
+El folio de la convocatoria, y el numero economico y el de serie del vehiculo, los captura una
+persona y son unicos. La unicidad la impone **la base de datos** con un centinela por valor
+(`<ambito>#<valor> / CENTINELA`, con `attribute_not_exists`) dentro de la **misma transaccion** que
+la entidad.
+Razon: comprobarlo leyendo antes de escribir es el "leer y luego decidir" que prohibe la regla 6 —
+dos altas simultaneas pasarian las dos. El centinela da gratis dos propiedades mas: es tambien el
+indice de busqueda (un `GetItem`) y hace el renombrado atomico.
+**No son la clave de la entidad ni el ancla de su bitacora.** Eso sigue siendo el identificador
+interno, y es lo que permite corregir un typo sin partir la historia en dos. Misma division que
+D-15 hizo para `participanteId`.
+Los centinelas van **primero** en la transaccion: `ejecutarTransaccion` devuelve el indice del item
+que cancelo, y es la unica forma de saber cual de los dos numeros de un vehiculo estaba duplicado.
+Descartado:
+- Un ambito de unicidad compartido. Un folio `A-1` impediria registrar el vehiculo `A-1`: son
+  universos separados porque nombran cosas separadas.
+- Usar el identificador de negocio como clave de la entidad. Volveria el renombrado imposible sin
+  reescribir la historia, que es exactamente lo que D-15 descarto.
+- Exigir unicidad tambien al **nombre corto** de la convocatoria. Dos ventas recurrentes pueden
+  llamarse igual y el folio las distingue.
+- Devolver `conflicto_concurrencia` cuando el centinela cancela. Un valor repetido **es** un dato
+  mal capturado: hay que corregirlo, no reintentar con el mismo valor. Se devuelve
+  `validation_failed` con el motivo en el campo concreto.
+Anclas: `src/lib/data/claves.ts::clave`,
+`src/lib/data/centinelasDeIdentificador.ts::putDeCentinelaDeIdentificador`,
+`src/lib/domain/identificadorDeNegocio.ts::prepararIdentificadorDeNegocio`,
+`src/lib/vehiculos/editarVehiculo.ts::editarVehiculo`,
+`src/lib/convocatorias/editarConvocatoria.ts::editarConvocatoria`.
+
 ## Decisiones de modelo de datos
 
 Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
@@ -397,6 +473,9 @@ Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
 | Contador atomico **en el item del lote** | `ADD` es atomico sin transaccion ni lectura previa. Uno por lote, nunca global — evita particion caliente |
 | Ventana de venta **desnormalizada** en el lote | Permite condicionar la escritura a "la venta esta abierta" sin leer la convocatoria; sin la copia habria que leer-y-decidir, que es justo lo prohibido |
 | Items **centinela** para unicidad | `attribute_not_exists` sobre un item dedicado convierte reglas de negocio en garantias de la base de datos |
+| Los cuatro indices de la bitacora llevan **nombre semantico** (`diaPK`, `tipoPK`…) y los cuatro de negocio la convencion generica `GSInPK` | La generica se justifica donde el indice esta **sobrecargado** —GSI2 sirve cinco entidades y un nombre semantico mentiria sobre cuatro—; los de bitacora responden una pregunta cada uno, y el nombre hace evidente que un item de negocio, al no tener `diaPK`, no entra en ese indice |
+| Seis atributos sirven a los cuatro indices de bitacora, no ocho | `cronoSK` es la clave de ordenamiento de GSI6 y GSI9, y `diaPK` la particion de GSI7 y GSI8. Es lo que mantiene el evento bajo el minimo facturable de 1 KB, o sea a 1 WCU |
+| `mesPK` se escribe **sin indice** | Su GSI5 quedo sin lector y se borro. El atributo se conserva porque a un evento append-only no se le pueden agregar despues: lo irreversible son los atributos, no los indices (D-14) |
 | Eventos de auditoria en la **misma tabla** | Unico modo de escribirlos en la misma `TransactWriteItems` que la mutacion |
 | T2 condiciona ademas `estatus = EN_OFERTA` | Un lote `NO_VENDIDO` cierra **sin** `adjudicacionActual`: con la condicion original, una adjudicacion en vuelo podia entregarlo despues de concluida la convocatoria |
 | T2 lleva el vehiculo a `RESERVADO` en la misma transaccion | Sin ese item `RESERVADO` es inalcanzable y T4 no tiene transicion valida al vender. No reintroduce la contencion de R18: el vehiculo se toca una vez por adjudicacion, no una por solicitud |

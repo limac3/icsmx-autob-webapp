@@ -31,6 +31,8 @@ const creadoraConPermiso: ActorUsuario = {
 };
 
 const enAprobacion: Convocatoria = {
+  folio: "CONV-001",
+  nombre: "Venta de octubre",
   convocatoriaId: "C1",
   tipo: "EMPLEADOS",
   descripcionParticipacion: "Abierta al personal.",

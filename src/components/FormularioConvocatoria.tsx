@@ -53,6 +53,8 @@ export type FormularioConvocatoriaProps = {
   convocatoriaId?: string;
   /** Valores ya convertidos a hora de pared de negocio, listos para el campo. */
   valores?: {
+    folio?: string;
+    nombre?: string;
     tipo?: string;
     descripcionParticipacion?: string;
     publicadaEn?: { fecha: string; hora: string };
@@ -155,6 +157,41 @@ const FormularioConvocatoria = ({
     if (nombre) delete erroresDelServidor.current[nombre];
   };
 
+  /**
+   * Valor inicial de un control, por su **nombre**.
+   *
+   * React 19 reinicia el formulario a `defaultValue` cuando la action termina.
+   * Sin esto, un folio duplicado —que solo el centinela puede detectar— dejaba
+   * la descripcion y las seis mitades de fecha y hora en blanco, con el error
+   * senalado sobre campos vacios.
+   */
+  const capturado = (control: string): string | undefined =>
+    estado.estado === "error" ? estado.capturado?.[control] : undefined;
+
+  const inicial = (control: string, previo?: string): string =>
+    capturado(control) ?? previo ?? "";
+
+  /**
+   * Numero de rechazo, que es la `key` del editor enriquecido.
+   *
+   * Con los `Input` basta devolver lo capturado en `defaultValue`, porque el
+   * reinicio de React deja el campo justo en ese valor. Con el editor no
+   * alcanza: se vacia en **cada** rechazo —Eden atiende el evento `reset` que
+   * dispara el reinicio— y **Lexical solo lee `initialContent` al montar**, asi
+   * que una prop nueva sobre el mismo componente se ignora en silencio. Solo
+   * remontarlo lo repuebla, y para eso la `key` tiene que cambiar siempre, no
+   * solo cuando cambia el contenido.
+   *
+   * Lo cuenta el adaptador desde el estado anterior porque aqui no se puede:
+   * `useActionState` entrega un objeto nuevo con el mismo contenido si se
+   * reenvia sin cambios, y contarlo con `setState` en un efecto encadena
+   * renders.
+   *
+   * Es lo mas caro de retomar del formulario, y el rechazo mas probable —un
+   * folio duplicado— llega justo cuando ya esta escrito.
+   */
+  const intento = estado.estado === "error" ? estado.intento : 0;
+
   return (
     <Form
       action={enviar}
@@ -187,6 +224,44 @@ const FormularioConvocatoria = ({
       )}
 
       <Card renderAs="fieldset" className="formulario-convocatoria__seccion">
+        <H4 renderAs="legend">{etiquetas.seccionIdentificacion}</H4>
+
+        <Stack gapSize="16">
+          {/* Folio y nombre corto son lo que hace reconocible la convocatoria
+              en las listas y en la bitacora. Solo el folio es unico, y quien
+              lo decide es su centinela en la transaccion: si vuelve el motivo
+              `duplicado`, se marca en este campo. El nombre puede repetirse a
+              proposito —dos ventas recurrentes se llaman igual— y el folio es
+              lo que las distingue. */}
+          <FormField
+            label={etiquetas.campoFolio}
+            description={etiquetas.folioAyuda}
+            onValidate={validarConElServidor}
+          >
+            <Input
+              name="folio"
+              required
+              defaultValue={inicial("folio", valores.folio)}
+              disabled={!editable}
+            />
+          </FormField>
+
+          <FormField
+            label={etiquetas.campoNombre}
+            description={etiquetas.nombreAyuda}
+            onValidate={validarConElServidor}
+          >
+            <Input
+              name="nombre"
+              required
+              defaultValue={inicial("nombre", valores.nombre)}
+              disabled={!editable}
+            />
+          </FormField>
+        </Stack>
+      </Card>
+
+      <Card renderAs="fieldset" className="formulario-convocatoria__seccion">
         <H4 renderAs="legend">{etiquetas.seccionParticipacion}</H4>
 
         <Stack gapSize="16">
@@ -205,7 +280,9 @@ const FormularioConvocatoria = ({
                   value={tipo}
                   required
                   defaultChecked={
-                    (valores.tipo ?? TIPOS_CONVOCATORIA[0]) === tipo
+                    (capturado("tipo") ??
+                      valores.tipo ??
+                      TIPOS_CONVOCATORIA[0]) === tipo
                   }
                   disabled={!editable}
                 />
@@ -221,12 +298,16 @@ const FormularioConvocatoria = ({
             onValidate={validarConElServidor}
           >
             <RichTextEditor
+              key={intento}
               name="descripcionParticipacion"
               type="html"
               required
               maxLength={String(LIMITES_CONVOCATORIA.descripcionParticipacion)}
               availableControls={[...CONTROLES_DEL_EDITOR]}
-              initialContent={valores.descripcionParticipacion ?? ""}
+              initialContent={inicial(
+                "descripcionParticipacion",
+                valores.descripcionParticipacion,
+              )}
               disabled={!editable}
             />
           </FormField>
@@ -246,7 +327,10 @@ const FormularioConvocatoria = ({
               <DateInput
                 name="publicadaEnFecha"
                 required
-                defaultValue={valores.publicadaEn?.fecha ?? ""}
+                defaultValue={inicial(
+                  "publicadaEnFecha",
+                  valores.publicadaEn?.fecha,
+                )}
                 disabled={!editable}
               />
             </FormField>
@@ -257,7 +341,10 @@ const FormularioConvocatoria = ({
               <TimeInput
                 name="publicadaEnHora"
                 required
-                defaultValue={valores.publicadaEn?.hora ?? ""}
+                defaultValue={inicial(
+                  "publicadaEnHora",
+                  valores.publicadaEn?.hora,
+                )}
                 disabled={!editable}
               />
             </FormField>
@@ -271,7 +358,10 @@ const FormularioConvocatoria = ({
               <DateInput
                 name="inicioVentaFecha"
                 required
-                defaultValue={valores.inicioVenta?.fecha ?? ""}
+                defaultValue={inicial(
+                  "inicioVentaFecha",
+                  valores.inicioVenta?.fecha,
+                )}
                 disabled={!editable}
               />
             </FormField>
@@ -282,7 +372,10 @@ const FormularioConvocatoria = ({
               <TimeInput
                 name="inicioVentaHora"
                 required
-                defaultValue={valores.inicioVenta?.hora ?? ""}
+                defaultValue={inicial(
+                  "inicioVentaHora",
+                  valores.inicioVenta?.hora,
+                )}
                 disabled={!editable}
               />
             </FormField>
@@ -296,7 +389,7 @@ const FormularioConvocatoria = ({
               <DateInput
                 name="finVentaFecha"
                 required
-                defaultValue={valores.finVenta?.fecha ?? ""}
+                defaultValue={inicial("finVentaFecha", valores.finVenta?.fecha)}
                 disabled={!editable}
               />
             </FormField>
@@ -307,7 +400,7 @@ const FormularioConvocatoria = ({
               <TimeInput
                 name="finVentaHora"
                 required
-                defaultValue={valores.finVenta?.hora ?? ""}
+                defaultValue={inicial("finVentaHora", valores.finVenta?.hora)}
                 disabled={!editable}
               />
             </FormField>
@@ -325,7 +418,10 @@ const FormularioConvocatoria = ({
               min={String(LIMITES_CONVOCATORIA.horasLiquidacionMinimo)}
               max={String(LIMITES_CONVOCATORIA.horasLiquidacionMaximo)}
               step="1"
-              defaultValue={valores.horasLiquidacion?.toString() ?? "48"}
+              defaultValue={inicial(
+                "horasLiquidacion",
+                valores.horasLiquidacion?.toString() ?? "48",
+              )}
               disabled={!editable}
             />
           </FormField>

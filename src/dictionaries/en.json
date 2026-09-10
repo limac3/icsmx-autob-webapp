@@ -171,7 +171,10 @@
     "seccionFotografias": "Photographs",
     "motivoRetiro": "Reason for removal",
     "motivoRetiroAyuda": "It is recorded in the audit log. It is required.",
+    "identificadorAyuda": "Stored in uppercase and cannot be repeated.",
     "campos": {
+      "numeroEconomico": "Fleet number",
+      "numeroDeSerie": "Serial number",
       "marca": "Make",
       "version": "Trim",
       "modelo": "Model year",
@@ -211,7 +214,9 @@
     "demasiadas": "The photograph limit was reached",
     "es_la_ultima": "The only photograph cannot be deleted",
     "no_es_permutacion": "The received order does not match the gallery",
-    "demasiados_cambios": "Too many order changes at once"
+    "demasiados_cambios": "Too many order changes at once",
+    "caracter_no_permitido": "Only letters, digits and the signs - _ / are allowed",
+    "duplicado": "Another vehicle already has this value"
   },
   "convocatorias": {
     "titulo": "Sale announcements",
@@ -226,8 +231,13 @@
     "pestanas": "Sale announcements by status",
     "guardada": "Sale announcement saved.",
     "soloLectura": "This sale announcement can no longer be edited in its current status.",
+    "seccionIdentificacion": "Identification",
     "seccionParticipacion": "Participation",
     "seccionCalendario": "Sale schedule",
+    "campoFolio": "Reference number",
+    "folioAyuda": "Stored in uppercase and cannot be repeated.",
+    "campoNombre": "Short name",
+    "nombreAyuda": "How it is recognized in lists and in the audit log. It may be repeated.",
     "campoTipo": "Who can take part?",
     "campoDescripcion": "Participation description",
     "campoPublicadaEn": "Publication",
@@ -266,7 +276,9 @@
     "orden_de_fechas": "The dates must run in order: publication, sale start, sale end",
     "sin_lotes": "Add at least one vehicle before sending it for approval",
     "etiqueta_no_admitida": "The text formatting contains elements that are not allowed",
-    "enlace_no_admitido": "A link points to an address that is not allowed"
+    "enlace_no_admitido": "A link points to an address that is not allowed",
+    "caracter_no_permitido": "Only letters, digits and the signs - _ / are allowed",
+    "duplicado": "Another sale announcement already has this reference number"
   },
   "acciones": {
     "sinAcciones": "There are no actions available in this status.",

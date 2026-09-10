@@ -30,6 +30,18 @@ export const ESTATUS_VEHICULO = [
  * seccion 2). Las reglas de validacion viven en `src/lib/domain/vehiculos.ts`.
  */
 export type DatosVehiculo = {
+  /**
+   * Numero economico: la etiqueta con la que la organizacion identifica el
+   * activo. **Lo teclea el operador y es unico**, garantizado por un centinela
+   * (`clave.centinelaDeIdentificador`).
+   *
+   * No es la clave del item ni el ancla de la bitacora — eso sigue siendo el
+   * `vehiculoId` interno—, y por eso **se puede corregir** sin partir la
+   * historia. Misma division que D-15 para `participanteId`.
+   */
+  numeroEconomico: string;
+  /** Numero de serie del fabricante. Tambien unico, con su propio centinela. */
+  numeroDeSerie: string;
   marca: string;
   version: string;
   /** Anio del modelo, no una fecha. */
@@ -43,6 +55,8 @@ export type DatosVehiculo = {
 
 /** Campos de `DatosVehiculo`, para recorrerlos sin escribirlos dos veces. */
 export const CAMPOS_VEHICULO = [
+  "numeroEconomico",
+  "numeroDeSerie",
   "marca",
   "version",
   "modelo",

@@ -7,11 +7,23 @@ import {
 } from "@/utils/clienteDynamoFalso";
 import {
   consultarBitacoraGlobal,
-  consultarPorTipoDeEvento,
   LIMITE_DE_EVENTOS_GLOBAL,
+  type BusquedaGlobal,
 } from "./consultarBitacoraGlobal";
 
 vi.mock("server-only", () => ({}));
+
+// Lo que estas pruebas vigilan, y por que en este orden:
+//
+//   1. **Que indice y que particion** resuelve cada criterio. Es la propiedad
+//      central de la Etapa 11.2: si un criterio cae en un `FilterExpression`
+//      sobre la bitacora entera, la pantalla vuelve a ser lenta y a responder
+//      de menos sin avisar. Un indice equivocado no falla: devuelve cero.
+//   2. **La cota del rango**, en hora de negocio y con limite superior
+//      exclusivo. Es el defecto de la seccion 44: la misma pregunta devolvia
+//      dos conjuntos distintos segun el modo de consulta.
+//   3. **La direccion de la lectura.** Seccion 46: el truncamiento tiene que
+//      llevarse lo mas viejo, y para eso se lee de nuevo a viejo.
 
 beforeEach(() => {
   vi.stubEnv("AUTOB_TABLE_NAME", "tabla-de-prueba");
@@ -37,48 +49,251 @@ const evento = (
   ...extras,
 });
 
-/** Dia de negocio pedido por un comando, leido de su clave de particion. */
-const diaDe = (comando: ComandoEnviado): string =>
+/** La particion que pidio un comando. */
+const particionDe = (comando: ComandoEnviado): string =>
   String(
-    (comando.input.ExpressionAttributeValues as Record<string, unknown>)[":pk"],
-  ).replace("AUDIT#", "");
+    (comando.input.ExpressionAttributeValues as Record<string, unknown>)[
+      ":particion"
+    ],
+  );
 
-describe("consultarBitacoraGlobal — PA-13", () => {
-  it("consulta una particion por dia del rango, sobre GSI2", async () => {
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
+const valoresDe = (comando: ComandoEnviado): Record<string, unknown> =>
+  comando.input.ExpressionAttributeValues as Record<string, unknown>;
+
+const cliente = (falso: ReturnType<typeof crearClienteFalso>) => ({
+  cliente: falso.cliente as never,
+});
+
+const vacio = () => crearClienteFalso({ responder: () => ({ Items: [] }) });
+
+describe("la cota del rango, comun a las cuatro consultas", () => {
+  // Se prueba sobre GSI6 porque el rango se acota igual en los tres indices que
+  // particionan por mes, y `condicionDeRango` es un solo lugar. Lo que se
+  // afirma aqui es la **cota**, no el indice.
+  const conTipo = {
+    desde: "2026-09-06",
+    hasta: "2026-09-08",
+    tipo: "LOTE_ADJUDICADO",
+  } as const;
+
+  it("un rango de tres dias dentro de un mes es una sola consulta", async () => {
+    // Antes eran tres —una por dia—, y con 90 dias serian 90. Es el cambio que
+    // vuelve sostenible el tope nuevo.
+    const falso = vacio();
+
+    await consultarBitacoraGlobal(conTipo, cliente(falso));
+
+    expect(falso.comandos).toHaveLength(1);
+  });
+
+  it("recorre los meses del mas nuevo al mas viejo", async () => {
+    const falso = vacio();
 
     await consultarBitacoraGlobal(
-      { desde: "2026-09-06", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
+      { desde: "2026-08-20", hasta: "2026-10-05", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
-    expect(falso.comandos).toHaveLength(3);
-    // Del mas nuevo al mas viejo: es lo que permite dejar de leer en cuanto se
-    // llena el cupo, y que lo descartado sea lo mas viejo.
-    expect(falso.comandos.map(diaDe)).toEqual([
-      "2026-09-08",
-      "2026-09-07",
-      "2026-09-06",
+    expect(falso.comandos.map(particionDe)).toEqual([
+      "TIPO#LOTE_ADJUDICADO#2026-10",
+      "TIPO#LOTE_ADJUDICADO#2026-09",
+      "TIPO#LOTE_ADJUDICADO#2026-08",
     ]);
-    expect(falso.comandos[0]?.input).toMatchObject({
-      IndexName: "GSI2",
-      KeyConditionExpression: "GSI2PK = :pk",
-      ScanIndexForward: false,
+  });
+
+  it("acota con la medianoche de Mexico, no con la de UTC", async () => {
+    // Mexico esta seis horas detras de UTC, asi que el dia de negocio del 6 de
+    // septiembre empieza a las 06:00Z. Comparar contra `2026-09-06T00:00:00Z`
+    // metería en el rango seis horas del dia anterior — y devolveria un
+    // conjunto distinto al de la busqueda por identificador, que compara en
+    // dias de negocio (seccion 44).
+    const falso = vacio();
+
+    await consultarBitacoraGlobal(
+      { desde: "2026-09-06", hasta: "2026-09-07", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
+    );
+
+    expect(valoresDe(falso.comandos[0]!)).toMatchObject({
+      ":desdeCrono": "2026-09-06T06:00:00.000Z",
+      // Exclusivo del instante, y por eso es la medianoche del **8**: el ultimo
+      // dia del rango entra completo.
+      ":hastaCrono": "2026-09-08T06:00:00.000Z",
     });
   });
 
-  it("devuelve los eventos en orden cronologico ascendente, aunque se lean al reves", async () => {
-    // Se lee de nuevo a viejo y se voltea al final; no se ordena en memoria.
+  it("es BETWEEN, porque DynamoDB admite una sola condicion por clave", async () => {
+    // `cronoSK >= :a AND cronoSK < :b` se rechaza con ValidationException, y un
+    // doble de cliente no lo detecta: acepta cualquier cadena. Ver
+    // `desafios-implementacion.md` 51.
+    //
+    // `BETWEEN` es inclusivo y aun asi la cota queda exclusiva del instante:
+    // `cronoSK` es `<ocurridoEn>#<eventoId>` y toda cadena ordena despues que
+    // su prefijo. Por eso no hace falta ningun centinela `U+FFFF`.
+    const falso = vacio();
+
+    await consultarBitacoraGlobal(conTipo, cliente(falso));
+
+    const condicion = String(falso.comandos[0]?.input.KeyConditionExpression);
+    expect(condicion).toContain("cronoSK BETWEEN :desdeCrono AND :hastaCrono");
+    expect(condicion).not.toContain(">=");
+    expect(String(valoresDe(falso.comandos[0]!)[":hastaCrono"])).not.toContain(
+      "￿",
+    );
+  });
+});
+
+describe("el criterio es obligatorio", () => {
+  it("un rango sin criterio no compila", () => {
+    // No hay indice que responda "todo el rango": el cronologico se borro por
+    // no tener lector. Que el tipo lo impida es lo que evita descubrirlo como
+    // un ValidationException en runtime sobre codigo que compilaba.
+    //
+    // @ts-expect-error -- falta tipo, actorId o agregado. Si algun dia esto
+    // deja de ser un error, el servicio volvio a aceptar una busqueda que no
+    // puede responder.
+    const sinCriterio: BusquedaGlobal = {
+      desde: "2026-09-06",
+      hasta: "2026-09-08",
+    };
+
+    expect(sinCriterio.desde).toBe("2026-09-06");
+  });
+});
+
+describe("por tipo de evento: GSI6", () => {
+  it("el tipo es parte de la particion, no un filtro", async () => {
+    // Esta es la diferencia que corrige el defecto de las 483 filas contra
+    // 841: con el tipo en la clave, la consulta no puede responder de menos.
+    const falso = vacio();
+
+    await consultarBitacoraGlobal(
+      { desde: "2026-09-06", hasta: "2026-09-08", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
+    );
+
+    expect(falso.comandos[0]?.input).toMatchObject({
+      IndexName: "GSI6",
+      KeyConditionExpression:
+        "tipoPK = :particion AND cronoSK BETWEEN :desdeCrono AND :hastaCrono",
+    });
+    expect(particionDe(falso.comandos[0]!)).toBe(
+      "TIPO#LOTE_ADJUDICADO#2026-09",
+    );
+    expect(falso.comandos[0]?.input.FilterExpression).toBeUndefined();
+  });
+});
+
+describe("por persona que firmo: GSI9", () => {
+  it("la persona y el mes son la particion", async () => {
+    const falso = vacio();
+
+    await consultarBitacoraGlobal(
+      { desde: "2026-09-06", hasta: "2026-09-08", actorId: "P7" },
+      cliente(falso),
+    );
+
+    expect(falso.comandos[0]?.input).toMatchObject({
+      IndexName: "GSI9",
+      KeyConditionExpression:
+        "actorMesPK = :particion AND cronoSK BETWEEN :desdeCrono AND :hastaCrono",
+    });
+    expect(particionDe(falso.comandos[0]!)).toBe("ACTOR#P7#2026-09");
+    expect(falso.comandos[0]?.input.FilterExpression).toBeUndefined();
+  });
+});
+
+describe("por tipo de registro: GSI7, un dia por particion", () => {
+  it("usa begins_with sobre la clave de ordenamiento del dia", async () => {
+    // Por dia y no por mes, y no es rendimiento: una opcion "activa en el mes
+    // pero no en el rango" devolveria una tabla vacia, que es justo lo que
+    // estas listas existen para evitar.
+    const falso = vacio();
+
+    await consultarBitacoraGlobal(
+      { desde: "2026-09-06", hasta: "2026-09-08", agregado: "VEHICULO" },
+      cliente(falso),
+    );
+
+    expect(falso.comandos).toHaveLength(3);
+    expect(falso.comandos.map(particionDe)).toEqual([
+      "DIA#2026-09-08",
+      "DIA#2026-09-07",
+      "DIA#2026-09-06",
+    ]);
+    expect(falso.comandos[0]?.input).toMatchObject({
+      IndexName: "GSI7",
+      KeyConditionExpression:
+        "diaPK = :particion AND begins_with(agregadoSK, :prefijo)",
+    });
+    expect(valoresDe(falso.comandos[0]!)[":prefijo"]).toBe("VEHICULO#");
+  });
+
+  it("ordena en memoria, porque el indice ordena por identificador y no por tiempo", async () => {
+    // GSI7 agrupa por valor antes que por tiempo — es lo que permite el salto
+    // de las opciones—, asi que dentro de un dia los eventos **no** vienen
+    // cronologicos. Es el unico indice donde hay que ordenar, y hay que
+    // decirlo: sin este orden la tabla mezclaria las horas.
     const falso = crearClienteFalso({
-      responder: (comando) =>
-        diaDe(comando) === "2026-09-06"
-          ? { Items: [evento("E1", "2026-09-06T18:00:00.000Z")] }
-          : { Items: [evento("E2", "2026-09-07T18:00:00.000Z")] },
+      responder: () => ({
+        Items: [
+          evento("E9", "2026-09-06T20:00:00.000Z"),
+          evento("E1", "2026-09-06T08:00:00.000Z"),
+          evento("E5", "2026-09-06T12:00:00.000Z"),
+        ],
+      }),
     });
 
     const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-06", hasta: "2026-09-07" },
-      { cliente: falso.cliente as never },
+      { desde: "2026-09-06", hasta: "2026-09-06", agregado: "LOTE" },
+      cliente(falso),
+    );
+
+    expect(
+      resultado.ok && resultado.data.eventos.map((e) => e.eventoId),
+    ).toEqual(["E1", "E5", "E9"]);
+  });
+
+  it("el tipo de evento es el unico filtro residual legitimo", async () => {
+    // GSI7 particiona por dia y ordena por agregado: el tipo de evento no cabe
+    // en su clave. El filtro se aplica sobre una lectura ya restringida a un
+    // dia y a un tipo de registro, no sobre la bitacora entera.
+    const falso = vacio();
+
+    await consultarBitacoraGlobal(
+      {
+        desde: "2026-09-06",
+        hasta: "2026-09-06",
+        agregado: "LOTE",
+        tipo: "LOTE_ADJUDICADO",
+      },
+      cliente(falso),
+    );
+
+    expect(falso.comandos[0]?.input).toMatchObject({
+      IndexName: "GSI7",
+      FilterExpression: "#tipo = :tipoResidual",
+    });
+    expect(valoresDe(falso.comandos[0]!)[":tipoResidual"]).toBe(
+      "LOTE_ADJUDICADO",
+    );
+  });
+});
+
+describe("orden y truncamiento", () => {
+  it("devuelve ascendente lo que se leyo descendente", async () => {
+    const falso = crearClienteFalso({
+      responder: () => ({
+        Items: [
+          evento("E2", "2026-09-07T18:00:00.000Z"),
+          evento("E1", "2026-09-06T18:00:00.000Z"),
+        ],
+      }),
+    });
+
+    const resultado = await consultarBitacoraGlobal(
+      { desde: "2026-09-06", hasta: "2026-09-07", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
     expect(
@@ -86,283 +301,96 @@ describe("consultarBitacoraGlobal — PA-13", () => {
     ).toEqual(["E1", "E2"]);
   });
 
-  it("dentro de un dia tambien devuelve ascendente lo que DynamoDB entrego descendente", async () => {
+  it("cuando trunca conserva lo mas reciente y descarta lo mas viejo", async () => {
+    // Seccion 46: la primera version leia ascendente y el corte escondia
+    // justamente lo de hoy. Una prueba que solo cuente cuantos sobreviven no
+    // detecta eso; hay que afirmar **cuales**.
+    const porMes = new Map<string, unknown[]>([
+      [
+        "TIPO#LOTE_ADJUDICADO#2026-10",
+        Array.from({ length: LIMITE_DE_EVENTOS_GLOBAL }, (_, i) =>
+          evento(`NUEVO${i}`, "2026-10-05T18:00:00.000Z"),
+        ),
+      ],
+      [
+        "TIPO#LOTE_ADJUDICADO#2026-09",
+        [evento("VIEJO", "2026-09-20T18:00:00.000Z")],
+      ],
+    ]);
     const falso = crearClienteFalso({
-      responder: () => ({
-        Items: [
-          evento("E-TARDE", "2026-09-08T20:00:00.000Z"),
-          evento("E-MEDIO", "2026-09-08T19:00:00.000Z"),
-          evento("E-TEMPRANO", "2026-09-08T18:00:00.000Z"),
-        ],
+      responder: (comando) => ({
+        Items: porMes.get(particionDe(comando)) ?? [],
       }),
     });
 
     const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
+      { desde: "2026-09-20", hasta: "2026-10-05", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
-    expect(
-      resultado.ok && resultado.data.eventos.map((e) => e.eventoId),
-    ).toEqual(["E-TEMPRANO", "E-MEDIO", "E-TARDE"]);
-  });
-
-  it("cada evento sabe de que agregado es historia, que es lo unico que lo hace legible en el modo global", async () => {
-    const falso = crearClienteFalso({
-      responder: () => ({
-        Items: [
-          {
-            ...evento("E1", "2026-09-06T18:00:00.000Z"),
-            PK: "AUDIT#SOLICITUD#L1-7",
-          },
-        ],
-      }),
-    });
-
-    const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-06", hasta: "2026-09-06" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(resultado.ok && resultado.data.eventos[0]).toMatchObject({
-      agregado: "SOLICITUD",
-      agregadoId: "L1-7",
-    });
-  });
-
-  it("filtra por tipo en DynamoDB y no en memoria", async () => {
-    // Una particion de dia puede traer todos los eventos del sistema de ese
-    // dia: traerla entera para descartarla en el proceso es transferencia
-    // pagada por nada.
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
-
-    await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08", tipo: "PAGO_RECHAZADO" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(falso.comandos[0]?.input).toMatchObject({
-      FilterExpression: "#tipo = :tipo",
-      ExpressionAttributeNames: { "#tipo": "tipo" },
-    });
-    expect(
-      (
-        falso.comandos[0]?.input.ExpressionAttributeValues as Record<
-          string,
-          unknown
-        >
-      )[":tipo"],
-    ).toBe("PAGO_RECHAZADO");
-  });
-
-  it("combina tipo y actor en una sola condicion", async () => {
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
-
-    await consultarBitacoraGlobal(
-      {
-        desde: "2026-09-08",
-        hasta: "2026-09-08",
-        tipo: "PAGO_RECHAZADO",
-        actorId: "okta|1",
-      },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(falso.comandos[0]?.input.FilterExpression).toBe(
-      "#tipo = :tipo AND #actorId = :actorId",
-    );
-  });
-
-  it("sin filtros no manda FilterExpression", async () => {
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
-
-    await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(falso.comandos[0]?.input.FilterExpression).toBeUndefined();
-    expect(falso.comandos[0]?.input.ExpressionAttributeNames).toBeUndefined();
-  });
-
-  it("pagina un dia hasta agotarlo", async () => {
-    let llamadas = 0;
-    const falso = crearClienteFalso({
-      responder: () => {
-        llamadas += 1;
-        return llamadas === 1
-          ? {
-              Items: [evento("E1", "2026-09-08T18:00:00.000Z")],
-              LastEvaluatedKey: { PK: "x", SK: "y" },
-            }
-          : { Items: [evento("E2", "2026-09-08T19:00:00.000Z")] };
-      },
-    });
-
-    const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(llamadas).toBe(2);
-    expect(resultado.ok && resultado.data.eventos).toHaveLength(2);
-    expect(resultado.ok && resultado.data.truncada).toBe(false);
-  });
-
-  it("avisa cuando trunca, en vez de entregar una lista incompleta que parece completa", async () => {
-    const muchos = Array.from(
-      { length: LIMITE_DE_EVENTOS_GLOBAL + 5 },
-      (_, i) => evento(`E${i}`, "2026-09-08T18:00:00.000Z"),
-    );
-    const falso = crearClienteFalso({ responder: () => ({ Items: muchos }) });
-
-    const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(resultado.ok && resultado.data.eventos).toHaveLength(
-      LIMITE_DE_EVENTOS_GLOBAL,
-    );
     expect(resultado.ok && resultado.data.truncada).toBe(true);
-  });
-
-  it("un rango que llena el tope exacto no se reporta como truncado", async () => {
-    // La frontera importa: reportar truncamiento sin haberlo mandaria al
-    // auditor a acotar un rango que ya estaba completo.
-    const justos = Array.from({ length: LIMITE_DE_EVENTOS_GLOBAL }, (_, i) =>
-      evento(`E${i}`, "2026-09-08T18:00:00.000Z"),
-    );
-    const falso = crearClienteFalso({ responder: () => ({ Items: justos }) });
-
-    const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(resultado.ok && resultado.data.eventos).toHaveLength(
-      LIMITE_DE_EVENTOS_GLOBAL,
-    );
-    expect(resultado.ok && resultado.data.truncada).toBe(false);
-  });
-
-  it("**el truncamiento descarta lo mas viejo, no lo mas reciente**", async () => {
-    // El defecto que encontraron los datos del sandbox: un dia de prueba de
-    // carga con 3 069 eventos consumia el cupo entero y, leyendo en orden
-    // ascendente, lo que se descartaba era justo lo de hoy. Las opciones de
-    // los selects se ordenan por actividad reciente, asi que se armaban del
-    // dia anterior.
-    const viejos = Array.from({ length: LIMITE_DE_EVENTOS_GLOBAL }, (_, i) =>
-      evento(`VIEJO-${i}`, "2026-09-07T18:00:00.000Z"),
-    );
-    const falso = crearClienteFalso({
-      responder: (comando) =>
-        diaDe(comando) === "2026-09-08"
-          ? { Items: [evento("HOY", "2026-09-08T18:00:00.000Z")] }
-          : { Items: viejos },
-    });
-
-    const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-07", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
-    );
-
     const ids = resultado.ok
       ? resultado.data.eventos.map((e) => e.eventoId)
       : [];
-    expect(ids).toContain("HOY");
     expect(ids).toHaveLength(LIMITE_DE_EVENTOS_GLOBAL);
-    expect(resultado.ok && resultado.data.truncada).toBe(true);
-    // Y el mas reciente sigue siendo el ultimo, porque se presenta ascendente.
-    expect(ids.at(-1)).toBe("HOY");
+    expect(ids).not.toContain("VIEJO");
   });
 
-  it("deja de leer los dias mas viejos en cuanto se llena el cupo", async () => {
-    // La razon de leer en secuencia y no en paralelo: los dias que no caben no
-    // se consultan siquiera.
-    const muchos = Array.from(
-      { length: LIMITE_DE_EVENTOS_GLOBAL + 1 },
-      (_, i) => evento(`E${i}`, "2026-09-08T18:00:00.000Z"),
-    );
+  it("un rango que cabe justo no se reporta como truncado", async () => {
+    // Se pide un evento mas que el cupo para poder distinguir los dos casos.
     const falso = crearClienteFalso({
-      responder: (comando) =>
-        diaDe(comando) === "2026-09-08" ? { Items: muchos } : { Items: [] },
+      responder: () => ({
+        Items: Array.from({ length: LIMITE_DE_EVENTOS_GLOBAL }, (_, i) =>
+          evento(`E${i}`, "2026-09-06T18:00:00.000Z"),
+        ),
+      }),
     });
 
-    await consultarBitacoraGlobal(
-      { desde: "2026-08-09", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
+    const resultado = await consultarBitacoraGlobal(
+      { desde: "2026-09-06", hasta: "2026-09-06", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
-    // Un solo dia consultado, de los 31 del rango.
+    expect(resultado.ok && resultado.data.truncada).toBe(false);
+    expect(resultado.ok && resultado.data.eventos).toHaveLength(
+      LIMITE_DE_EVENTOS_GLOBAL,
+    );
+  });
+
+  it("deja de consultar particiones en cuanto se llena el cupo", async () => {
+    // En secuencia y no en paralelo: leerlas a la vez obligaria a traer hasta
+    // el cupo de cada una para quedarse con el cupo total.
+    const falso = crearClienteFalso({
+      responder: () => ({
+        Items: Array.from({ length: LIMITE_DE_EVENTOS_GLOBAL + 1 }, (_, i) =>
+          evento(`E${i}`, "2026-10-05T18:00:00.000Z"),
+        ),
+      }),
+    });
+
+    // 88 dias: cuatro meses distintos y dentro del maximo de 90.
+    await consultarBitacoraGlobal(
+      { desde: "2026-07-10", hasta: "2026-10-05", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
+    );
+
+    // Cuatro particiones en el rango y una sola consulta gastada.
     expect(falso.comandos).toHaveLength(1);
-    expect(diaDe(falso.comandos[0] as never)).toBe("2026-09-08");
   });
 
-  it("deja de paginar un dia que ya agoto el cupo por si solo", async () => {
-    const muchos = Array.from(
-      { length: LIMITE_DE_EVENTOS_GLOBAL + 1 },
-      (_, i) => evento(`E${i}`, "2026-09-08T18:00:00.000Z"),
-    );
-    let llamadas = 0;
-    const falso = crearClienteFalso({
-      responder: () => {
-        llamadas += 1;
-        return { Items: muchos, LastEvaluatedKey: { PK: "x", SK: "y" } };
-      },
-    });
-
-    await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(llamadas).toBe(1);
-  });
-
-  it("rechaza un rango invalido sin consultar nada", async () => {
-    const falso = crearClienteFalso();
-
-    const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-01" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(resultado).toEqual({
-      ok: false,
-      error: "validation_failed",
-      detalles: { campo: "rango" },
-    });
-    expect(falso.comandos).toHaveLength(0);
-  });
-
-  it("se niega a recorrer mas particiones de las permitidas, aunque quien llame no haya validado", async () => {
-    // Segunda linea de defensa: una action nueva que olvide validar no puede
-    // conseguir que este servicio lance cien Query.
-    const falso = crearClienteFalso();
-
-    const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-06-01", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(resultado.ok).toBe(false);
-    expect(falso.comandos).toHaveLength(0);
-  });
-
-  it("omite un item que no se puede interpretar en vez de fabricarlo a medias", async () => {
+  it("descarta un item que no se puede interpretar, sin perder los demas", async () => {
     const falso = crearClienteFalso({
       responder: () => ({
         Items: [
-          { PK: "AUDIT#LOTE#L1", SK: "x", eventoId: "E1" },
-          evento("E2", "2026-09-08T18:00:00.000Z"),
+          evento("E2", "2026-09-06T18:00:00.000Z"),
+          { PK: "AUDIT#LOTE#L1", SK: "corrupto" },
         ],
       }),
     });
 
     const resultado = await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08" },
-      { cliente: falso.cliente as never },
+      { desde: "2026-09-06", hasta: "2026-09-06", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
     expect(
@@ -371,161 +399,40 @@ describe("consultarBitacoraGlobal — PA-13", () => {
   });
 });
 
-describe("consultarPorTipoDeEvento", () => {
-  const dto = (eventoId: string, tipo: string) => ({
-    eventoId,
-    tipo,
-    ocurridoEn: "2026-09-08T18:00:00.000Z",
-    actorTipo: "USUARIO" as const,
-    actorId: "P1",
-    correlacionId: "COR1",
-  });
-
-  it("reusa la lectura previa cuando fue completa, sin consultar nada", async () => {
-    // Si no trunco, contiene todo el rango: preguntarle otra vez a DynamoDB
-    // daria el mismo conjunto y seria gasto puro.
-    const falso = crearClienteFalso();
-
-    const resultado = await consultarPorTipoDeEvento(
-      {
-        desde: "2026-09-08",
-        hasta: "2026-09-08",
-        tipo: "LOTE_ADJUDICADO",
-        yaLeido: {
-          eventos: [
-            dto("E1", "LOTE_ADJUDICADO"),
-            dto("E2", "SOLICITUD_CREADA"),
-            dto("E3", "LOTE_ADJUDICADO"),
-          ] as never,
-          truncada: false,
-        },
-      },
-      { cliente: falso.cliente as never },
+describe("rangos que no se ejecutan", () => {
+  it("rechaza un rango invertido sin tocar DynamoDB", async () => {
+    const falso = vacio();
+    const resultado = await consultarBitacoraGlobal(
+      { desde: "2026-09-08", hasta: "2026-09-06", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
+    expect(resultado.ok).toBe(false);
     expect(falso.comandos).toHaveLength(0);
-    expect(
-      resultado.ok && resultado.data.eventos.map((e) => e.eventoId),
-    ).toEqual(["E1", "E3"]);
-    expect(resultado.ok && resultado.data.truncada).toBe(false);
   });
 
-  it("**no reusa una lectura truncada**: vuelve a preguntar con el filtro", async () => {
-    // El defecto que midio el sandbox: reusando la lectura truncada,
-    // `LOTE_ADJUDICADO` devolvia 483 filas de las 841 que hay en el rango, y
-    // encima marcadas como truncadas — que le dice al auditor "acota el
-    // rango" cuando lo que faltaba era ampliar la lectura.
-    const falso = crearClienteFalso({
-      responder: () => ({
-        Items: [
-          {
-            PK: "AUDIT#LOTE#L1",
-            SK: "2026-09-08T18:00:00.000Z#E-VIEJO",
-            eventoId: "E-VIEJO",
-            tipo: "LOTE_ADJUDICADO",
-            ocurridoEn: "2026-09-08T18:00:00.000Z",
-            actorTipo: "USUARIO",
-            actorId: "P1",
-            correlacionId: "COR1",
-          },
-        ],
-      }),
-    });
-
-    const resultado = await consultarPorTipoDeEvento(
-      {
-        desde: "2026-09-08",
-        hasta: "2026-09-08",
-        tipo: "LOTE_ADJUDICADO",
-        yaLeido: {
-          eventos: [dto("E-RECIENTE", "LOTE_ADJUDICADO")] as never,
-          truncada: true,
-        },
-      },
-      { cliente: falso.cliente as never },
+  it("rechaza un dia que no existe", async () => {
+    const falso = vacio();
+    const resultado = await consultarBitacoraGlobal(
+      { desde: "2026-02-30", hasta: "2026-03-02", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
-    expect(falso.comandos).toHaveLength(1);
-    expect(falso.comandos[0]?.input.FilterExpression).toBe("#tipo = :tipo");
-    expect(
-      resultado.ok && resultado.data.eventos.map((e) => e.eventoId),
-    ).toEqual(["E-VIEJO"]);
+    expect(resultado.ok).toBe(false);
+    expect(falso.comandos).toHaveLength(0);
   });
 
-  it("sin lectura previa consulta con el filtro", async () => {
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
-
-    await consultarPorTipoDeEvento(
-      { desde: "2026-09-08", hasta: "2026-09-08", tipo: "PAGO_RECHAZADO" },
-      { cliente: falso.cliente as never },
+  it("rechaza un rango mas largo que el maximo, aunque quien llame no valide", async () => {
+    // Segunda linea de defensa: una action nueva que olvide validar no puede
+    // convertir la pantalla en cientos de consultas.
+    const falso = vacio();
+    const resultado = await consultarBitacoraGlobal(
+      { desde: "2026-01-01", hasta: "2026-12-31", tipo: "LOTE_ADJUDICADO" },
+      cliente(falso),
     );
 
-    expect(falso.comandos).toHaveLength(1);
-    expect(falso.comandos[0]?.input.FilterExpression).toBe("#tipo = :tipo");
-  });
-});
-
-describe("consultarBitacoraGlobal acotada a un tipo de registro", () => {
-  it("filtra por el prefijo de la PK, que es donde vive el tipo", async () => {
-    // El tipo de agregado no es un atributo del evento: esta en la clave de la
-    // particion. `begins_with(PK, ...)` es la unica forma de acotarlo sin
-    // traerse el dia entero.
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
-
-    await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08", agregado: "VEHICULO" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(falso.comandos[0]?.input.FilterExpression).toBe(
-      "begins_with(#PK, :prefijoDeAgregado)",
-    );
-    expect(falso.comandos[0]?.input.ExpressionAttributeNames).toEqual({
-      "#PK": "PK",
-    });
-    expect(
-      (
-        falso.comandos[0]?.input.ExpressionAttributeValues as Record<
-          string,
-          unknown
-        >
-      )[":prefijoDeAgregado"],
-    ).toBe("AUDIT#VEHICULO#");
-  });
-
-  it("el prefijo lleva el # final, para no casar con un tipo que empiece igual", async () => {
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
-
-    await consultarBitacoraGlobal(
-      { desde: "2026-09-08", hasta: "2026-09-08", agregado: "SOLICITUD" },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(
-      (
-        falso.comandos[0]?.input.ExpressionAttributeValues as Record<
-          string,
-          unknown
-        >
-      )[":prefijoDeAgregado"],
-    ).toBe("AUDIT#SOLICITUD#");
-  });
-
-  it("se combina con el filtro de tipo de evento", async () => {
-    const falso = crearClienteFalso({ responder: () => ({ Items: [] }) });
-
-    await consultarBitacoraGlobal(
-      {
-        desde: "2026-09-08",
-        hasta: "2026-09-08",
-        tipo: "VEHICULO_EDITADO",
-        agregado: "VEHICULO",
-      },
-      { cliente: falso.cliente as never },
-    );
-
-    expect(falso.comandos[0]?.input.FilterExpression).toBe(
-      "#tipo = :tipo AND begins_with(#PK, :prefijoDeAgregado)",
-    );
+    expect(resultado.ok).toBe(false);
+    if (!resultado.ok) expect(resultado.error).toBe("validation_failed");
+    expect(falso.comandos).toHaveLength(0);
   });
 });

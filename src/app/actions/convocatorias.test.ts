@@ -111,6 +111,8 @@ const lote: Lote = {
 };
 
 const convocatoria: ConvocatoriaConLotes = {
+  folio: "CONV-001",
+  nombre: "Venta de octubre",
   convocatoriaId: "C1",
   tipo: "EMPLEADOS",
   descripcionParticipacion: "Abierta al personal.",
@@ -126,6 +128,8 @@ const convocatoria: ConvocatoriaConLotes = {
 };
 
 const vehiculo: VehiculoConFotografias = {
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   vehiculoId: "V1",
   marca: "Nissan",
   version: "NP300",
@@ -150,6 +154,8 @@ const INVOCAR = {
     estatus: "BORRADOR" as const,
     llamar: () =>
       acciones.crearConvocatoria({
+        folio: "CONV-001",
+        nombre: "Venta de octubre",
         tipo: "EMPLEADOS",
         descripcionParticipacion: "Texto",
         publicadaEn: "2026-10-01T15:00:00.000Z",

@@ -19,7 +19,13 @@ import { TablaAutob } from "./tabla";
 
 // Sintetizar una pila de CDK cuesta segundos, no milisegundos. El limite de 5 s por omision
 // es para pruebas puras; aqui se levanta el arbol completo de constructos.
-vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+//
+// **Los 30 s no alcanzaban con nueve GSIs.** La primera prueba paga la sintesis entera —43 s
+// medidos con el archivo corriendo solo— y con la compuerta ejecutando el resto de la suite en
+// paralelo cruzaba el limite de forma intermitente. Se iguala al de `backend.test.ts`, que
+// sintetiza lo mismo y por eso ya estaba en 120 s. Una compuerta que falla a veces se empieza a
+// reintentar en vez de leerse, y eso cuesta mas que el limite.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 
 // Llave publica real, generada al vuelo: no se versiona ningun material criptografico y el
 // constructo recibe algo con la forma que CloudFront espera.
@@ -90,16 +96,23 @@ describe("tabla unica", () => {
    * no se puede cambiar sin recrearlo**, asi que esta tabla es el contrato y no
    * una comodidad. Los cuatro primeros usan la convencion generica
    * `GSInPK`/`GSInSK` porque estan sobrecargados —GSI2 sirve cinco entidades—;
-   * los cinco de la bitacora llevan nombre semantico porque cada uno responde
+   * los cuatro de la bitacora llevan nombre semantico porque cada uno responde
    * una sola pregunta, y asi se ve de un golpe que un item de negocio, al no
-   * tener `mesPK`, no entra en ese indice.
+   * tener `diaPK`, no entra en ese indice.
+   *
+   * **`GSI5` no esta, y su hueco es deliberado.** Iba a servir "todo el rango,
+   * cronologico" y quedo sin lector, asi que se borro: un indice con proyeccion
+   * `ALL` y sin lector cobra una escritura por evento a cambio de nada. Los
+   * atributos `mesPK`/`cronoSK` **se siguen escribiendo**, porque lo
+   * irreversible son los atributos y no los indices. No se renumeraron los
+   * demas: renombrar GSI6 a GSI5 exigiria borrar y recrear cuatro indices para
+   * ganar consecutividad.
    */
   const INDICES_ESPERADOS = [
     { nombre: "GSI1", pk: "GSI1PK", sk: "GSI1SK", proyeccion: "KEYS_ONLY" },
     { nombre: "GSI2", pk: "GSI2PK", sk: "GSI2SK", proyeccion: "ALL" },
     { nombre: "GSI3", pk: "GSI3PK", sk: "GSI3SK", proyeccion: "ALL" },
     { nombre: "GSI4", pk: "GSI4PK", sk: "GSI4SK", proyeccion: "ALL" },
-    { nombre: "GSI5", pk: "mesPK", sk: "cronoSK", proyeccion: "ALL" },
     { nombre: "GSI6", pk: "tipoPK", sk: "cronoSK", proyeccion: "ALL" },
     { nombre: "GSI7", pk: "diaPK", sk: "agregadoSK", proyeccion: "ALL" },
     { nombre: "GSI8", pk: "diaPK", sk: "actorSK", proyeccion: "ALL" },
@@ -114,7 +127,7 @@ describe("tabla unica", () => {
       Projection: { ProjectionType: string };
     }>;
 
-  it("declara los nueve GSIs con las claves y proyecciones de `modelo-datos-dynamodb.md`", () => {
+  it("declara los ocho GSIs con las claves y proyecciones de `modelo-datos-dynamodb.md`", () => {
     const indices = indicesDeclarados();
 
     expect(indices.map((indice) => indice.IndexName)).toEqual(
@@ -133,18 +146,30 @@ describe("tabla unica", () => {
     }
   });
 
-  it("los cinco indices de la bitacora comparten atributos entre si", () => {
+  it("los cuatro indices de la bitacora comparten atributos entre si", () => {
     // Es lo que mantiene el item de evento por debajo del minimo facturable de
-    // 1 KB: siete atributos sirven a cinco indices, en vez de diez. Si alguien
-    // les diera claves propias, el item crecería y cada evento empezaría a
-    // costar 2 WCU en lugar de 1.
+    // 1 KB: **seis** atributos sirven a los cuatro indices, en vez de ocho, y
+    // los dos que se comparten son `cronoSK` —clave de ordenamiento de GSI6 y
+    // GSI9— y `diaPK` —particion de GSI7 y GSI8—. Si alguien les diera claves
+    // propias, el item creceria y cada evento empezaria a costar 2 WCU en lugar
+    // de 1.
     const indices = indicesDeclarados();
     const claves = indices
       .filter((indice) => Number(indice.IndexName.slice(3)) >= 5)
       .flatMap((indice) => indice.KeySchema.map((k) => k.AttributeName));
 
-    expect(new Set(claves).size).toBe(7);
-    expect(claves).toHaveLength(10);
+    expect(new Set(claves).size).toBe(6);
+    expect(claves).toHaveLength(8);
+  });
+
+  it("no declara ningun indice sobre `mesPK`, que quedo sin lector", () => {
+    // El atributo se escribe y el indice no existe. Si alguien lo recrea sin
+    // darle un lector, esta prueba lo detiene y le pide justificarlo: una
+    // escritura de indice por evento no se paga por simetria.
+    const claves = indicesDeclarados().flatMap((indice) =>
+      indice.KeySchema.map((k) => k.AttributeName),
+    );
+    expect(claves).not.toContain("mesPK");
   });
 
   it("un entorno compartido retiene la tabla; un sandbox se la lleva", () => {

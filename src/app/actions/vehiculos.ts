@@ -237,6 +237,8 @@ const numero = (formData: FormData, campo: string): number => {
 };
 
 const datosDesdeFormulario = (formData: FormData): DatosVehiculo => ({
+  numeroEconomico: texto(formData, "numeroEconomico"),
+  numeroDeSerie: texto(formData, "numeroDeSerie"),
   marca: texto(formData, "marca"),
   version: texto(formData, "version"),
   modelo: numero(formData, "modelo"),
@@ -247,8 +249,26 @@ const datosDesdeFormulario = (formData: FormData): DatosVehiculo => ({
   detallesEsteticos: texto(formData, "detallesEsteticos"),
 });
 
+/**
+ * Lo capturado, por nombre de control y sin tocar.
+ *
+ * Se devuelve con el error para que el formulario pueda repintarlo: React 19
+ * reinicia el formulario a `defaultValue` cuando la action termina. Se filtran
+ * los `File` —no son texto y no hay `defaultValue` que los represente— y el
+ * `vehiculoId`, que ya viaja en su campo oculto.
+ */
+const capturadoDesdeFormulario = (formData: FormData): Record<string, string> =>
+  Object.fromEntries(
+    [...formData.entries()]
+      .filter(
+        ([campo, valor]) => campo !== "vehiculoId" && typeof valor === "string",
+      )
+      .map(([campo, valor]) => [campo, valor as string]),
+  );
+
 const aEstado = (
   resultado: Resultado<{ vehiculoId: string }>,
+  capturado?: Record<string, string>,
 ): EstadoFormularioVehiculo =>
   resultado.ok
     ? { estado: "guardado", vehiculoId: resultado.data.vehiculoId }
@@ -256,6 +276,7 @@ const aEstado = (
         estado: "error",
         error: resultado.error,
         detalles: resultado.detalles,
+        capturado,
       };
 
 /**
@@ -276,6 +297,7 @@ export const guardarVehiculoDesdeFormulario = async (
     vehiculoId
       ? await editarVehiculo(vehiculoId, datos)
       : await crearVehiculo(datos),
+    capturadoDesdeFormulario(formData),
   );
 };
 

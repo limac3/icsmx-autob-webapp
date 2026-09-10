@@ -2,10 +2,17 @@ import "server-only";
 
 // Edicion de los atributos de un vehiculo.
 
-import { clave } from "@/lib/data/claves";
+import { AMBITOS_DE_IDENTIFICADOR, clave } from "@/lib/data/claves";
+import {
+  deleteDeCentinelaDeIdentificador,
+  putDeCentinelaDeIdentificador,
+} from "@/lib/data/centinelasDeIdentificador";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
-import { ejecutarTransaccion } from "@/lib/data/transacciones";
+import {
+  ejecutarTransaccion,
+  type ItemDeTransaccion,
+} from "@/lib/data/transacciones";
 import { validarDatosVehiculo } from "@/lib/domain/vehiculos";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 import {
@@ -94,8 +101,40 @@ export const editarVehiculo = async (
     `SET ${asignaciones.join(", ")}` +
     (eliminaciones.length > 0 ? ` REMOVE ${eliminaciones.join(", ")}` : "");
 
+  // Renombrar un identificador de negocio es **una sola transaccion**: reservar
+  // el valor nuevo, liberar el viejo y actualizar la entidad. Partirlo en dos
+  // pasos dejaria, si el segundo falla, o un valor reservado que nadie puede
+  // volver a usar, o dos vehiculos con el mismo numero.
+  //
+  // Es justo lo que hace corregible un typo, y la razon de que el identificador
+  // interno —no este— sea el ancla de la bitacora: la historia no se mueve.
+  const renombrados: ItemDeTransaccion[] = [];
+  const campoPorIndice = new Map<number, string>();
+
+  for (const { campo, ambito } of [
+    {
+      campo: "numeroEconomico",
+      ambito: AMBITOS_DE_IDENTIFICADOR.numeroEconomicoDeVehiculo,
+    },
+    {
+      campo: "numeroDeSerie",
+      ambito: AMBITOS_DE_IDENTIFICADOR.numeroDeSerieDeVehiculo,
+    },
+  ] as const) {
+    if (!modificados.includes(campo)) continue;
+    // El indice del `Put` es lo que despues traduce el fallo al campo concreto.
+    campoPorIndice.set(renombrados.length, campo);
+    renombrados.push(
+      putDeCentinelaDeIdentificador(ambito, validacion.data[campo], {
+        vehiculoId: actual.vehiculoId,
+      }),
+      deleteDeCentinelaDeIdentificador(ambito, actual[campo]),
+    );
+  }
+
   const resultado = await ejecutarTransaccion(
     [
+      ...renombrados,
       {
         item: {
           Update: {
@@ -139,6 +178,14 @@ export const editarVehiculo = async (
     { cliente },
   );
 
-  if (!resultado.ok) return fallo(resultado.error);
+  if (!resultado.ok) {
+    // Si cancelo uno de los `Put` de centinela, el valor nuevo ya estaba
+    // tomado. Decirlo por campo permite senalarlo en la pantalla.
+    const duplicado = campoPorIndice.get(resultado.indice ?? -1);
+    if (duplicado) {
+      return fallo("validation_failed", { [duplicado]: "duplicado" });
+    }
+    return fallo(resultado.error);
+  }
   return exito({ vehiculoId: actual.vehiculoId });
 };

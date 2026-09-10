@@ -62,6 +62,8 @@ const sesion = (permisos: string[]): Sesion => ({
 });
 
 const vehiculo: VehiculoConFotografias = {
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   vehiculoId: "V1",
   marca: "Nissan",
   version: "NP300",
@@ -88,6 +90,8 @@ const vehiculo: VehiculoConFotografias = {
 };
 
 const datos = {
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   marca: "Nissan",
   version: "NP300",
   modelo: 2019,

@@ -25,6 +25,23 @@ export type Clave = { PK: string; SK: string };
 export const PREFIJO_PARTICION_AUDITORIA = "AUDIT#";
 
 /**
+ * Ambitos de unicidad de los identificadores que teclea una persona.
+ *
+ * Uno por pregunta distinta, y **no uno compartido**: si el folio de una
+ * convocatoria y el numero economico de un vehiculo cayeran en el mismo ambito,
+ * un folio `A-1` impediria registrar el vehiculo `A-1`. Son universos separados
+ * porque nombran cosas separadas.
+ */
+export const AMBITOS_DE_IDENTIFICADOR = {
+  folioDeConvocatoria: "FOLIO_CONV",
+  numeroEconomicoDeVehiculo: "NUMECO_VEH",
+  numeroDeSerieDeVehiculo: "SERIE_VEH",
+} as const;
+
+export type AmbitoDeIdentificador =
+  (typeof AMBITOS_DE_IDENTIFICADOR)[keyof typeof AMBITOS_DE_IDENTIFICADOR];
+
+/**
  * Los identificadores son ULIDs propios y nunca contienen `#`, que es el
  * separador de todas las claves. Verificarlo no es paranoia gratuita: un `#`
  * dentro de un identificador desplazaria el resto de la clave y podria
@@ -114,6 +131,35 @@ export const clave = {
   convocatoria: (convocatoriaId: string): Clave => ({
     PK: `CONV#${exigirIdentificador(convocatoriaId, "convocatoriaId")}`,
     SK: "META",
+  }),
+
+  /**
+   * Centinela de unicidad de un identificador de negocio — el folio de una
+   * convocatoria, el numero economico o el numero de serie de un vehiculo.
+   *
+   * **Convierte "no puede haber dos" en una garantia de la base de datos.** Se
+   * crea con `attribute_not_exists(PK)` dentro de la misma transaccion que la
+   * entidad, asi que un segundo alta con el mismo valor falla **en DynamoDB**,
+   * sin importar la concurrencia. Comprobarlo leyendo antes de escribir seria el
+   * "leer y luego decidir" que prohibe la regla 6, y dos altas simultaneas
+   * pasarian las dos.
+   *
+   * Su particion es el **valor**, no la entidad, porque es lo unico que dos
+   * registros distintos comparten cuando estan duplicados. De ahi salen dos
+   * propiedades gratis: es tambien el indice de busqueda —encontrar un vehiculo
+   * por su numero economico es un `GetItem`— y el renombrado es atomico, con un
+   * `Delete` del viejo y un `Put` del nuevo en una transaccion.
+   *
+   * El valor llega **ya normalizado** (`prepararIdentificadorDeNegocio`): en
+   * mayusculas y recortado. Sin eso, `"ab-1"` y `"AB-1"` serian dos centinelas
+   * distintos y el duplicado se colaria.
+   */
+  centinelaDeIdentificador: (
+    ambito: AmbitoDeIdentificador,
+    valorNormalizado: string,
+  ): Clave => ({
+    PK: `${ambito}#${exigirIdentificador(valorNormalizado, "identificadorDeNegocio")}`,
+    SK: "CENTINELA",
   }),
 
   /**
@@ -388,28 +434,6 @@ export const gsi2 = {
    */
   cotaSuperiorPorFecha: (fecha: string): string =>
     `${exigirIdentificador(fecha, "fecha")}#${String.fromCharCode(0xffff)}`,
-
-  /**
-   * PA-13 en su forma vieja — **transitoria**.
-   *
-   * El acceso cronologico de la bitacora pasa a `GSI5` (`bitacora.cronologico`),
-   * que particiona por mes y acota el rango en la clave de ordenamiento. Esta
-   * clave se conserva mientras `consultarBitacoraGlobal` siga leyendola: se
-   * retira al reescribir los lectores, y con ella GSI2 vuelve a servir solo los
-   * cinco patrones de negocio por estatus.
-   *
-   * No se borra antes por una razon de secuencia y no de diseno: borrarla y
-   * reescribir los lectores en el mismo paso dejaria una etapa que no se puede
-   * verificar por si sola.
-   */
-  bitacoraDelDia: (
-    dia: string,
-    ocurridoEn: string,
-    eventoId: string,
-  ): { GSI2PK: string; GSI2SK: string } => ({
-    GSI2PK: `${PREFIJO_PARTICION_AUDITORIA}${exigirIdentificador(dia, "dia")}`,
-    GSI2SK: `${exigirIdentificador(ocurridoEn, "ocurridoEn")}#${exigirIdentificador(eventoId, "eventoId")}`,
-  }),
 } as const;
 
 /** GSI3 — por participante. PA-09: mis solicitudes. */
@@ -492,7 +516,22 @@ const cronoSK = (ocurridoEn: string, eventoId: string): string =>
 const diaPK = (dia: string): string => `DIA#${exigirIdentificador(dia, "dia")}`;
 
 export const bitacora = {
-  /** GSI5 — todo el rango, cronologico. Un mes por particion. */
+  /**
+   * `mesPK` y `cronoSK` — **atributos sin indice**, escritos a proposito.
+   *
+   * Iban a ser la clave de un GSI5 cronologico que se borro por no tener
+   * lector: la pantalla exige al menos un criterio y los tres tienen su propio
+   * indice, asi que nadie pregunta por el rango a secas.
+   *
+   * Se siguen escribiendo porque **lo irreversible son los atributos, no los
+   * indices**. A un evento append-only no se le pueden agregar despues —IAM
+   * deniega `UpdateItem` y `attribute_not_exists(PK)` rechaza un `Put` de
+   * reemplazo—, asi que un atributo que hoy no se escribe es una pregunta que
+   * nunca se podra responder sobre los eventos de hoy. El indice se crea cuando
+   * aparezca el lector, y su relleno vera todo lo ya escrito.
+   *
+   * `cronoSK` **si** se usa: es la clave de ordenamiento de GSI6 y GSI9.
+   */
   cronologico: (
     mes: string,
     ocurridoEn: string,
@@ -556,14 +595,72 @@ export const bitacora = {
   /** Prefijo de una persona dentro de `actorSK`, para el salto de GSI8. */
   prefijoDeActor: (actorId: string): string =>
     `ACTOR#${exigirIdentificador(actorId, "actorId")}#`,
+
+  // --- Las particiones, para leer ------------------------------------------
+  //
+  // Los constructores de arriba arman la clave **completa** de un evento que se
+  // escribe; estos arman solo la particion que un lector consulta. Van en el
+  // mismo objeto y no en cada servicio por la misma razon que
+  // `gsi2.particionDeEstatus`: si un lector concatenara su propia particion,
+  // cambiar el prefijo de escritura dejaria de romper la compilacion y pasaria
+  // a devolver **cero resultados en silencio**, que es la peor forma de fallar
+  // que tiene una bitacora.
+
+  /** GSI6 — un tipo de evento en un mes. */
+  particionDeTipo: (tipo: string, mes: string): { tipoPK: string } => ({
+    tipoPK: `TIPO#${exigirIdentificador(tipo, "tipo")}#${exigirIdentificador(mes, "mes")}`,
+  }),
+
+  /** GSI7 y GSI8 — un dia. Las dos comparten particion y difieren en la `SK`. */
+  particionDelDia: (dia: string): { diaPK: string } => ({ diaPK: diaPK(dia) }),
+
+  /** GSI9 — lo que una persona firmo en un mes. */
+  particionDeActor: (actorId: string, mes: string): { actorMesPK: string } => ({
+    actorMesPK: `ACTOR#${exigirIdentificador(actorId, "actorId")}#${exigirIdentificador(mes, "mes")}`,
+  }),
+
+  /**
+   * Cota del grupo de un agregado, para saltarlo con `ExclusiveStartKey`.
+   *
+   * `"LOTE#<id>"` ordena **estrictamente antes** que `"LOTE#<id>#<crono>"`
+   * —cualquier cadena ordena antes que ella misma con sufijo—, asi que en una
+   * lectura descendente esta cota deja atras el grupo entero. Es lo que permite
+   * enumerar los identificadores distintos de un dia con una consulta por
+   * valor, en vez de leer todos sus eventos. Verificado contra DynamoDB real:
+   * 10 lotes distintos en 11 consultas, contra 110 eventos sin el salto.
+   */
+  cotaDeGrupoDeAgregado: (
+    agregado: TipoDeAgregado,
+    agregadoId: string,
+  ): string => `${agregado}#${exigirIdentificador(agregadoId, "agregadoId")}`,
+
+  /** Lo mismo para el grupo de una persona en `actorSK`. */
+  cotaDeGrupoDeActor: (actorId: string): string =>
+    `ACTOR#${exigirIdentificador(actorId, "actorId")}`,
 } as const;
+
+/**
+ * Compara dos claves **como las compara DynamoDB**: por punto de codigo.
+ *
+ * Existe porque `String.prototype.localeCompare` no sirve para esto y lo
+ * parece. Usa la colacion del idioma: ignora diferencias de mayusculas, trata
+ * la puntuacion aparte y puede invertir el orden de dos claves respecto del
+ * byte a byte que hace la tabla. Cualquier ordenamiento en memoria que afirme
+ * reproducir el orden de una `SK` —para unir dos lecturas, o para reordenar una
+ * particion que el indice entrego agrupada— tiene que usar esta, o el auditor
+ * vera un orden que la tabla no tiene.
+ *
+ * Se descubrio en el simulador de indice de `valoresConActividad.test.ts`, que
+ * con `localeCompare` se contradecia con su propio cursor y perdia valores.
+ */
+export const comparandoClaves = (a: string, b: string): number =>
+  a < b ? -1 : a > b ? 1 : 0;
 
 export const NOMBRES_DE_INDICE = {
   identidadAlterna: "GSI1",
   porEstatus: "GSI2",
   porParticipante: "GSI3",
   trabajoPendiente: "GSI4",
-  cronologico: "GSI5",
   porTipoDeEvento: "GSI6",
   porAgregadoDelDia: "GSI7",
   porActorDelDia: "GSI8",

@@ -51,6 +51,25 @@ export const ESTATUS_CONVOCATORIA = [
  * presentar (regla 9).
  */
 export type DatosConvocatoria = {
+  /**
+   * Folio: el identificador con el que la organizacion nombra la convocatoria.
+   * **Lo teclea el operador y es unico**, garantizado por un centinela
+   * (`clave.centinelaDeIdentificador`), no por una lectura previa.
+   *
+   * No es la clave del item ni el ancla de la bitacora — eso sigue siendo el
+   * `convocatoriaId` interno—, y por eso **se puede corregir** sin partir la
+   * historia. Misma division que D-15 para `participanteId`.
+   */
+  folio: string;
+  /**
+   * Cadena corta para identificarla en pantalla.
+   *
+   * Sin ella, una convocatoria solo se distinguia por su tipo y sus fechas, y
+   * las listas y las opciones de auditoria tenian que ofrecer un ULID. **No es
+   * unica**: dos ventas recurrentes pueden llamarse igual y el folio las
+   * distingue.
+   */
+  nombre: string;
   tipo: TipoConvocatoria;
   descripcionParticipacion: string;
   publicadaEn: string;
@@ -61,6 +80,8 @@ export type DatosConvocatoria = {
 
 /** Los campos capturables, para recorrerlos sin escribirlos dos veces. */
 export const CAMPOS_CONVOCATORIA = [
+  "folio",
+  "nombre",
   "tipo",
   "descripcionParticipacion",
   "publicadaEn",

@@ -51,12 +51,23 @@ Reglas transversales:
 | `reordenarFotografias` | `{ vehiculoId, ordenFotoIds }` | `{ vehiculoId }` | `vehiculo:subir-fotografia` | `validation_failed` | `VEHICULO_EDITADO` |
 | `marcarFotografiaPrincipal` | `{ vehiculoId, fotoId }` | `{ fotoId }` | `vehiculo:subir-fotografia` | `not_found`, `invalid_state` | `VEHICULO_EDITADO` |
 
-`DatosVehiculo`: `marca`, `version`, `modelo` (anio), `nivelEquipamiento`,
-`especificacionMecanica`, `condicionesMecanicas`, `detallesEsteticos`, `kilometraje`.
+`DatosVehiculo`: `numeroEconomico`, `numeroDeSerie`, `marca`, `version`, `modelo` (anio),
+`nivelEquipamiento`, `especificacionMecanica`, `condicionesMecanicas`, `detallesEsteticos`,
+`kilometraje`.
 
 **Validaciones:** `modelo` entre 1950 y el anio siguiente al actual; `kilometraje >= 0`;
-`marca` y `version` no vacias. Fotografia: tipo `image/jpeg|png|webp`, maximo 10 MB,
-**nombre de archivo generado en servidor** — nunca el del cliente.
+`marca` y `version` no vacias. `numeroEconomico` y `numeroDeSerie` no vacios, hasta 40 caracteres
+y con alfabeto de **lista blanca** (`A-Z`, `0-9`, `-`, `_`, `/`) — el valor entra en la clave de su
+centinela de unicidad, asi que un `#` desplazaria el separador. Se guardan recortados y en
+mayusculas.
+
+**Los dos son unicos, y la unicidad la decide DynamoDB.** `crearVehiculo` y `editarVehiculo`
+devuelven `validation_failed` con `detalles: { numeroEconomico: "duplicado" }` —o `numeroDeSerie`—
+segun cual de los dos centinelas cancelo la transaccion. No es `conflicto_concurrencia`: un numero
+repetido **es** un dato mal capturado y hay que corregirlo, no reintentarlo con el mismo valor.
+
+Fotografia: tipo `image/jpeg|png|webp`, maximo 10 MB, **nombre de archivo generado en servidor** —
+nunca el del cliente.
 
 `eliminarFotografia` rechaza con `invalid_state` si dejaria al vehiculo sin fotografia
 principal. En la practica eso significa **la ultima**: al borrar la principal teniendo otras, la
@@ -104,11 +115,21 @@ capturar se guardaria como cero kilometros, que es un dato falso y plausible.
 | `reactivarConvocatoria` | `{ convocatoriaId }` | `{ estatus }` | `convocatoria:reactivar` | `invalid_state` | `CONVOCATORIA_REACTIVADA` |
 | `concluirConvocatoria` | `{ convocatoriaId }` | `{ estatus, vendidos, noVendidos }` | `convocatoria:concluir` | `invalid_state` | `CONVOCATORIA_CONCLUIDA` |
 
-`DatosConvocatoria`: `tipo` (`EMPLEADOS` \| `PUBLICO_GENERAL`), `titulo`, `descripcion`,
-`publicadaEn`, `inicioVenta`, `finVenta`, `horasLiquidacion`.
+`DatosConvocatoria`: `folio`, `nombre`, `tipo` (`EMPLEADOS` \| `PUBLICO_GENERAL`),
+`descripcionParticipacion`, `publicadaEn`, `inicioVenta`, `finVenta`, `horasLiquidacion`.
+
+> **Corregido en la Etapa 11.2.** Este contrato prometia `titulo` y `descripcion` desde la Etapa 0
+> y el codigo nunca tuvo ninguno de los dos: tenia `descripcionParticipacion`. La divergencia se
+> cierra aqui y no renombrando el campo del codigo — `descripcionParticipacion` dice de que habla
+> ese texto, que es HTML del editor enriquecido y lo lee todo participante. Lo que si hacia falta
+> de `titulo` es `nombre`: una cadena corta con la que reconocerla en pantalla.
 
 **Validaciones (R-14):** `publicadaEn <= inicioVenta < finVenta` y `horasLiquidacion > 0`. Se
 comprueban al crear, al editar y de nuevo al enviar a aprobacion.
+
+`folio` sigue las mismas reglas que los numeros del vehiculo —no vacio, hasta 40 caracteres, lista
+blanca, mayusculas— y es **unico**: un repetido vuelve como `validation_failed` con
+`detalles: { folio: "duplicado" }`. `nombre` es obligatorio, hasta 80 caracteres, y **no** unico.
 
 **Notas de contrato:**
 
@@ -309,10 +330,12 @@ No son Server Actions: los invoca la pagina `/auditoria` directamente, que es un
 | Servicio | Entrada | Salida | Patron |
 | --- | --- | --- | --- |
 | `consultarBitacoraCompleta` | `{ agregado, agregadoId }` | `EventoDTO[]` | PA-12, agota las paginas |
-| `consultarBitacoraGlobal` | `{ desde, hasta, tipo?, actorId? }` | `{ eventos, truncada }` | PA-13, una `Query` por dia |
-| `consultarPorTipoDeEvento` | `{ desde, hasta, tipo, yaLeido? }` | `{ eventos, truncada }` | reusa `yaLeido` **solo si no trunco** |
-| `consultarActividadDeParticipante` | `{ participanteId, desde, hasta, tipo? }` | `{ eventos, truncada }` | PA-13 + PA-09 + PA-12 |
-| `construirOpciones` | `{ eventos, agregado?, diccionario }` | `{ identificadores, participantes, nombresDeActor }` | lecturas por lote |
+| `consultarBitacoraGlobal` | `{ desde, hasta }` **y al menos uno de** `tipo`, `actorId`, `agregado` | `{ eventos, truncada }` | PA-13, el criterio elige el indice |
+| `consultarActividadDeParticipante` | `{ participanteId, desde, hasta, tipo? }` | `{ eventos, truncada }` | PA-13 + PA-09 + particiones de lote |
+| `identificadoresConActividad` | `{ desde, hasta, agregado }` | `ValorConActividad[]` | PA-15 sobre GSI7 |
+| `participantesConActividad` | `{ desde, hasta }` | `ValorConActividad[]` | PA-15 sobre GSI8 |
+| `construirOpciones` | `{ desde, hasta, agregado?, diccionario }` | `{ identificadores, participantes, nombresDeActor }` | PA-15 + lecturas por lote |
+| `construirEtiquetador` | `{ referencias, actorIds, diccionario }` | `{ deAgregado, deParticipante, nombresDeActor }` | lecturas por lote |
 | `leerPerfiles` | `participanteId[]` | `Map<id, PerfilDeParticipante>` | `BatchGetItem` |
 | `registrarPerfil` | `{ participanteId, oktaSub, nombre, correo }` | `PerfilDeParticipante` | `PutItem` sin condicion |
 
@@ -328,10 +351,21 @@ la llave de PA-13 y sus fronteras son las medianoches de Mexico
 > desduplican por `eventoId` (`SOLICITUD_CREADA` aparece en las dos lecturas) y se ordenan por
 > `ocurridoEn` con desempate por `eventoId`, que es el orden de la `SK` de la bitacora.
 >
+> **La segunda mitad estaba muerta hasta la Etapa 11.2.** Leia particiones
+> `AUDIT#SOLICITUD#<id>`, que **ningun escritor escribe**: los 19 eventos de fila anclan a `LOTE`,
+> porque la fila es del lote y la solicitud es un lugar dentro de ella. Devolvia cero siempre y
+> nadie lo noto, porque cero es una respuesta plausible. Ahora lee las particiones de lote, con el
+> rango en la clave y las solicitudes como filtro.
+
 > **`EventoDTO` gano `agregado` y `agregadoId`.** Salen de la clave de particion, no de los
 > atributos, y son opcionales por eso. Quien lee PA-12 ya sabe de que agregado pregunto; quien lee
 > PA-13 recibe eventos de todo el sistema mezclados y sin ellos no puede decir de que habla cada
 > renglon.
+
+> **El criterio es obligatorio en el tipo de `consultarBitacoraGlobal`.** Es una union de tres
+> ramas, cada una exigiendo uno de los tres criterios, asi que un rango sin criterio no se puede
+> construir. No es una duplicacion de la validacion de la pantalla: es lo que impide que una action
+> nueva pida algo que ningun indice puede responder.
 
 ---
 
@@ -412,8 +446,8 @@ propios duplicaria el flujo y lo romperia.
 
 | DTO | Contiene | Nunca contiene |
 | --- | --- | --- |
-| `ConvocatoriaListadoDTO` | id, titulo, tipo, `inicioVenta`, `finVenta`, conteo de lotes | Datos de participantes |
-| `ConvocatoriaDetalleDTO` | Lo anterior + descripcion + `LoteResumenDTO[]` | Datos de participantes |
+| `ConvocatoriaListadoDTO` | id, `folio`, `nombre`, tipo, `inicioVenta`, `finVenta`, conteo de lotes | Datos de participantes |
+| `ConvocatoriaDetalleDTO` | Lo anterior + `descripcionParticipacion` + `LoteResumenDTO[]` | Datos de participantes |
 | `LoteResumenDTO` | id, vehiculo resumido, precio, estatus, `tamanoFila` | Turnos ni identidades ajenas |
 | `LoteDetalleDTO` | Vehiculo completo, fotografias firmadas, `MiLugarDTO \| null` | Fila de terceros |
 | `MiLugarDTO` | Seccion 4.1 | `participanteId`, correo, nombre |

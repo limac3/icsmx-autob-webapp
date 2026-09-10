@@ -23,6 +23,8 @@ const actor: ActorUsuario = {
 
 const actual: Vehiculo = {
   vehiculoId: "V1",
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   marca: "Nissan",
   version: "NP300",
   modelo: 2019,
@@ -228,5 +230,116 @@ describe("rechazos", () => {
         deps(falso),
       ),
     ).resolves.toEqual({ ok: false, error: "invalid_state" });
+  });
+});
+
+describe("renombrar un identificador de negocio", () => {
+  it("no toca los centinelas si los dos numeros siguen igual", async () => {
+    // La transaccion normal son dos items. Reservar el mismo valor otra vez
+    // fallaria por `attribute_not_exists`: una edicion de kilometraje no puede
+    // depender de eso.
+    const falso = crearClienteFalso();
+    await editarVehiculo(
+      { actual, cambios: { kilometraje: 150_000 }, actor },
+      deps(falso),
+    );
+
+    const items = itemsDeTransaccion(falso);
+    expect(items).toHaveLength(2);
+    expect(items.some((item) => item.Delete !== undefined)).toBe(false);
+  });
+
+  it("reserva el nuevo y libera el viejo en la misma transaccion", async () => {
+    // Partirlo en dos pasos dejaria, si el segundo falla, o un numero reservado
+    // que nadie puede volver a usar, o dos vehiculos con el mismo.
+    const falso = crearClienteFalso();
+    await editarVehiculo(
+      { actual, cambios: { numeroEconomico: "VEH-777" }, actor },
+      deps(falso),
+    );
+
+    const items = itemsDeTransaccion(falso);
+    expect(items).toHaveLength(4);
+    expect(items[0]?.Put).toMatchObject({
+      Item: { PK: "NUMECO_VEH#VEH-777", SK: "CENTINELA", vehiculoId: "V1" },
+      ConditionExpression: "attribute_not_exists(SK)",
+    });
+    expect(items[1]?.Delete).toMatchObject({
+      Key: { PK: "NUMECO_VEH#VEH-001", SK: "CENTINELA" },
+      // Exige que exista: borrar a ciegas dejaria reservado un valor que nadie
+      // podria volver a usar si el atributo y su centinela se desincronizaran.
+      ConditionExpression: "attribute_exists(SK)",
+    });
+  });
+
+  it("renombra los dos numeros a la vez sin mezclar los ambitos", async () => {
+    const falso = crearClienteFalso();
+    await editarVehiculo(
+      {
+        actual,
+        cambios: { numeroEconomico: "VEH-777", numeroDeSerie: "VIN-NUEVO" },
+        actor,
+      },
+      deps(falso),
+    );
+
+    const items = itemsDeTransaccion(falso);
+    expect(items).toHaveLength(6);
+    expect(items[0]?.Put?.Item?.PK).toBe("NUMECO_VEH#VEH-777");
+    expect(items[1]?.Delete?.Key?.PK).toBe("NUMECO_VEH#VEH-001");
+    expect(items[2]?.Put?.Item?.PK).toBe("SERIE_VEH#VIN-NUEVO");
+    expect(items[3]?.Delete?.Key?.PK).toBe("SERIE_VEH#3N6AD33A9KK870001");
+  });
+
+  it("el ancla de la bitacora sigue siendo el identificador interno", async () => {
+    // Es lo que hace corregible un typo: renombrar el numero economico no
+    // parte la historia del vehiculo en dos.
+    const falso = crearClienteFalso();
+    await editarVehiculo(
+      { actual, cambios: { numeroEconomico: "VEH-777" }, actor },
+      deps(falso),
+    );
+
+    const items = itemsDeTransaccion(falso);
+    expect(items[3]?.Put?.Item).toMatchObject({
+      PK: "AUDIT#VEHICULO#V1",
+      tipo: "VEHICULO_EDITADO",
+      datos: {
+        campos: ["numeroEconomico"],
+        valores: { numeroEconomico: "VEH-777" },
+      },
+    });
+  });
+
+  it("dice cual numero estaba tomado si el centinela nuevo cancela", async () => {
+    const falso = crearClienteFalso({
+      lanza: new TransactionCanceledException({
+        message: "cancelada",
+        $metadata: {},
+        CancellationReasons: [
+          { Code: "None" },
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+          { Code: "None" },
+          { Code: "None" },
+          { Code: "None" },
+        ],
+      }),
+    });
+
+    await expect(
+      editarVehiculo(
+        {
+          actual,
+          cambios: { numeroEconomico: "VEH-777", numeroDeSerie: "VIN-NUEVO" },
+          actor,
+        },
+        deps(falso),
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      error: "validation_failed",
+      detalles: { numeroDeSerie: "duplicado" },
+    });
   });
 });

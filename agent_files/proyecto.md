@@ -78,16 +78,36 @@ especial del codigo.
 Existe con independencia de las convocatorias. Un mismo vehiculo puede participar en varias
 convocatorias a lo largo del tiempo, pero **nunca en dos convocatorias activas al mismo tiempo**.
 
-Atributos: marca, version, modelo (anio), nivel de equipamiento, especificacion mecanica,
-condiciones mecanicas, detalles esteticos, kilometraje, fotografia principal y fotografias
-adicionales.
+Atributos: **numero economico**, **numero de serie**, marca, version, modelo (anio), nivel de
+equipamiento, especificacion mecanica, condiciones mecanicas, detalles esteticos, kilometraje,
+fotografia principal y fotografias adicionales.
+
+**El numero economico y el numero de serie los teclea el operador y son unicos.** El primero es la
+etiqueta interna del activo; el segundo, el codigo del fabricante. La unicidad la garantiza la base
+de datos con un centinela por valor (`modelo-datos-dynamodb.md` 4.5) y **no** una lectura previa:
+dos altas simultaneas con el mismo numero pasarian las dos.
+
+Los dos **se pueden corregir**. No son la clave del vehiculo ni el ancla de su bitacora —eso sigue
+siendo el identificador interno—, asi que arreglar un typo no parte la historia en dos. El cambio
+es una sola transaccion: reservar el valor nuevo, liberar el viejo y actualizar el vehiculo.
+
+> **A confirmar con el operador:** si en la practica el numero economico y el de serie son el mismo
+> dato con dos nombres, se colapsan a uno. Estan separados porque describen cosas distintas.
 
 ### 4.2 Convocatoria
 
 Agrupa uno o mas vehiculos para su venta durante una ventana de tiempo.
 
-Atributos: tipo, descripcion de participacion, fecha y hora de publicacion, de inicio de venta
-y de fin de venta, horas para liquidacion del pago, y estatus.
+Atributos: **folio**, **nombre corto**, tipo, descripcion de participacion, fecha y hora de
+publicacion, de inicio de venta y de fin de venta, horas para liquidacion del pago, y estatus.
+
+**El folio lo teclea el operador y es unico**, con la misma garantia y la misma posibilidad de
+correccion que los numeros del vehiculo. Es como la organizacion nombra la convocatoria.
+
+**El nombre corto no es unico, y eso es deliberado**: dos ventas recurrentes pueden llamarse igual
+y el folio las distingue. Existe porque sin el una convocatoria solo se distinguia por su tipo y
+sus fechas, y las listas y las opciones de auditoria no tenian mas que un identificador generado
+que ofrecer.
 
 **Tipos:** `EMPLEADOS` (exige `Autob_Venta_a_empleados`) y `PUBLICO_GENERAL` (exige
 `Autob_Venta_en_general`).

@@ -46,6 +46,8 @@ export const aConvocatoria = (
   item: Record<string, unknown>,
 ): Convocatoria | undefined => {
   const convocatoriaId = texto(item.convocatoriaId);
+  const folio = texto(item.folio);
+  const nombre = texto(item.nombre);
   const descripcionParticipacion = texto(item.descripcionParticipacion);
   const publicadaEn = texto(item.publicadaEn);
   const inicioVenta = texto(item.inicioVenta);
@@ -56,6 +58,11 @@ export const aConvocatoria = (
 
   if (
     !convocatoriaId ||
+    // Los dos son obligatorios: sin folio la convocatoria no se puede nombrar
+    // en el inventario y su centinela quedaria huerfano; sin nombre, las listas
+    // y las opciones de auditoria volverian a ofrecer un identificador crudo.
+    !folio ||
+    !nombre ||
     !descripcionParticipacion ||
     !publicadaEn ||
     !inicioVenta ||
@@ -71,6 +78,8 @@ export const aConvocatoria = (
 
   return {
     convocatoriaId,
+    folio,
+    nombre,
     tipo: item.tipo,
     descripcionParticipacion,
     publicadaEn,

@@ -150,7 +150,11 @@ al presentar.
 
 ## 3. Indices secundarios globales
 
-Cuatro GSIs genericos. Cada uno resuelve una familia de accesos, no una consulta suelta.
+Ocho GSIs, en dos familias con convenciones distintas y por una razon.
+
+**Los cuatro de negocio** usan claves genericas (`GSInPK`/`GSInSK`) porque estan
+**sobrecargados**: GSI2 solo sirve a cinco entidades distintas, y una clave con nombre semantico
+mentiria sobre cuatro de ellas.
 
 | Indice | `GSI#PK` | `GSI#SK` | Proyeccion |
 | --- | --- | --- | --- |
@@ -158,6 +162,56 @@ Cuatro GSIs genericos. Cada uno resuelve una familia de accesos, no una consulta
 | **GSI2** — listados por estatus | `<TIPO>_ESTATUS#<estatus>` | `<fecha>#<id>` | `ALL` |
 | **GSI3** — por participante | `PART#<participanteId>` | `SOL#<solicitadoEn>#<loteId>` | `ALL` |
 | **GSI4** — trabajo pendiente (disperso) | `VENCE#<yyyy-mm-dd>` / `OUTBOX_PENDIENTE` | `<venceEn>` / `<creadoEn>` | `ALL` |
+
+**Los cuatro de la bitacora** llevan **nombre semantico**, porque cada uno responde una sola
+pregunta del auditor y el nombre hace evidente la propiedad que sostiene el diseno: un vehiculo no
+tiene `diaPK`, asi que **no esta en ese indice**. Los cuatro son dispersos: solo los eventos pagan
+escritura por ellos.
+
+| Indice | `PK` | `SK` | Responde |
+| --- | --- | --- | --- |
+| **GSI6** — por tipo de evento | `TIPO#<tipo>#<yyyy-mm>` | `cronoSK` | "todos los rechazos de pago del mes" |
+| **GSI7** — agregados de un dia | `DIA#<yyyy-mm-dd>` | `agregadoSK` | "que identificadores tuvieron actividad" |
+| **GSI8** — personas de un dia | `DIA#<yyyy-mm-dd>` | `actorSK` | "quienes actuaron" |
+| **GSI9** — actividad de una persona | `ACTOR#<actorId>#<yyyy-mm>` | `cronoSK` | "que firmo esta persona" |
+
+```
+cronoSK      <ocurridoEn>#<eventoId>
+agregadoSK   <agregado>#<agregadoId>#<ocurridoEn>#<eventoId>
+actorSK      ACTOR#<actorId>#<ocurridoEn>#<eventoId>
+mesPK        MES#<yyyy-mm>              -- escrito, SIN indice; ver abajo
+```
+
+**Seis atributos sirven a los cuatro indices**, no ocho: `cronoSK` es la clave de ordenamiento de
+GSI6 y GSI9, y `diaPK` la particion de GSI7 y GSI8. Es lo que mantiene el item de evento por
+debajo del minimo facturable de 1 KB, o sea a 1 WCU por evento.
+
+**GSI6 y GSI9 particionan por mes, GSI7 y GSI8 por dia**, y la diferencia no es de rendimiento:
+
+- Por **mes**, el rango se acota dentro de la particion con `cronoSK`, asi que 90 dias cuestan
+  entre una y cuatro `Query` en vez de 90.
+- Por **dia**, porque de ahi salen las **listas de opciones** de la pantalla: una opcion "activa en
+  el mes pero no en el rango" devolveria una tabla vacia, que es exactamente lo que esas listas
+  existen para evitar.
+
+> **`mesPK` se escribe y no tiene indice, a proposito.** Iba a ser la particion de un GSI5
+> cronologico que se borro por no tener lector: la pantalla exige al menos un criterio y los tres
+> tienen su propio indice, asi que nadie pregunta por el rango a secas. Un indice con proyeccion
+> `ALL` y sin lector cobra una escritura por evento a cambio de nada.
+>
+> El atributo se conserva porque **lo irreversible son los atributos, no los indices**: a un evento
+> append-only no se le pueden agregar despues —IAM deniega `UpdateItem` y
+> `attribute_not_exists(PK)` rechaza un `Put` de reemplazo—, asi que un atributo que hoy no se
+> escribe es una pregunta que nunca se podra responder sobre los eventos de hoy. El indice se crea
+> cuando aparezca el lector y su relleno vera todo lo ya escrito.
+>
+> Los indices **no se renumeraron** al borrar GSI5: pasar GSI6 a GSI5 exigiria borrar y recrear
+> cuatro indices para ganar consecutividad.
+
+> **GSI2 ya no lleva la bitacora.** Hasta la Etapa 11.2 tenia una particion `AUDIT#<yyyy-mm-dd>`
+> por dia, que era el unico acceso cronologico. Con la familia de arriba quedo redundante, y
+> mientras existiera duplicaba **cada evento** en un indice `ALL`. Volvio a servir solo sus cinco
+> patrones de negocio.
 
 **Por que `ALL` y no `INCLUDE`** (decidido al implementar la Etapa 3). GSI2 sirve a cinco
 accesos sobre entidades distintas —vehiculos, convocatorias, solicitudes y bitacora—, asi que
@@ -184,7 +238,9 @@ clave fija. Con una clave unica, todo el trabajo pendiente del sistema caeria en
 (riesgo R12).
 
 > **El dia se calcula en hora de negocio, no en UTC** (`diaDeNegocio` de
-> `src/lib/domain/fechas.ts`). Aplica igual a `AUDIT#<yyyy-mm-dd>` en GSI2.
+> `src/lib/domain/fechas.ts`). Aplica igual a `DIA#<yyyy-mm-dd>` en GSI7 y GSI8, y al `mes` de
+> GSI6 y GSI9 — que se **recorta del dia** (`dia.slice(0, 7)`) en vez de calcularse aparte, para
+> que no puedan hablar de calendarios distintos en la frontera de fin de mes.
 >
 > Quien lee esas claves es una persona: el operador que sigue R-1 de `runbooks.md`, el auditor
 > que pide "todo lo del 4 de septiembre". Un dia UTC mandaria un vencimiento de las 18:00 de
@@ -272,6 +328,43 @@ entran. Ver desafios-implementacion.md seccion 17.
 
 Ordena entre `PART#` y `SOL#`, asi que ninguna consulta de la fila la ve.
 
+### 4.5 Centinela de identificador de negocio
+
+`<ambito>#<valorNormalizado> / CENTINELA`, con el identificador de la entidad como atributo.
+
+Tres ambitos, uno por pregunta distinta: `FOLIO_CONV`, `NUMECO_VEH` y `SERIE_VEH`. **No uno
+compartido**: si el folio de una convocatoria y el numero economico de un vehiculo cayeran en el
+mismo ambito, un folio `A-1` impediria registrar el vehiculo `A-1`. Son universos separados porque
+nombran cosas separadas.
+
+Convierte "no puede haber dos" en una garantia de la base de datos, con `attribute_not_exists(SK)`
+y **en la misma transaccion** que la entidad. Comprobarlo leyendo antes de escribir seria el "leer
+y luego decidir" que prohibe la regla 6: dos altas simultaneas con el mismo folio pasarian las dos.
+
+Su particion es el **valor** y no la entidad, porque es lo unico que dos registros duplicados
+comparten. De ahi salen dos propiedades gratis:
+
+- **Es tambien el indice de busqueda** (PA-16): encontrar un vehiculo por su numero economico es un
+  `GetItem`, no un recorrido.
+- **El renombrado es atomico**: `Put` del nuevo con `attribute_not_exists`, `Delete` del viejo con
+  `attribute_exists` y `Update` de la entidad, en una sola transaccion. Partirlo en dos dejaria, si
+  el segundo paso falla, o un valor reservado que nadie puede volver a usar, o dos entidades con el
+  mismo.
+
+**Los centinelas van primero en la transaccion**, y no es cosmetico: `ejecutarTransaccion` devuelve
+el **indice** del item que cancelo, y es la unica forma de saber *cual* de los dos numeros de un
+vehiculo estaba duplicado. Con ellos al frente ese indice es estable y no se mueve al agregar items
+despues.
+
+El valor llega **ya normalizado** —recortado y en mayusculas, con alfabeto de lista blanca
+(`A-Z`, `0-9`, `-`, `_`, `/`)—. Sin normalizar, `"ab-1"` y `"AB-1"` serian dos centinelas y el
+duplicado se colaria; sin lista blanca, un `#` dentro del valor desplazaria el separador de la
+clave y podria fabricar el centinela de otro ambito.
+
+> **El identificador de negocio no es la clave de la entidad ni el ancla de su bitacora.** Eso
+> sigue siendo el identificador interno, y es lo que permite **corregir un typo** sin partir la
+> historia en dos. Misma division que D-15 hizo para `participanteId`.
+
 ---
 
 ## 5. Patrones de acceso
@@ -290,8 +383,10 @@ Ordena entre `PART#` y `SOL#`, asi que ninguna consulta de la fila la ve.
 | PA-10 | Adjudicaciones por vencer | `Query` GSI4 `VENCE#<dia>`, `GSI4SK <= ahora` |
 | PA-11 | Bandeja de tesoreria | `Query` GSI2 `SOL_ESTATUS#EN_VERIFICACION` |
 | PA-12 | Bitacora de un agregado | `Query` `PK = AUDIT#<agregado>#<id>` |
-| PA-13 | Bitacora cronologica global | `Query` GSI2 `AUDIT#<yyyy-mm-dd>`, **una por dia del rango**. Ver 5.3 |
+| PA-13 | Bitacora de un rango, por criterio | `Query` sobre GSI6, GSI9 o GSI7 segun el criterio; el rango es **condicion de clave**. Ver 5.3 |
 | PA-14 | Correos pendientes | `Query` GSI4 `OUTBOX_PENDIENTE` |
+| PA-15 | Valores distintos con actividad | `Query` con salto de grupo sobre GSI7 u GSI8. Ver 5.4 |
+| PA-16 | Entidad por su identificador de negocio | `GetItem` del centinela 4.5 |
 
 ### 5.1 El gating triple es una consulta, no un filtro
 
@@ -324,52 +419,112 @@ Se calculan con un `Query` `Select: COUNT` sobre PA-07, **sin traer los items**.
 hace estructuralmente imposible filtrar identidades (R-12): los datos de terceros nunca salen
 de DynamoDB.
 
-### 5.3 PA-13: el rango de dias es la llave, no un filtro
+### 5.3 PA-13: cada criterio tiene su indice, y el rango es condicion de clave
 
-`consultarBitacoraGlobal` recorre **una particion por dia** del rango, **del dia mas nuevo al mas
-viejo y en secuencia**, y voltea el resultado al final para presentarlo cronologico. No ordena
-nada en memoria y no le hace falta: las particiones de dia son disjuntas, cada `Query` devuelve su
-dia ya ordenado (`GSI2SK` es `<ocurridoEn>#<eventoId>`, leida con `ScanIndexForward: false`) y los
-dias se recorren en orden, asi que basta un `reverse`.
+`consultarBitacoraGlobal` traduce la busqueda en una lista de consultas, y **un solo lugar**
+—`consultasDe`— decide cual:
 
-> **El sentido de la lectura es lo que hace correcto el truncamiento.** Cuando el rango tiene mas
-> eventos de los que caben, lo que debe sobrar es **lo mas viejo**. La primera version leia
-> ascendente y cortaba al llegar al tope, con lo que descartaba lo mas reciente: en el sandbox, un
-> dia de prueba de carga con 3 069 eventos consumia el cupo entero y las opciones de los selects
-> —que se ordenan por actividad mas reciente— se armaban del dia anterior. Leer en secuencia y no
-> en paralelo es la contrapartida: permite **dejar de consultar** los dias que ya no caben, y el
-> caso lento (recorrer los 31 dias) es exactamente el caso en que casi no hay datos.
+| Criterio | Indice | Particiones por rango |
+| --- | --- | --- |
+| tipo de evento | GSI6 | 1-4 (una por mes) |
+| persona que **firmo** | GSI9 | 1-4 |
+| tipo de registro | GSI7 con `begins_with` | una por dia |
 
-Tres consecuencias, y ninguna es opcional:
+Hasta la Etapa 11.2 era **una `Query` por dia** sobre `AUDIT#<dia>` en GSI2, con todo lo demas en
+`FilterExpression` sobre un tope de 2 000 eventos acumulados en memoria. Ese tope produjo **tres**
+defectos seguidos, los tres de la misma clase —una cota que cambia la respuesta en silencio— y
+ninguno detectable con una prueba que solo cuente cuantos eventos sobreviven
+(`desafios-implementacion.md` 44 y 46).
 
-- **El rango se acota a 31 dias** (`MAXIMO_DIAS_DE_RANGO`), que es el techo de `Query` que el
-  servicio esta dispuesto a lanzar. Lo valida la pantalla y **lo vuelve a validar el servicio**:
-  una action nueva que olvide validar no puede conseguir que se ejecuten cien consultas. Solo
-  aplica al modo global; con un identificador concreto se lee una sola particion (PA-12) y el rango
-  vuelve a ser un filtro en memoria.
-- **El dia es el de negocio**, calculado con `diaDeNegocio`, asi que las fronteras del rango son
-  las medianoches de Mexico. El filtro en memoria de PA-12 tuvo que alinearse a lo mismo: comparar
-  `ocurridoEn` contra `yyyy-mm-dd` a secas ponia la frontera en la medianoche **UTC** y el mismo
-  rango devolvia conjuntos distintos segun como se buscara (`desafios-implementacion.md` 44).
-- **`tipo` y `actorId` se filtran con `FilterExpression`**, contra el criterio general de filtrar
-  en memoria. Ese criterio vale para la particion de un agregado —cientos de eventos en toda su
-  vida—; una particion de dia puede traer todos los eventos del sistema de ese dia. No ahorra RCU
-  (DynamoDB cobra lo leido, no lo devuelto) pero si transferencia y memoria, que es lo que se agota
-  primero. La respuesta avisa cuando **trunco** (`LIMITE_DE_EVENTOS_GLOBAL`), en vez de entregar
-  una lista incompleta que parece completa.
+**La cota del rango vive en un solo lugar** (`rangoDeBitacora.ts`), porque las cuatro consultas la
+comparten y una cota que cada lector calculara por su cuenta puede divergir:
 
-**Costo por render de `/auditoria`.** Una lectura global del rango para armar las opciones de los
-selects, mas la del modo elegido. Rastrear un participante suma su `Query` de GSI3 (PA-09) y una
-particion `AUDIT#SOLICITUD#` por solicitud suya, acotadas a `MAXIMO_SOLICITUDES_A_RASTREAR`.
+```
+cronoSK BETWEEN :desde AND :hasta
+  :desde = medianoche de negocio del primer dia
+  :hasta = medianoche de negocio del dia SIGUIENTE al ultimo
+```
 
-> **En el modo "solo tipo de evento", la lectura de las opciones se reusa solo si fue completa**
-> (`consultarPorTipoDeEvento`). Si no trunco, contiene todo el rango y filtrarla en memoria da
-> exactamente el mismo conjunto que preguntarle a DynamoDB. Si trunco, **no se puede reusar**: el
-> corte se lleva los eventos mas viejos y entre ellos puede haber muchos del tipo buscado. Medido
-> en el sandbox: `LOTE_ADJUDICADO` devolvia 483 filas reusando la lectura truncada y devuelve
-> **841** preguntando con el filtro. Y peor que el numero, la respuesta reusada venia marcada como
-> truncada, que le dice al auditor "acota el rango" cuando hacia falta lo contrario. Repetir la
-> lectura cuesta el mismo RCU que la primera; se paga.
+Dos propiedades que hay que leer juntas:
+
+- **La frontera es la medianoche de Mexico**, la misma con la que `atributosDeEvento` calcula el
+  `dia` y el `mes`. La de UTC movia el rango seis horas respecto de las particiones consultadas, y
+  el mismo rango devolvia conjuntos distintos segun como se buscara (seccion 44).
+- **Es `BETWEEN` y el limite superior queda exclusivo del instante, sin centinela.** DynamoDB admite
+  **una sola condicion por clave**: `cronoSK >= :a AND cronoSK < :b` se rechaza con
+  `ValidationException`, y ningun doble de cliente lo detecta (seccion 51). `BETWEEN` es inclusivo,
+  pero `cronoSK` es `<ocurridoEn>#<eventoId>` y toda cadena ordena despues que su propio prefijo:
+  un evento ocurrido exactamente en esa medianoche queda fuera. La propiedad que obligaba a
+  inventar un `U+FFFF` cuando la cota era el ultimo instante del rango trabaja a favor cuando la
+  cota es la medianoche siguiente, donde no puede haber ningun evento ambiguo.
+
+Tres reglas del recorrido:
+
+- **De lo mas nuevo a lo mas viejo, en secuencia**, y se voltea al final. Es lo que hace correcto el
+  truncamiento: lo que sobra tiene que ser lo mas viejo. En secuencia y no en paralelo para poder
+  **dejar de consultar** en cuanto se llena el cupo; el caso lento —recorrer las cuatro
+  particiones— es exactamente el caso en que casi no hay datos.
+- **El rango se acota a 90 dias** (`MAXIMO_DIAS_DE_RANGO`), y lo valida la pantalla **y otra vez el
+  servicio**. Eran 31 cuando el tope era el numero de `Query`; ahora acota cuanta historia cabe en
+  una pantalla sin paginar, y el costo real que limita es el de los sondeos de 5.4, que si son por
+  dia. Solo aplica al modo global: con un identificador concreto se lee una sola particion (PA-12) y
+  el rango vuelve a ser un filtro en memoria.
+- **Solo queda un filtro, y es el unico que no cabe en ninguna clave**: tipo de evento **combinado
+  con** tipo de registro. GSI7 particiona por dia y ordena por agregado, asi que el tipo no entra en
+  su clave; el filtro se aplica sobre una lectura ya restringida a un dia y a un tipo de registro.
+  Si esa funcion crece, es la senal de que alguien agrego un criterio sin darle clave.
+
+> **El criterio es obligatorio en el tipo.** `BusquedaGlobal` es una union de tres ramas, cada una
+> exigiendo uno de los tres criterios, asi que un rango sin criterio **no se puede construir**.
+> Antes se podia y caia en el indice cronologico; hoy ese indice no existe, y sin el tipo el error
+> seria un `ValidationException` en runtime sobre codigo que compila.
+
+### 5.4 PA-15: los valores distintos sin leer todos los eventos
+
+Las dos listas de opciones de `/auditoria` preguntan "que identificadores —o que personas— tuvieron
+actividad en el rango". La respuesta natural —leer los eventos y quedarse con los distintos— cuesta
+miles de items para devolver docenas: un dia de apertura escribe 3 288 eventos de lote sobre 10
+lotes.
+
+GSI7 y GSI8 agrupan **por valor antes que por tiempo**, y eso permite saltar:
+
+1. Leer una pagina descendente del dia (`Limit: 100`).
+2. Quedarse con todos los valores distintos que trae.
+3. Poner `ExclusiveStartKey` en el **prefijo sin sufijo** del ultimo grupo visto
+   —`"LOTE#<id>"` ordena estrictamente antes que `"LOTE#<id>#<crono>"`—, lo que deja atras ese
+   grupo entero.
+
+DynamoDB acepta esa clave sintetizada aunque no corresponda a ningun item; verificado contra la
+tabla real. Los dias se recorren de nuevo a viejo **en tandas de ocho concurrentes**, procesadas en
+orden para no perder el criterio de "ultimo dia con actividad primero".
+
+> **La pagina de 100 no es un detalle de afinacion.** La primera version sondeaba de a **un** item,
+> que es optimo con grupos enormes y pesimo con muchos grupos chicos: 200 valores distintos son 200
+> viajes de red **encadenados**, y la pantalla tardaba 20 segundos. Contar consultas no es medir
+> latencia (`desafios-implementacion.md` 52).
+
+Lo que se pierde, dicho para que nadie lo redescubra: el orden deja de ser "ultima actividad
+exacta" y pasa a ser "ultimo dia con actividad". Para poblar un `<select>` alcanza; para una tabla
+de resultados no alcanzaria.
+
+**Lo que no funciona, para que nadie lo reintente:** un item marcador por (dia, agregado). Con
+`attribute_not_exists` el segundo evento del dia cancelaria la transaccion de negocio completa; sin
+condicion, N solicitantes del mismo lote escribirian el mismo item dentro de sus transacciones y
+reabririan R18.
+
+### 5.5 Costo por render de `/auditoria`
+
+Los sondeos de las dos listas (5.4), mas la consulta del modo elegido (5.3), mas una lectura por
+lote de las entidades que hay que nombrar. Rastrear un participante suma su `Query` de GSI3 (PA-09)
+y **una particion de lote por lote suyo** —agrupadas, asi que varios turnos en la misma fila son
+una sola consulta—, acotadas a `MAXIMO_SOLICITUDES_A_RASTREAR`.
+
+> **Los eventos de una solicitud viven en la particion de su lote.** Los 19 escritores anclan a
+> `LOTE`, porque la fila **es** del lote y la solicitud es un lugar dentro de ella. La consulta
+> "que le ocurrio a esta persona" leia particiones `AUDIT#SOLICITUD#<id>` que ningun escritor
+> escribe: devolvia cero siempre, y nadie lo noto porque cero es una respuesta plausible. Se
+> resolvio sin agregar ningun atributo —un `sujetoId` solo responderia sobre los eventos futuros, y
+> esta consulta es retrospectiva por definicion.
 
 ---
 

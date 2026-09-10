@@ -171,7 +171,10 @@
     "seccionFotografias": "Fotografías",
     "motivoRetiro": "Motivo del retiro",
     "motivoRetiroAyuda": "Queda registrado en la bitácora. Es obligatorio.",
+    "identificadorAyuda": "Se guarda en mayúsculas y no se puede repetir.",
     "campos": {
+      "numeroEconomico": "Número económico",
+      "numeroDeSerie": "Número de serie",
       "marca": "Marca",
       "version": "Versión",
       "modelo": "Modelo (año)",
@@ -211,7 +214,9 @@
     "demasiadas": "Se alcanzó el máximo de fotografías",
     "es_la_ultima": "No se puede eliminar la única fotografía",
     "no_es_permutacion": "El orden recibido no corresponde a la galería",
-    "demasiados_cambios": "Demasiados cambios de orden a la vez"
+    "demasiados_cambios": "Demasiados cambios de orden a la vez",
+    "caracter_no_permitido": "Solo se admiten letras, dígitos y los signos - _ /",
+    "duplicado": "Ya existe otro vehículo con este dato"
   },
   "convocatorias": {
     "titulo": "Convocatorias",
@@ -226,8 +231,13 @@
     "pestanas": "Convocatorias por estatus",
     "guardada": "Convocatoria guardada.",
     "soloLectura": "Esta convocatoria ya no se puede editar en su estatus actual.",
+    "seccionIdentificacion": "Identificación",
     "seccionParticipacion": "Participación",
     "seccionCalendario": "Calendario de venta",
+    "campoFolio": "Folio",
+    "folioAyuda": "Se guarda en mayúsculas y no se puede repetir.",
+    "campoNombre": "Nombre corto",
+    "nombreAyuda": "Con lo que se reconoce en las listas y en la bitácora. Puede repetirse.",
     "campoTipo": "¿Quién puede participar?",
     "campoDescripcion": "Descripción de la participación",
     "campoPublicadaEn": "Publicación",
@@ -266,7 +276,9 @@
     "orden_de_fechas": "Las fechas deben ir en orden: publicación, inicio y fin de venta",
     "sin_lotes": "Agrega al menos un vehículo antes de enviarla a aprobación",
     "etiqueta_no_admitida": "El formato del texto tiene elementos que no se admiten",
-    "enlace_no_admitido": "Un enlace apunta a una dirección que no se admite"
+    "enlace_no_admitido": "Un enlace apunta a una dirección que no se admite",
+    "caracter_no_permitido": "Solo se admiten letras, dígitos y los signos - _ /",
+    "duplicado": "Ya existe otra convocatoria con este folio"
   },
   "acciones": {
     "sinAcciones": "No hay acciones disponibles en este estatus.",

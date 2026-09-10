@@ -24,6 +24,8 @@ const actor: ActorUsuario = {
 };
 
 const convocatoria: Convocatoria = {
+  folio: "CONV-001",
+  nombre: "Venta de octubre",
   convocatoriaId: "C1",
   tipo: "EMPLEADOS",
   descripcionParticipacion: "Abierta al personal.",
@@ -37,6 +39,8 @@ const convocatoria: Convocatoria = {
 };
 
 const vehiculo: Vehiculo = {
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   vehiculoId: "V1",
   marca: "Nissan",
   version: "NP300",

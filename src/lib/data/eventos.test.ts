@@ -146,8 +146,18 @@ describe("motivo obligatorio", () => {
   });
 });
 
-describe("claves de la bitacora del dia (GSI2)", () => {
-  it("usa el dia de negocio y no el de UTC", () => {
+describe("la bitacora ya no se escribe en GSI2", () => {
+  it("no lleva ninguna clave de GSI2", () => {
+    // El acceso cronologico paso a GSI5..GSI9. Mientras la clave vieja se
+    // escribiera, GSI2 duplicaba cada evento —su proyeccion es ALL— y cobraba
+    // una escritura de indice por evento para un patron que ya nadie lee.
+    const atributos = atributosDeEvento(base);
+
+    expect(atributos.GSI2PK).toBeUndefined();
+    expect(atributos.GSI2SK).toBeUndefined();
+  });
+
+  it("el dia y el mes de los indices nuevos son de negocio, no de UTC", () => {
     // 2026-09-06T04:00Z son las 22:00 del 5 de septiembre en Mexico. El auditor
     // que pide "todo lo del 5" tiene que encontrarlo ahi.
     const atributos = atributosDeEvento({
@@ -155,10 +165,11 @@ describe("claves de la bitacora del dia (GSI2)", () => {
       ocurridoEn: new Date("2026-09-06T04:00:00.000Z"),
     });
 
-    expect(atributos.GSI2PK).toBe("AUDIT#2026-09-05");
+    expect(atributos.diaPK).toBe("DIA#2026-09-05");
+    expect(atributos.mesPK).toBe("MES#2026-09");
   });
 
-  it("ordena cronologicamente dentro del dia", () => {
+  it("ordena cronologicamente dentro de la particion del mes", () => {
     const temprano = atributosDeEvento({
       ...base,
       ocurridoEn: new Date("2026-09-05T14:00:00.000Z"),
@@ -168,13 +179,13 @@ describe("claves de la bitacora del dia (GSI2)", () => {
       ocurridoEn: new Date("2026-09-05T15:00:00.000Z"),
     });
 
-    expect(String(temprano.GSI2SK) < String(tarde.GSI2SK)).toBe(true);
-    expect(temprano.GSI2PK).toBe(tarde.GSI2PK);
+    expect(String(temprano.cronoSK) < String(tarde.cronoSK)).toBe(true);
+    expect(temprano.mesPK).toBe(tarde.mesPK);
   });
 
-  it("la clave del indice repite el instante y el identificador del evento", () => {
+  it("la clave cronologica repite el instante y el identificador del evento", () => {
     const atributos = atributosDeEvento(base);
-    expect(atributos.GSI2SK).toBe(
+    expect(atributos.cronoSK).toBe(
       `${String(atributos.ocurridoEn)}#${String(atributos.eventoId)}`,
     );
   });

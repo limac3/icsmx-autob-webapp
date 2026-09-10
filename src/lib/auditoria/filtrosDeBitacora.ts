@@ -100,8 +100,19 @@ export const eventoCoincideConFiltros = (
  */
 export const DIAS_DE_RANGO_POR_DEFECTO = 30;
 
-/** Particiones `AUDIT#<dia>` que una busqueda global puede recorrer. */
-export const MAXIMO_DIAS_DE_RANGO = 31;
+/**
+ * Dias que una busqueda global puede abarcar.
+ *
+ * Era 31, y era el numero de `Query` que la version anterior lanzaba: una por
+ * dia sobre `AUDIT#<dia>`. Ahora el rango es una **condicion de clave** dentro
+ * de particiones por mes, asi que 90 dias cuestan entre una y cuatro consultas
+ * y el limite deja de ser un presupuesto de red para volverse lo que siempre
+ * debio ser: cuanta historia cabe en una pantalla sin paginar.
+ *
+ * Los sondeos de las opciones si siguen siendo por dia (`valoresConActividad`),
+ * y ese es el costo que este tope acota de verdad.
+ */
+export const MAXIMO_DIAS_DE_RANGO = 90;
 
 export type RangoDeDias = { desde: string; hasta: string };
 

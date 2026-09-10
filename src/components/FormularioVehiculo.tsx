@@ -169,6 +169,21 @@ const FormularioVehiculo = ({
     if (nombre) delete erroresDelServidor.current[nombre];
   };
 
+  /**
+   * Valor inicial de un control.
+   *
+   * **React 19 reinicia el formulario cuando la action termina**, y lo reinicia
+   * a `defaultValue`: sin esto, un rechazo del servidor dejaba todos los campos
+   * vacios con el mensaje de error debajo. El caso peor es el unico que el
+   * navegador no puede detectar por su cuenta —un numero duplicado, que decide
+   * el centinela dentro de la transaccion—: corregir un caracter obligaba a
+   * teclear el vehiculo entero otra vez.
+   */
+  const inicial = (campo: keyof DatosVehiculo): string =>
+    (estado.estado === "error" ? estado.capturado?.[campo] : undefined) ??
+    valores[campo]?.toString() ??
+    "";
+
   return (
     <Form
       action={enviar}
@@ -208,11 +223,43 @@ const FormularioVehiculo = ({
             <H4 renderAs="legend">{etiquetas.seccionIdentificacion}</H4>
 
             <Stack gapSize="16">
+              {/* Los dos identificadores que teclea el operador van **primero**
+                  y en esta seccion: son con lo que la organizacion nombra al
+                  vehiculo, y el `vehiculoId` interno nunca se captura. Los dos
+                  son unicos, pero eso no lo puede saber el navegador: quien lo
+                  decide es el centinela en la transaccion, y el motivo
+                  `duplicado` vuelve marcado en el campo que repitio. */}
+              <FormField
+                label={campos.numeroEconomico}
+                description={etiquetas.identificadorAyuda}
+                onValidate={validarConElServidor}
+              >
+                <Input
+                  name="numeroEconomico"
+                  required
+                  defaultValue={inicial("numeroEconomico")}
+                  disabled={soloLectura}
+                />
+              </FormField>
+
+              <FormField
+                label={campos.numeroDeSerie}
+                description={etiquetas.identificadorAyuda}
+                onValidate={validarConElServidor}
+              >
+                <Input
+                  name="numeroDeSerie"
+                  required
+                  defaultValue={inicial("numeroDeSerie")}
+                  disabled={soloLectura}
+                />
+              </FormField>
+
               <FormField label={campos.marca} onValidate={validarConElServidor}>
                 <Input
                   name="marca"
                   required
-                  defaultValue={valores.marca ?? ""}
+                  defaultValue={inicial("marca")}
                   disabled={soloLectura}
                 />
               </FormField>
@@ -224,7 +271,7 @@ const FormularioVehiculo = ({
                 <Input
                   name="version"
                   required
-                  defaultValue={valores.version ?? ""}
+                  defaultValue={inicial("version")}
                   disabled={soloLectura}
                 />
               </FormField>
@@ -240,7 +287,7 @@ const FormularioVehiculo = ({
                   min={String(LIMITES.modeloMinimo)}
                   max={String(modeloMaximo)}
                   step="1"
-                  defaultValue={valores.modelo?.toString() ?? ""}
+                  defaultValue={inicial("modelo")}
                   disabled={soloLectura}
                 />
               </FormField>
@@ -264,7 +311,7 @@ const FormularioVehiculo = ({
                   min="0"
                   max={String(LIMITES.kilometrajeMaximo)}
                   step="1"
-                  defaultValue={valores.kilometraje?.toString() ?? ""}
+                  defaultValue={inicial("kilometraje")}
                   disabled={soloLectura}
                 />
               </FormField>
@@ -275,7 +322,7 @@ const FormularioVehiculo = ({
               >
                 <Input
                   name="nivelEquipamiento"
-                  defaultValue={valores.nivelEquipamiento ?? ""}
+                  defaultValue={inicial("nivelEquipamiento")}
                   disabled={soloLectura}
                 />
               </FormField>
@@ -287,7 +334,7 @@ const FormularioVehiculo = ({
                 <TextArea
                   name="especificacionMecanica"
                   maxLength={LIMITES.especificacionMecanica}
-                  defaultValue={valores.especificacionMecanica ?? ""}
+                  defaultValue={inicial("especificacionMecanica")}
                   disabled={soloLectura}
                 />
               </FormField>
@@ -307,7 +354,7 @@ const FormularioVehiculo = ({
                 <TextArea
                   name="condicionesMecanicas"
                   maxLength={LIMITES.condicionesMecanicas}
-                  defaultValue={valores.condicionesMecanicas ?? ""}
+                  defaultValue={inicial("condicionesMecanicas")}
                   disabled={soloLectura}
                 />
               </FormField>
@@ -319,7 +366,7 @@ const FormularioVehiculo = ({
                 <TextArea
                   name="detallesEsteticos"
                   maxLength={LIMITES.detallesEsteticos}
-                  defaultValue={valores.detallesEsteticos ?? ""}
+                  defaultValue={inicial("detallesEsteticos")}
                   disabled={soloLectura}
                 />
               </FormField>

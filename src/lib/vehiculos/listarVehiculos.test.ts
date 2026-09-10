@@ -18,6 +18,8 @@ const vehiculo = (
   PK: `VEH#${vehiculoId}`,
   SK: "META",
   vehiculoId,
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   marca: "Nissan",
   version: "NP300",
   modelo: 2019,

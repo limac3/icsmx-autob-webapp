@@ -37,6 +37,8 @@ const vehiculo = (
   fotografias: Fotografia[],
   principal?: string,
 ): VehiculoConFotografias => ({
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   vehiculoId: "V1",
   marca: "Nissan",
   version: "NP300",

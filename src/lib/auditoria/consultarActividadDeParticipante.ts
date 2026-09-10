@@ -1,7 +1,6 @@
 import "server-only";
 
-// Toda la actividad de un participante en un rango — la consulta que la
-// pantalla de auditoria no podia responder.
+// Toda la actividad de un participante en un rango.
 //
 // Son **dos preguntas distintas** y hacen falta las dos, porque la bitacora no
 // guarda "de quien es este evento" sino solo quien lo firmo (`actorId`):
@@ -16,35 +15,52 @@ import "server-only";
 //
 // Buscar solo por `actorId` daria una respuesta que parece completa y no lo es,
 // que es la peor clase de respuesta para un auditor.
+//
+// **La segunda mitad estaba muerta hasta la Etapa 11.2.** Leia particiones
+// `AUDIT#SOLICITUD#<id>` que ningun escritor escribe: los 19 eventos de fila
+// anclan a `LOTE`, porque la fila **es** del lote y la solicitud es un lugar
+// dentro de ella. La consulta devolvia siempre cero y nadie lo notaba, porque
+// cero es una respuesta plausible. Ahora se leen las particiones de **lote**
+// filtrando por `solicitudId`, que es donde esos eventos de verdad estan.
+//
+// Se descarto agregar un `sujetoId` al evento para poder preguntarlo por clave:
+// solo respondería sobre los eventos futuros, y esta consulta es retrospectiva
+// por definicion — la escribe un auditor que pregunta por algo que ya paso.
 
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
-import { gsi3, NOMBRES_DE_INDICE } from "@/lib/data/claves";
+import {
+  clave,
+  comparandoClaves,
+  gsi3,
+  NOMBRES_DE_INDICE,
+} from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, type DepsDeServicio } from "@/lib/data/deps";
 import { aSolicitud } from "@/lib/fila/mapeo";
 import type { EventoDTO, TipoDeEvento } from "@/types/auditoria";
 import { exito, type Resultado } from "@/types/resultado";
-import { consultarBitacoraCompleta } from "./consultarBitacora";
 import {
   consultarBitacoraGlobal,
   type BitacoraGlobal,
 } from "./consultarBitacoraGlobal";
-import { eventoCoincideConFiltros } from "./filtrosDeBitacora";
+import { aEventoDTO } from "./mapeo";
+import { condicionDeRangoEnSK, cotaDeRango } from "./rangoDeBitacora";
 
 /**
  * Solicitudes cuya historia se rastrea por participante.
  *
- * Cada una es una `Query` de particion. El tope no es de correccion: un
- * participante con mas de cien solicitudes en el sistema es un caso que hay
- * que mirar con la pantalla de fila, no con la de bitacora.
+ * El tope no es de correccion: un participante con mas de cien solicitudes en
+ * el sistema es un caso que hay que mirar con la pantalla de fila, no con la de
+ * bitacora.
  */
 export const MAXIMO_SOLICITUDES_A_RASTREAR = 100;
 
+/** Sus solicitudes, con el lote de cada una: GSI3, una `Query`. */
 const solicitudesDelParticipante = async (
   participanteId: string,
   deps: DepsDeServicio,
-): Promise<string[]> => {
+): Promise<{ solicitudId: string; loteId: string }[]> => {
   const salida = await clienteDe(deps).send(
     new QueryCommand({
       TableName: nombreDeTabla(),
@@ -61,12 +77,73 @@ const solicitudesDelParticipante = async (
     }),
   );
 
-  const ids: string[] = [];
+  const solicitudes: { solicitudId: string; loteId: string }[] = [];
   for (const item of salida.Items ?? []) {
     const solicitud = aSolicitud(item);
-    if (solicitud) ids.push(solicitud.solicitudId);
+    if (solicitud) {
+      solicitudes.push({
+        solicitudId: solicitud.solicitudId,
+        loteId: solicitud.loteId,
+      });
+    }
   }
-  return ids;
+  return solicitudes;
+};
+
+/**
+ * Los eventos de un lote que hablan de **estas** solicitudes, dentro del rango.
+ *
+ * El rango va como condicion de clave (`SK`, que es `<ocurridoEn>#<eventoId>`) y
+ * las solicitudes como filtro. Es el reparto correcto: el rango recorta la
+ * particion antes de leerla, y el filtro descarta los eventos del lote que son
+ * de otros participantes — que en un lote con fila son la mayoria.
+ */
+const eventosDeSolicitudesEnLote = async (
+  entrada: {
+    loteId: string;
+    solicitudIds: readonly string[];
+    cota: { desde: string; hasta: string };
+  },
+  deps: DepsDeServicio,
+): Promise<EventoDTO[]> => {
+  const rango = condicionDeRangoEnSK(entrada.cota);
+  const marcadores = entrada.solicitudIds.map(
+    (_, indice) => `:solicitud${indice}`,
+  );
+  const valoresDeSolicitud = Object.fromEntries(
+    entrada.solicitudIds.map((id, indice) => [`:solicitud${indice}`, id]),
+  );
+
+  const eventos: EventoDTO[] = [];
+  let cursor: Record<string, unknown> | undefined;
+
+  do {
+    const salida = await clienteDe(deps).send(
+      new QueryCommand({
+        TableName: nombreDeTabla(),
+        KeyConditionExpression: `PK = :pk AND ${rango.condicion}`,
+        FilterExpression: `#solicitudId IN (${marcadores.join(", ")})`,
+        ExpressionAttributeNames: { "#solicitudId": "solicitudId" },
+        ExpressionAttributeValues: {
+          ":pk": clave.particionDeEvento("LOTE", entrada.loteId).PK,
+          ...rango.valores,
+          ...valoresDeSolicitud,
+        },
+        ExclusiveStartKey: cursor,
+      }),
+    );
+
+    for (const item of salida.Items ?? []) {
+      const evento = aEventoDTO(item);
+      if (evento) eventos.push(evento);
+    }
+    // `Limit` con `FilterExpression` no es el tamano de pagina: DynamoDB acota
+    // antes de filtrar. Se pagina hasta agotar la particion acotada, que ya es
+    // pequena porque el rango es condicion de clave.
+    cursor = salida.LastEvaluatedKey;
+  } while (cursor);
+
+  return eventos;
 };
 
 /**
@@ -80,8 +157,8 @@ const solicitudesDelParticipante = async (
  */
 const cronologico = (a: EventoDTO, b: EventoDTO): number =>
   a.ocurridoEn === b.ocurridoEn
-    ? a.eventoId.localeCompare(b.eventoId)
-    : a.ocurridoEn.localeCompare(b.ocurridoEn);
+    ? comparandoClaves(a.eventoId, b.eventoId)
+    : comparandoClaves(a.ocurridoEn, b.ocurridoEn);
 
 export const consultarActividadDeParticipante = async (
   entrada: {
@@ -93,6 +170,7 @@ export const consultarActividadDeParticipante = async (
   },
   deps: DepsDeServicio = {},
 ): Promise<Resultado<BitacoraGlobal>> => {
+  // Lo que firmo: GSI9, una particion por mes del rango.
   const firmados = await consultarBitacoraGlobal(
     {
       desde: entrada.desde,
@@ -104,42 +182,44 @@ export const consultarActividadDeParticipante = async (
   );
   if (!firmados.ok) return firmados;
 
+  const cota = cotaDeRango(entrada.desde, entrada.hasta);
+  if (!cota) return firmados;
+
   const solicitudes = await solicitudesDelParticipante(
     entrada.participanteId,
     deps,
   );
 
+  // Agrupadas por lote: un participante con varias solicitudes en el mismo lote
+  // —turnos distintos de la misma fila— se resuelve con **una** consulta.
+  const solicitudesPorLote = new Map<string, string[]>();
+  for (const { solicitudId, loteId } of solicitudes) {
+    solicitudesPorLote.set(loteId, [
+      ...(solicitudesPorLote.get(loteId) ?? []),
+      solicitudId,
+    ]);
+  }
+
   const historias = await Promise.all(
-    solicitudes.map((solicitudId) =>
-      consultarBitacoraCompleta(
-        { agregado: "SOLICITUD", agregadoId: solicitudId },
-        deps,
-      ),
+    [...solicitudesPorLote.entries()].map(([loteId, solicitudIds]) =>
+      eventosDeSolicitudesEnLote({ loteId, solicitudIds, cota }, deps),
     ),
   );
 
   // Indexado por `eventoId` y no concatenado: la historia de una solicitud
   // incluye su `SOLICITUD_CREADA`, que la persona firmo y que por tanto ya
-  // vino en la lectura global. Sin desduplicar, el auditor veria dos veces el
-  // mismo hecho y podria leerlo como dos.
+  // vino en la lectura por actor. Sin desduplicar, el auditor veria dos veces
+  // el mismo hecho y podria leerlo como dos.
   const porId = new Map<string, EventoDTO>();
   for (const evento of firmados.data.eventos)
     porId.set(evento.eventoId, evento);
 
   for (const historia of historias) {
-    if (!historia.ok) return historia;
-    for (const evento of historia.data) {
-      // La historia de una solicitud no conoce el rango: se lee entera y se
-      // acota aqui, con el mismo filtro que usa el resto de la pantalla.
-      if (
-        eventoCoincideConFiltros(evento, {
-          desde: entrada.desde,
-          hasta: entrada.hasta,
-          ...(entrada.tipo ? { tipo: entrada.tipo } : {}),
-        })
-      ) {
-        porId.set(evento.eventoId, evento);
-      }
+    for (const evento of historia) {
+      // El rango ya lo acoto la condicion de clave; el tipo, cuando se pidio,
+      // no cabe en esa clave y se filtra aqui.
+      if (entrada.tipo && evento.tipo !== entrada.tipo) continue;
+      porId.set(evento.eventoId, evento);
     }
   }
 

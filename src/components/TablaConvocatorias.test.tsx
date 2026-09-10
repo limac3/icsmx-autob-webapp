@@ -31,6 +31,8 @@ const convocatoria = (
   convocatoriaId: string,
   estatus: Convocatoria["estatus"],
 ): Convocatoria => ({
+  folio: "CONV-001",
+  nombre: "Venta de octubre",
   convocatoriaId,
   tipo: "EMPLEADOS",
   descripcionParticipacion: "Abierta al personal de flotilla.",

@@ -10,6 +10,8 @@ const meta = {
   PK: "VEH#V1",
   SK: "META",
   vehiculoId: "V1",
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   marca: "Nissan",
   version: "NP300",
   modelo: 2019,

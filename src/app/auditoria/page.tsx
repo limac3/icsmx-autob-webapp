@@ -11,10 +11,7 @@ import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
 import { consultarActividadDeParticipante } from "@/lib/auditoria/consultarActividadDeParticipante";
 import { consultarBitacoraCompleta } from "@/lib/auditoria/consultarBitacora";
-import {
-  consultarBitacoraGlobal,
-  consultarPorTipoDeEvento,
-} from "@/lib/auditoria/consultarBitacoraGlobal";
+import { consultarBitacoraGlobal } from "@/lib/auditoria/consultarBitacoraGlobal";
 import {
   esTipoDeAgregado,
   eventoCoincideConFiltros,
@@ -23,6 +20,10 @@ import {
   type BusquedaDeBitacora,
   type CriteriosCrudos,
 } from "@/lib/auditoria/filtrosDeBitacora";
+import {
+  construirEtiquetador,
+  type ReferenciaDeAgregado,
+} from "@/lib/auditoria/etiquetasDeBitacora";
 import { construirOpciones } from "@/lib/auditoria/opcionesDeBusqueda";
 import { aFilaDeBitacora } from "@/lib/auditoria/vistaDeEvento";
 import { TIPOS_DE_AGREGADO } from "@/lib/data/claves";
@@ -44,27 +45,51 @@ import "./pagina.css";
  *     fechas es entonces un filtro en memoria, asi que no se acota — y por eso
  *     un enlace desde la pantalla de una convocatoria puede abrir su historia
  *     completa aunque empiece hace meses.
- *   - **Sin identificador**: `consultarBitacoraGlobal` (PA-13) lee una
- *     particion **por dia**. Ahi el rango es la llave de la consulta, no un
- *     filtro, y de ahi salen las dos reglas: no puede estar vacio y no puede
- *     pasar de 31 dias.
+ *   - **Sin identificador**: `consultarBitacoraGlobal` (PA-13) consulta la
+ *     particion que corresponde al criterio —el mes en GSI5, el tipo de evento
+ *     en GSI6, la persona en GSI9— y el rango va como **condicion de clave**.
+ *     Ahi el rango es la llave de la consulta y no un filtro, y de ahi salen
+ *     las dos reglas: no puede estar vacio y no puede pasar de 90 dias.
  *
- * Las opciones de los selects salen de una lectura global del rango, siempre:
- * ofrecer solo lo que tiene actividad en el rango es lo que garantiza que
- * ninguna opcion devuelva una tabla vacia.
+ * Las opciones de los selects **no** salen de esas lecturas. Las obtiene
+ * `construirOpciones` con un sondeo por valor distinto sobre GSI7 y GSI8, y son
+ * dos lecturas independientes a proposito: cuando las dos listas se derivaban de
+ * una sola lectura acotada, el tipo de registro con mas volumen consumia el cupo
+ * y los demas aparecian como "sin actividad en este rango" siendo falso.
+ *
+ * Que salgan de la bitacora del rango y no del catalogo de entidades es lo que
+ * garantiza que ninguna opcion devuelva una tabla vacia.
  *
  * Dinamica: es una bitacora de trabajo, no un dato publicable.
  */
 export const dynamic = "force-dynamic";
 
-/** Etiqueta corta del registro de un evento, para la columna homonima. */
-const registroDeEvento = (
-  evento: EventoDTO,
-  etiquetas: Record<string, string>,
-): string | undefined =>
-  evento.agregado && evento.agregadoId
-    ? `${etiquetas[evento.agregado]} · ${evento.agregadoId}`
-    : undefined;
+/**
+ * Las referencias distintas de una lista de resultados.
+ *
+ * Distintas y no una por fila: mil eventos de un mismo lote se nombran leyendo
+ * ese lote una vez. Es lo que hace que etiquetar la columna «Registro» cueste
+ * lo mismo que etiquetar las opciones.
+ */
+const referenciasDe = (
+  eventos: readonly EventoDTO[],
+): ReferenciaDeAgregado[] => {
+  const porClave = new Map<string, ReferenciaDeAgregado>();
+  for (const evento of eventos) {
+    if (!evento.agregado || !evento.agregadoId) continue;
+    const llave = `${evento.agregado}#${evento.agregadoId}`;
+    if (porClave.has(llave)) continue;
+    porClave.set(llave, {
+      agregado: evento.agregado,
+      agregadoId: evento.agregadoId,
+      ...(evento.convocatoriaId
+        ? { convocatoriaId: evento.convocatoriaId }
+        : {}),
+      ...(evento.loteId ? { loteId: evento.loteId } : {}),
+    });
+  }
+  return [...porClave.values()];
+};
 
 const AuditoriaPagina = async ({
   searchParams,
@@ -117,43 +142,20 @@ const AuditoriaPagina = async ({
       ? undefined
       : rangoVisible;
 
-  // Dos lecturas, y no una, cuando hay tipo de registro elegido:
-  //
-  //   - Sin acotar, para el select de **participantes**: ese no depende del
-  //     tipo de registro.
-  //   - Acotada al tipo, para el de **identificadores**. Derivar los dos de la
-  //     misma lectura es lo que provoco el defecto que reporto el usuario: un
-  //     tipo con mucho volumen agota el cupo y los demas aparecen como "sin
-  //     actividad en este rango" siendo falso. En el sandbox, 3 288 eventos de
-  //     lote de un dia dejaban fuera del corte los 9 de vehiculo y los 7 de
-  //     convocatoria del dia anterior.
-  const [eventosDelRango, eventosDelAgregado] = rangoDeOpciones
-    ? await Promise.all([
-        consultarBitacoraGlobal({
-          desde: rangoDeOpciones.desde,
-          hasta: rangoDeOpciones.hasta,
-        }),
-        agregadoElegido
-          ? consultarBitacoraGlobal({
-              desde: rangoDeOpciones.desde,
-              hasta: rangoDeOpciones.hasta,
-              agregado: agregadoElegido,
-            })
-          : undefined,
-      ])
-    : [undefined, undefined];
-
-  const opciones =
-    eventosDelRango?.ok === true
-      ? await construirOpciones({
-          eventos: eventosDelRango.data.eventos,
-          ...(eventosDelAgregado?.ok === true
-            ? { eventosDelAgregado: eventosDelAgregado.data.eventos }
-            : {}),
-          ...(agregadoElegido ? { agregado: agregadoElegido } : {}),
-          diccionario,
-        })
-      : undefined;
+  // Las opciones ya no salen de una lectura del rango: `construirOpciones`
+  // sondea GSI7 y GSI8 valor por valor. La diferencia no es solo de costo —de
+  // miles de eventos a una consulta por identificador distinto— sino de
+  // correccion: cuando las dos listas se derivaban de una misma lectura
+  // acotada, un tipo de registro con mucho volumen consumia el cupo y los demas
+  // aparecian como "sin actividad en este rango" siendo falso.
+  const opciones = rangoDeOpciones
+    ? await construirOpciones({
+        desde: rangoDeOpciones.desde,
+        hasta: rangoDeOpciones.hasta,
+        ...(agregadoElegido ? { agregado: agregadoElegido } : {}),
+        diccionario,
+      })
+    : undefined;
 
   // --- Resultados -----------------------------------------------------------
 
@@ -221,17 +223,15 @@ const AuditoriaPagina = async ({
         if (!busqueda.tipo) {
           throw new Error("Busqueda sin criterio: validarBusqueda fallo");
         }
-        if (!eventosDelRango?.ok) {
-          throw new Error("No se pudo leer la bitacora del rango");
-        }
 
-        // Reusa la lectura de las opciones **solo si fue completa**; ver
-        // `consultarPorTipoDeEvento`.
-        const lectura = await consultarPorTipoDeEvento({
+        // GSI6: el tipo **es** la particion, asi que esto cuesta entre una y
+        // cuatro consultas y no puede responder de menos. La version anterior
+        // reusaba la lectura de las opciones si no habia truncado, y esa
+        // heuristica devolvia 483 filas donde habia 841 (`desafios` 46).
+        const lectura = await consultarBitacoraGlobal({
           desde: busqueda.rango.desde,
           hasta: busqueda.rango.hasta,
           tipo: busqueda.tipo,
-          yaLeido: eventosDelRango.data,
         });
         if (!lectura.ok) {
           throw new Error(`No se pudo leer la bitacora: ${lectura.error}`);
@@ -240,11 +240,29 @@ const AuditoriaPagina = async ({
       })()
     : undefined;
 
+  // Las etiquetas de la columna «Registro» salen del **mismo** etiquetador que
+  // las opciones, con una lectura por referencia distinta. Sin esto la columna
+  // mostraba el tipo y un identificador generado, que es lo que la Etapa 11.2
+  // existe para dejar de mostrar.
+  //
+  // Solo en el modo global: con un identificador elegido, todas las filas son
+  // de ese mismo registro y repetirlo en cada una no informa de nada.
+  const registros =
+    resultado && !busqueda?.agregadoId
+      ? await construirEtiquetador({
+          referencias: referenciasDe(resultado.eventos),
+          actorIds: [],
+          diccionario,
+        })
+      : undefined;
+
   const filas = (resultado?.eventos ?? []).map((evento) =>
     aFilaDeBitacora(evento, diccionario, {
-      ...(busqueda?.agregadoId
-        ? {}
-        : { registro: registroDeEvento(evento, etiquetas.tiposDeAgregado) }),
+      ...(registros?.ok && evento.agregado && evento.agregadoId
+        ? {
+            registro: `${etiquetas.tiposDeAgregado[evento.agregado]} · ${registros.data.deAgregado(evento.agregado, evento.agregadoId)}`,
+          }
+        : {}),
       ...(opciones?.ok && opciones.data.nombresDeActor.get(evento.actorId)
         ? {
             nombreDeActor: opciones.data.nombresDeActor.get(evento.actorId),

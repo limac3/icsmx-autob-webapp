@@ -6,7 +6,8 @@ import "server-only";
 // Se rige por la regla 4: la mutacion y su evento viajan en la misma
 // `TransactWriteItems` o no ocurre ninguna de las dos.
 
-import { clave, gsi2 } from "@/lib/data/claves";
+import { AMBITOS_DE_IDENTIFICADOR, clave, gsi2 } from "@/lib/data/claves";
+import { putDeCentinelaDeIdentificador } from "@/lib/data/centinelasDeIdentificador";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
@@ -58,6 +59,14 @@ export const crearConvocatoria = async (
 
   const resultado = await ejecutarTransaccion(
     [
+      // El centinela **primero**: `ejecutarTransaccion` devuelve el indice del
+      // item que cancelo, y con el al frente ese indice no se mueve al agregar
+      // items despues.
+      putDeCentinelaDeIdentificador(
+        AMBITOS_DE_IDENTIFICADOR.folioDeConvocatoria,
+        item.folio,
+        { convocatoriaId },
+      ),
       {
         item: {
           Put: {
@@ -91,6 +100,14 @@ export const crearConvocatoria = async (
     { cliente },
   );
 
-  if (!resultado.ok) return fallo(resultado.error);
+  if (!resultado.ok) {
+    // El centinela es el item 0: si fue el que cancelo, el folio ya estaba
+    // tomado. Decirlo por campo es lo que permite a la pantalla senalarlo, en
+    // vez de un "revisa los datos" que no dice cual.
+    if (resultado.indice === 0) {
+      return fallo("validation_failed", { folio: "duplicado" });
+    }
+    return fallo(resultado.error);
+  }
   return exito({ convocatoriaId });
 };

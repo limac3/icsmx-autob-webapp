@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import type { DatosConvocatoria } from "@/types/convocatoria";
+import {
+  CAMPOS_CONVOCATORIA,
+  type DatosConvocatoria,
+} from "@/types/convocatoria";
 import {
   LIMITES_CONVOCATORIA,
   normalizarDatosConvocatoria,
@@ -10,6 +13,8 @@ import {
 } from "./convocatorias";
 
 const VALIDA: DatosConvocatoria = {
+  folio: "CONV-001",
+  nombre: "Venta de octubre",
   tipo: "EMPLEADOS",
   descripcionParticipacion: "Abierta al personal de flotilla.",
   publicadaEn: "2026-03-01T15:00:00.000Z",
@@ -199,6 +204,28 @@ describe("normalizarDatosConvocatoria", () => {
       con({ inicioVenta: "2026-03-05T15:00:00Z" }),
     );
     expect(normalizada.inicioVenta).toBe("2026-03-05T15:00:00.000Z");
+  });
+
+  it("normaliza el folio a mayusculas y sin espacios", () => {
+    // Es lo que hace real la unicidad: "  conv-1  " y "CONV-1" tienen que
+    // colisionar en el mismo centinela.
+    expect(
+      normalizarDatosConvocatoria(con({ folio: "  conv-1  " })).folio,
+    ).toBe("CONV-1");
+  });
+});
+
+describe("CAMPOS_CONVOCATORIA", () => {
+  it("enumera todos los campos capturables, sin quedarse corto", () => {
+    // `as const satisfies readonly (keyof DatosConvocatoria)[]` comprueba que
+    // cada elemento **sea** una clave valida, no que esten **todas**; un campo
+    // ausente lo ignoraria en silencio `camposModificados`, y una edicion de
+    // ese campo devolveria exito sin escribir nada. Ya paso con
+    // `CAMPOS_VEHICULO`. La referencia es el literal que devuelve
+    // `normalizarDatosConvocatoria`, que el compilador si obliga a cubrir.
+    expect([...CAMPOS_CONVOCATORIA].sort()).toEqual(
+      Object.keys(normalizarDatosConvocatoria(VALIDA)).sort(),
+    );
   });
 });
 

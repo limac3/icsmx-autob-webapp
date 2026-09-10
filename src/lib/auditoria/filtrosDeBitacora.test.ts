@@ -100,9 +100,14 @@ describe("rangoPorDefecto", () => {
   });
 
   it("cabe dentro del tope, o la pantalla abriria en un estado que ella rechaza", () => {
+    // Los dos numeros estaban pegados —31 y 31— mientras el tope era el numero
+    // de `Query` que costaba el rango: una por dia. Con las particiones por mes
+    // el tope subio a 90 y dejo de tener nada que ver con el valor por defecto,
+    // que sigue siendo 30 dias hacia atras porque es lo que se quiere ver al
+    // abrir. Lo que hay que seguir garantizando es solo la inclusion.
     const rango = rangoPorDefecto(new Date("2026-09-08T18:00:00.000Z"));
     const dias = diasDeNegocioEntre(rango.desde, rango.hasta);
-    expect(dias).toHaveLength(MAXIMO_DIAS_DE_RANGO);
+    expect(dias?.length).toBeLessThanOrEqual(MAXIMO_DIAS_DE_RANGO);
   });
 });
 

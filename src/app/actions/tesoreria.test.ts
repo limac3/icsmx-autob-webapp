@@ -62,6 +62,8 @@ const lote: Lote = {
 };
 
 const convocatoria: ConvocatoriaConLotes = {
+  folio: "CONV-001",
+  nombre: "Venta de octubre",
   convocatoriaId: "C1",
   tipo: "EMPLEADOS",
   descripcionParticipacion: "<p>Abierta al personal.</p>",

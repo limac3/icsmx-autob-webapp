@@ -480,6 +480,61 @@ export const diasDeNegocioEntre = (
   return dias;
 };
 
+/**
+ * Meses de negocio que toca el rango, ascendentes y sin repetir.
+ *
+ * Es la lista de particiones de GSI5, GSI6 y GSI9: los tres agrupan por mes y
+ * acotan el rango dentro de la particion con la clave de ordenamiento. Un rango
+ * de 90 dias son **1 a 4** particiones, contra las 90 que costaria por dia.
+ *
+ * Se derivan de los dias y no del calendario para que la validacion del rango
+ * sea la misma —un extremo invalido o invertido devuelve `undefined` aqui
+ * tambien— y para que el mes salga siempre del **dia de negocio**, que es como
+ * lo escribe `atributosDeEvento` (recortando `dia.slice(0, 7)`). Calcularlo por
+ * otro camino abriria la posibilidad de que el lector y el escritor discrepen
+ * en la frontera de fin de mes.
+ */
+export const mesesDeNegocioEntre = (
+  desde: string,
+  hasta: string,
+): readonly string[] | undefined => {
+  const dias = diasDeNegocioEntre(desde, hasta);
+  if (!dias) return undefined;
+  const meses: string[] = [];
+  for (const dia of dias) {
+    const mes = dia.slice(0, 7);
+    if (meses.at(-1) !== mes) meses.push(mes);
+  }
+  return meses;
+};
+
+/**
+ * Instante UTC de la medianoche con la que **empieza** un dia de negocio.
+ *
+ * Es la cota que convierte un rango de dias en una condicion de clave sobre
+ * `ocurridoEn`, y por eso pasa por `instanteDesdeHoraDeNegocio` en vez de
+ * pegarle `T00:00:00Z` a la etiqueta: la frontera de un dia de negocio es la
+ * medianoche de **Mexico**, seis horas despues de la de UTC. Comparar contra la
+ * de UTC movia el rango seis horas y hacia que la misma pregunta devolviera dos
+ * conjuntos distintos segun el modo de consulta — el defecto de la seccion 44.
+ *
+ * `undefined` si la etiqueta no es un dia, o si esa medianoche no existe en el
+ * calendario local. Lo segundo no ocurre hoy —Mexico no cambia de horario, y
+ * cuando lo hacia el salto era a las 02:00—, pero se propaga en vez de
+ * suponerse: quien llama devuelve un error de validacion, no un rango torcido.
+ */
+export const inicioDelDiaDeNegocio = (dia: string): Date | undefined => {
+  const etiqueta = aMediodiaUtc(dia);
+  if (!etiqueta) return undefined;
+  return instanteDesdeHoraDeNegocio({
+    anio: etiqueta.getUTCFullYear(),
+    mes: etiqueta.getUTCMonth() + 1,
+    dia: etiqueta.getUTCDate(),
+    hora: 0,
+    minuto: 0,
+  });
+};
+
 // `fractionalSecondDigits` no se puede combinar con `dateStyle`/`timeStyle`
 // —el propio Intl lanza `TypeError`—, asi que este formateador declara sus
 // componentes uno por uno. `hourCycle: "h23"` evita el "a. m./p. m." de es-MX:

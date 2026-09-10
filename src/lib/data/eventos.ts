@@ -11,7 +11,7 @@ import "server-only";
 // Y como los eventos son **append-only**, un evento mal formado no se puede
 // corregir: se queda asi para siempre.
 
-import { bitacora, clave, gsi2, type TipoDeAgregado } from "./claves";
+import { bitacora, clave, type TipoDeAgregado } from "./claves";
 import { nuevoId } from "./identificadores";
 import { putDeEvento, type ItemDeTransaccion } from "./transacciones";
 import { aIso, diaDeNegocio } from "@/lib/domain/fechas";
@@ -127,11 +127,6 @@ export const atributosDeEvento = (
     ),
     ...bitacora.porActorDelDia(dia, actorId, ocurridoEn, eventoId),
     ...bitacora.porActor(actorId, mes),
-
-    // Transitorio: la clave vieja de PA-13 sobre GSI2, mientras
-    // `consultarBitacoraGlobal` siga leyendola. Se retira al reescribir los
-    // lectores — ver `gsi2.bitacoraDelDia`.
-    ...gsi2.bitacoraDelDia(dia, ocurridoEn, eventoId),
   };
 };
 

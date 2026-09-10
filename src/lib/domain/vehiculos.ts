@@ -10,6 +10,10 @@
 // pantalla, asi que no hay razon para dosificarla.
 
 import { diaDeNegocio } from "./fechas";
+import {
+  normalizarIdentificadorDeNegocio,
+  prepararIdentificadorDeNegocio,
+} from "./identificadorDeNegocio";
 import type { DatosVehiculo } from "@/types/vehiculo";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 
@@ -54,6 +58,21 @@ export const MOTIVOS_INVALIDEZ = [
   "muy_largo",
   "no_es_entero",
   "fuera_de_rango",
+  // Del numero economico y del numero de serie: su alfabeto es lista blanca,
+  // porque el valor entra en la clave de su centinela de unicidad.
+  "caracter_no_permitido",
+  /**
+   * Tambien de los dos numeros, y el unico motivo que **`revisarDatosVehiculo`
+   * nunca devuelve**: la unicidad no se puede decidir sin la base de datos, y
+   * quien la decide es el centinela dentro de la transaccion.
+   *
+   * Aun asi vive en esta lista porque llega a la pantalla por el mismo camino
+   * —campo -> motivo -> diccionario— y es la lista que la prueba de
+   * diccionarios recorre para exigir etiqueta en los dos idiomas. Fuera de
+   * aqui, un `duplicado` sin traducir se mostraria crudo (regla 11) y ninguna
+   * compuerta lo detendria.
+   */
+  "duplicado",
 ] as const;
 
 export type MotivoInvalidez = (typeof MOTIVOS_INVALIDEZ)[number];
@@ -95,6 +114,15 @@ export const revisarDatosVehiculo = (
   ahora: Date,
 ): ErroresDeVehiculo => {
   const errores: ErroresDeVehiculo = {};
+
+  // Los dos identificadores de negocio se revisan **sobre su forma
+  // normalizada**, que es lo que se va a guardar y lo que va a colisionar en el
+  // centinela. Revisar el texto crudo daria un veredicto sobre otro valor.
+  const numeroEconomico = prepararIdentificadorDeNegocio(datos.numeroEconomico);
+  if (!numeroEconomico.ok) errores.numeroEconomico = numeroEconomico.motivo;
+
+  const numeroDeSerie = prepararIdentificadorDeNegocio(datos.numeroDeSerie);
+  if (!numeroDeSerie.ok) errores.numeroDeSerie = numeroDeSerie.motivo;
 
   const marca = textoObligatorio(datos.marca, LIMITES.marca);
   if (marca) errores.marca = marca;
@@ -147,6 +175,10 @@ export const normalizarDatosVehiculo = (
   };
 
   return {
+    // Mayusculas y recortados: es lo que hace real la unicidad, porque
+    // `"ab-1"` y `"AB-1"` tienen que colisionar en el centinela.
+    numeroEconomico: normalizarIdentificadorDeNegocio(datos.numeroEconomico),
+    numeroDeSerie: normalizarIdentificadorDeNegocio(datos.numeroDeSerie),
     marca: datos.marca.trim(),
     version: datos.version.trim(),
     modelo: datos.modelo,

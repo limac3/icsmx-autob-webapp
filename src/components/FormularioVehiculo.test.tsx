@@ -105,6 +105,11 @@ describe("errores que devuelve el servidor", () => {
           modeloMaximo={2027}
           vehiculoId="V1"
           valores={{
+            // Completo a proposito: los controles son `required`, asi que un
+            // campo vacio detiene el envio en la validacion nativa y la action
+            // —que es lo que estas pruebas observan— nunca llega a correr.
+            numeroEconomico: "VEH-001",
+            numeroDeSerie: "3N6AD33A9KK870001",
             marca: "Nissan",
             version: "NP300",
             modelo: 2019,
@@ -182,5 +187,38 @@ describe("errores que devuelve el servidor", () => {
     await esperarUnCuadro();
 
     expect(control("marca").validationMessage).toBe("");
+  });
+
+  it("conserva lo capturado cuando el servidor rechaza", async () => {
+    // **React 19 reinicia el formulario cuando la action termina**, y lo
+    // reinicia a `defaultValue`. Sin devolver lo capturado, un rechazo dejaba
+    // todos los campos vacios con el error senalado sobre nada — y el rechazo
+    // que solo el servidor puede emitir es el de un numero duplicado, justo
+    // cuando el vehiculo entero ya esta escrito.
+    vi.mocked(guardarVehiculoDesdeFormulario).mockResolvedValue({
+      estado: "error",
+      error: "validation_failed",
+      detalles: { numeroEconomico: "duplicado" },
+      capturado: {
+        numeroEconomico: "VEH-777",
+        numeroDeSerie: "3N6AD33A9KK870001",
+        marca: "Nissan",
+        version: "NP300",
+        modelo: "2019",
+        kilometraje: "148320",
+      },
+    });
+
+    const formulario = await pintarLleno();
+    await act(async () => {
+      formulario.requestSubmit();
+    });
+    await esperarUnCuadro();
+
+    expect(control("numeroEconomico").value).toBe("VEH-777");
+    expect(control("kilometraje").value).toBe("148320");
+    expect(control("numeroEconomico").validationMessage).toBe(
+      diccionario.validacionVehiculo.duplicado,
+    );
   });
 });

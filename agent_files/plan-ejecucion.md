@@ -1249,6 +1249,227 @@ busca.
 
 ---
 
+## Etapa 11.2 — Bitacora consultable por clave, IDs cortos e identificadores de negocio ✅
+
+**Objetivo:** que la bitacora se consulte con condiciones de clave en lugar de filtrar en la
+aplicacion, y que las pantallas puedan nombrar las cosas con los identificadores que usa la
+organizacion en vez de un ULID.
+
+**Dependencias:** Etapa 11.1.
+
+> **Tres problemas que se resuelven juntos porque los tres exigen recrear la tabla.** El unico
+> acceso cronologico era `GSI2PK = AUDIT#<dia>`, asi que un rango de 30 dias eran 31 `Query` y
+> todo lo demas se filtraba en memoria con un tope de 2 000 eventos — un tope que ya produjo
+> **tres** defectos seguidos, todos la misma clase de error (`desafios` 44 y 46). Ademas los
+> identificadores eran 26 caracteres que en pantalla no dicen nada, y no habia ningun dato humano
+> al que recurrir: la organizacion si tiene numeros propios —economico, de serie, folio— y el
+> modelo no los guardaba.
+
+**Decidido: una sola tabla con cinco GSIs nuevos.** Se evaluo una tabla dedicada para la bitacora
+y se descarto: el diseno de datos, el rendimiento y el costo son identicos —los GSIs son dispersos,
+asi que las claves nuevas solo existen en los items de evento— y su unica ventaja real, que el
+`Deny` de inmutabilidad dejara de depender del prefijo `AUDIT#`, se cubre haciendo que la politica
+IAM y la clave salgan de la **misma constante**.
+
+**Los datos del sandbox se borraron y se regeneraron.** Un GSI nuevo nace vacio para los eventos ya
+escritos, y a un evento append-only no se le pueden agregar atributos: `UpdateItem` lo deniega IAM
+y un `PutItem` de reemplazo lo rechaza `attribute_not_exists(PK)`. De ahi la regla permanente: **lo
+irreversible son los atributos, no los indices**. Un atributo de clave que hoy no se escribe es una
+pregunta que nunca se podra responder sobre los eventos de hoy.
+
+### A — Recrear la tabla: indices, atributos e IDs cortos ✅
+
+- [x] `src/lib/data/identificadores.ts` — el ID interno pasa de 26 a **12 caracteres**: 7 de fecha
+      a precision de segundo (~1 090 anos) y 5 de azar (33,5 M). Sigue ordenando
+      lexicograficamente igual que cronologicamente. `nuevoUlid`/`esUlid`/`instanteDeUlid`
+      renombrados a `nuevoId`/`esId`/`instanteDeId`
+- [x] `src/lib/fila/reservas.ts` — `attribute_not_exists(SK)` en el `Put` de `anotarReserva`, que
+      **no es opcional**: con 25 bits de azar una reserva sobrescrita en silencio borraria una
+      reserva en vuelo y R18 dejaria de sostenerse. Convertida en rechazo reintentable
+- [x] `src/lib/data/eventos.ts` y `claves.ts` — siete atributos nuevos en cada evento (`mesPK`,
+      `tipoPK`, `diaPK`, `actorMesPK`, `cronoSK`, `agregadoSK`, `actorSK`), con nombres semanticos
+      en lugar de `GSI5PK`…`GSI9SK`: los cinco indices tienen un proposito cada uno, y el nombre
+      hace evidente la propiedad que sostiene el diseno — un vehiculo no tiene `mesPK`, asi que no
+      esta en ese indice. `mes` se rebana de `dia` para que no puedan contradecirse
+- [x] `amplify/tabla.ts` — cinco GSIs, proyeccion `ALL` en todos: `KEYS_ONLY` no ahorra un WCU
+      porque el item ya redondea a 1 KB, y con menos proyeccion haria falta un `BatchGetItem` de
+      hidratacion por pagina
+- [x] `PREFIJO_PARTICION_AUDITORIA` con **una sola fuente de verdad**: `amplify/permisos.ts` arma
+      la condicion `LeadingKeys` del `Deny` a partir de la misma constante con la que
+      `clave.evento` construye la `PK`, asi que no pueden divergir por construccion
+- [x] `ampx sandbox delete` y redespliegue — CloudFormation aplica **una operacion de indice por
+      actualizacion de pila**, asi que los nueve GSIs se crean en una sola
+
+### B — Identificadores y nombres de negocio ✅
+
+- [x] `src/lib/domain/identificadorDeNegocio.ts` — normalizacion (recorte y mayusculas) y alfabeto
+      de **lista blanca** (`A-Z`, `0-9`, `-`, `_`, `/`): el valor entra en la `PK` del centinela,
+      asi que un `#` desplazaria el separador y fabricaria la clave de otro
+- [x] `src/lib/data/centinelasDeIdentificador.ts` — un centinela por valor
+      (`<ambito>#<valor> / CENTINELA`) con `attribute_not_exists`, en la **misma transaccion** que
+      la creacion. Los centinelas van **primero**: `ejecutarTransaccion` devuelve el indice del
+      item que cancelo, y es lo unico que distingue cual de los dos numeros de un vehiculo estaba
+      duplicado
+- [x] Campos nuevos: `folio` (unico) y `nombre` (no unico) en la convocatoria; `numeroEconomico` y
+      `numeroDeSerie` (los dos unicos) en el vehiculo. `CAMPOS_CONVOCATORIA` y `CAMPOS_VEHICULO`
+      extendidos — ver el defecto de abajo
+- [x] `crearConvocatoria.ts` y `crearVehiculo.ts` — centinelas al frente y traduccion del indice
+      que cancela al campo concreto, para que la pantalla pueda senalarlo
+- [x] `editarConvocatoria.ts` y `editarVehiculo.ts` — **renombrado atomico**: reservar el nuevo,
+      liberar el viejo (`attribute_exists`) y actualizar la entidad, en una sola transaccion.
+      Partirlo en dos dejaria, si el segundo paso falla, o un valor reservado que nadie puede
+      volver a usar, o dos entidades con el mismo
+- [x] Los dos formularios y los diccionarios `es`/`en`, con los motivos nuevos
+      `caracter_no_permitido` y `duplicado`
+- [x] Los formularios **devuelven lo capturado** en el rechazo. React 19 reinicia el formulario a
+      `defaultValue` cuando la action termina, asi que el rechazo del servidor —el unico que el
+      navegador no puede anticipar— quedaba sobre campos vacios. Ver `desafios-implementacion.md`
+      48
+- [x] `editarConvocatoria.test.ts` — el archivo **no tenia ninguna prueba** antes de esta etapa
+
+**El ID interno sigue siendo la clave y el ancla de la bitacora, no el folio.** Es la misma
+decision que D-15 tomo para `participanteId`: la historia se ancla a un identificador inmutable y
+el identificador humano es un atributo renombrable, para que corregir un typo no parta la historia
+en dos.
+
+**Verificacion de A y B:**
+
+- [x] Compuerta completa en verde — 2 089 pruebas, `typecheck` y `build` limpios
+- [x] Los nueve GSIs `ACTIVE` en el sandbox; `infraestructura.test.ts` afirma claves y
+      proyecciones, y una prueba ata `clave.evento(...).PK` al patron de `LeadingKeys` del `Deny`
+- [x] Propiedades del ID: 12 caracteres, alfabeto sin `#` ni `-`, orden lexicografico igual al
+      cronologico al segundo, y N identificadores generados en el mismo segundo son distintos
+- [x] `npm run carga:apertura` repoblo la tabla; una consulta directa confirma los siete atributos
+      con dia y mes de negocio
+- [x] **Contra DynamoDB real** (`src/lib/data/identificadoresUnicos.integracion.test.ts`, con el
+      rol de computo SSR): la segunda alta con el mismo folio la rechaza la base de datos y no una
+      lectura previa; `"  conv-1  "` y `"CONV-1"` colisionan; el numero economico y el de serie se
+      reportan por separado; el renombrado libera el folio viejo y **lo deja usable por otra
+      convocatoria**; y la particion de bitacora del identificador interno conserva los dos
+      eventos despues del renombrado
+- [x] **Recorrido en navegador** con Playwright y una sesion de Okta real mas la persona
+      simulada `admin`: los dos formularios presentan los campos nuevos con su etiqueta y su
+      ayuda, un identificador con un caracter fuera del alfabeto se marca **en su campo** con el
+      motivo traducido, y todo lo capturado sobrevive al rechazo —incluida la descripcion
+      enriquecida y el tipo elegido—. Consola sin errores. Corrigio dos defectos que solo se ven
+      con la pantalla delante: el reinicio del formulario (`desafios` 48) y una ayuda que
+      duplicaba el texto del propio error al concatenarse con el
+- [ ] **[OPERADOR]** confirmar si el numero economico y el de serie son en la practica el **mismo**
+      dato con dos nombres. Se dejaron separados porque describen cosas distintas —etiqueta interna
+      de activo contra numero del fabricante—, pero si coinciden se colapsan a uno y se ahorra un
+      centinela por alta
+
+> **Un defecto real que encontro esta etapa, y que ninguna compuerta veia:** `CAMPOS_VEHICULO` se
+> quedo sin los dos campos nuevos, y `as const satisfies readonly (keyof DatosVehiculo)[]` **no
+> exige exhaustividad** — comprueba que cada elemento sea una clave valida, no que esten todas.
+> Como `camposModificados` filtra esa lista, editar el numero economico devolvia `{ ok: true }`
+> **sin escribir nada** y la pantalla decia "Cambios guardados". Typecheck limpio y 2 073 pruebas
+> en verde. Ver `desafios-implementacion.md` 47.
+
+### C — Lectores y pantalla ✅
+
+- [x] Las cuatro consultas de rango reescritas por **condicion de clave**, con un solo lugar
+      —`consultasDe`— que decide que indice sirve a que criterio: el mes en `GSI5`, el tipo de
+      evento en `GSI6`, la persona que firmo en `GSI9` y el tipo de registro en `GSI7` con
+      `begins_with`. Las tres primeras particionan por mes y cuestan **1-4 consultas por rango**
+      donde antes eran 31
+- [x] `src/lib/auditoria/rangoDeBitacora.ts` — la cota, en un solo lugar porque las cuatro
+      consultas la comparten. Limite superior en la medianoche **siguiente**: `BETWEEN` es
+      inclusivo y aun asi la cota queda exclusiva del instante, porque `cronoSK` es
+      `<ocurridoEn>#<eventoId>` y toda cadena ordena despues que su prefijo. **Sin centinela**
+- [x] `src/lib/auditoria/valoresConActividad.ts` — las opciones por sondeo con salto de grupo
+      sobre GSI7 y GSI8, con lectura por pagina y dias en tandas (ver el defecto de abajo)
+- [x] `src/lib/auditoria/etiquetasDeBitacora.ts` — el etiquetador, **compartido** por las opciones
+      y la columna «Registro»: dos consumidores que nombraran por su cuenta harian que la misma
+      convocatoria se llamara de dos maneras en la misma pantalla
+- [x] Consulta 3b, que **devolvia vacio siempre**: leia particiones `AUDIT#SOLICITUD#` que ningun
+      escritor escribe. Ahora es GSI3 mas las particiones de **lote**, agrupadas por lote y con el
+      rango en la clave. **Sin** agregar un `sujetoId`: solo responderia sobre eventos futuros y
+      3b es retrospectiva por definicion
+- [x] `MAXIMO_DIAS_DE_RANGO` a 90, y desacoplado del valor por defecto: era 31 porque era el
+      numero de `Query` que costaba el rango
+- [x] `comparandoClaves` en `claves.ts` — todo ordenamiento en memoria que afirme reproducir el
+      orden de una `SK` compara por punto de codigo. `localeCompare` usa la colacion del idioma y
+      puede invertir dos claves respecto de lo que hace la tabla
+- [x] `gsi2.bitacoraDelDia` retirada, con su escritura en `eventos.ts`. GSI2 vuelve a servir solo
+      sus cinco patrones de negocio y deja de duplicar cada evento
+
+**Verificacion, con Playwright y la sesion real contra el sandbox:**
+
+- [x] Compuerta completa en verde — 2 100 pruebas, `typecheck` y `build` limpios
+- [x] **El defecto que reporto el usuario, medido:** el select de identificadores ofrece ahora 14
+      vehiculos y 60 convocatorias donde antes ofrecia 2 y 1. Ya no compiten por un cupo
+      compartido, porque son lecturas con particiones distintas
+- [x] Buscar por tipo de evento devuelve **355 filas sin aviso de truncamiento**; el tipo es la
+      particion de GSI6, asi que no puede responder de menos
+- [x] **Consulta 3b viva:** el participante `e10-p1-0c348eec-382b7a` devuelve 3 eventos, **2 de
+      ellos firmados por `SISTEMA`** —"Vehículo adjudicado" y "Solicitud vencida por plazo"—, que
+      es exactamente la mitad que antes devolvia cero
+- [x] Etiquetas legibles con datos reales: `Toyota · Prius · 2021 · 20 · 1NA3R5MPXEHK`. Los
+      registros de la prueba de carga caen al identificador crudo, que es el respaldo correcto y
+      probado: sus entidades nunca existieron como items
+- [x] Rango de 90 dias, consola sin errores
+- [x] Latencia: **3,0-3,7 s** por carga, contra 1,8-4,3 s de referencia — con un rango que ahora
+      responde completo y con el servidor de desarrollo, sin cache
+
+> **Dos defectos que solo el navegador podia encontrar.** `cronoSK >= :a AND cronoSK < :b` lo
+> rechaza DynamoDB —admite **una condicion por clave**— y las 18 pruebas del lector pasaban en
+> verde afirmando esa cadena exacta, porque el doble captura comandos y no los evalua
+> (`desafios` 51). Y el sondeo con `Limit: 1` dejo la pantalla en **20 segundos**: 200 valores
+> distintos son 200 viajes de red encadenados, un costo que no aparece en ningun analisis de RCU
+> (`desafios` 52, corregido a 3,5 s con lectura por pagina y dias en tandas).
+
+> **A decidir en la Etapa D: `GSI5` no tiene lector.** La pantalla exige al menos un criterio
+> —identificador, tipo de evento o participante—, y los tres tienen su propio indice, asi que la
+> consulta "todo el rango cronologico" no la lanza nadie. El atributo `mesPK`/`cronoSK` **se
+> sigue escribiendo** y eso es lo irreversible; el indice se puede borrar y volver a crear cuando
+> haya un lector. Dejarlo sin decidir repetiria la situacion de PA-13, que se escribio dos etapas
+> sin que nadie lo leyera.
+
+### D — Limpieza y documentacion ✅
+
+- [x] **`GSI5` borrado del despliegue.** Quedo sin lector al reescribir las consultas: la pantalla
+      exige un criterio y los tres tienen su propio indice. Un indice con proyeccion `ALL` y sin
+      lector cobra una escritura por evento a cambio de nada — el mismo argumento con el que la
+      bitacora salio de GSI2. Verificado contra la tabla: ocho GSIs `ACTIVE`, y `mesPK` ya no
+      figura entre las claves de ningun indice
+- [x] Los atributos `mesPK`/`cronoSK` **se siguen escribiendo**. Es la regla que gobierna el
+      modelo: lo irreversible son los atributos, no los indices. El indice se crea cuando aparezca
+      el lector y su relleno vera todo lo ya escrito
+- [x] **El criterio pasa a ser obligatorio en el tipo.** `BusquedaGlobal` es una union de tres
+      ramas, cada una exigiendo uno de los tres criterios: un rango sin criterio ya no compila. Sin
+      eso, borrar el indice convertia una llamada valida en un `ValidationException` en runtime
+      sobre codigo que compilaba. Cubierto con `@ts-expect-error`, que **falla el typecheck** si
+      algun dia deja de ser un error
+- [x] `consultarPorTipoDeEvento` borrada en la Etapa C
+- [ ] `LIMITE_DE_EVENTOS_GLOBAL` y la bandera `truncada` **se conservan**, y no es un pendiente
+      olvidado: la tabla de resultados se pinta entera, sin paginar, asi que el tope sigue
+      significando algo. Lo que cambio es su naturaleza — ahora acota una lectura **ya restringida
+      al criterio**, no una del rango entero que se descartaba en memoria, asi que su corte ya no
+      puede cambiar la respuesta de preguntas ajenas. Se van el dia que la pantalla pagine
+- [x] `modelo-datos-dynamodb.md`: seccion 3 reescrita (dos familias de indices y por que
+      convenciones distintas), 4.5 nueva (centinela de identificador de negocio), 5.3 reescrita,
+      5.4 y 5.5 nuevas, PA-15 y PA-16 agregados
+- [x] `proyecto.md` 4.1 y 4.2: folio, nombre corto, numero economico y numero de serie como reglas
+      de negocio, con su unicidad y su caracter corregible
+- [x] `api-contracts.md` 2, 3 y 6.2, **y la divergencia de la Etapa 0 cerrada**: el contrato
+      prometia `titulo` y `descripcion` desde el principio y el codigo nunca tuvo ninguno de los
+      dos. Se cierra con `nombre` y conservando `descripcionParticipacion`, que dice de que habla
+      ese texto
+- [x] `ui-ux-requerimientos.md` 4.2, 4.4 y 7
+- [x] `desafios-implementacion.md` 47 a 52 — los seis defectos que encontraron las etapas B, C y D
+- [x] `.claude/adr.md`: **D-14 reescrito**, **la justificacion de D-2 corregida** —"single-table
+      permite escribir la mutacion y su evento en la misma transaccion" era falso como argumento a
+      favor, porque `TransactWriteItems` puede abarcar tablas distintas—, y **D-16** y **D-17**
+      nuevos. Sincronizado en el orden obligatorio: editar, `index_repository`, `manage_adr`;
+      verificado con `mode: "sections"`
+- [x] Compuerta completa en verde — 2 101 pruebas, `typecheck` y `build` limpios
+
+**Salida esperada:** una pantalla de auditoria que consulta por clave y unas listas que dicen
+nombres. **Cumplida.**
+
+---
+
 ## Etapa 12 — Endurecimiento y despliegue — **parcial**
 
 **Objetivo:** listo para produccion.

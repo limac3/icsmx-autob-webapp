@@ -38,6 +38,8 @@ const lote = (loteId: string): Lote => ({
 });
 
 const aprobada: ConvocatoriaConLotes = {
+  folio: "CONV-001",
+  nombre: "Venta de octubre",
   convocatoriaId: "C1",
   tipo: "EMPLEADOS",
   descripcionParticipacion: "Abierta al personal.",

@@ -414,13 +414,15 @@ const instanteDeCampo = (formData: FormData, campo: string): string => {
 };
 
 export const guardarConvocatoriaDesdeFormulario = async (
-  _estadoPrevio: EstadoFormularioConvocatoria,
+  estadoPrevio: EstadoFormularioConvocatoria,
   formData: FormData,
 ): Promise<EstadoFormularioConvocatoria> => {
   const convocatoriaId = String(formData.get("convocatoriaId") ?? "").trim();
   const crudoHoras = String(formData.get("horasLiquidacion") ?? "").trim();
 
   const datos: DatosConvocatoria = {
+    folio: String(formData.get("folio") ?? ""),
+    nombre: String(formData.get("nombre") ?? ""),
     tipo: String(formData.get("tipo") ?? "") as DatosConvocatoria["tipo"],
     descripcionParticipacion: String(
       formData.get("descripcionParticipacion") ?? "",
@@ -443,6 +445,21 @@ export const guardarConvocatoriaDesdeFormulario = async (
       estado: "error",
       error: resultado.error,
       ...(resultado.detalles ? { detalles: resultado.detalles } : {}),
+      // Lo capturado vuelve para que el formulario pueda repintarlo: React 19
+      // lo reinicia a `defaultValue` en cuanto la action termina. Se excluye el
+      // `convocatoriaId`, que ya viaja en su campo oculto.
+      // El numero de rechazo lo cuenta el adaptador y no el componente: es la
+      // `key` que remonta el editor enriquecido, y en el cliente no hay de
+      // donde sacarlo sin encadenar renders.
+      intento: (estadoPrevio.estado === "error" ? estadoPrevio.intento : 0) + 1,
+      capturado: Object.fromEntries(
+        [...formData.entries()]
+          .filter(
+            ([campo, valor]) =>
+              campo !== "convocatoriaId" && typeof valor === "string",
+          )
+          .map(([campo, valor]) => [campo, valor as string]),
+      ),
     };
   }
 

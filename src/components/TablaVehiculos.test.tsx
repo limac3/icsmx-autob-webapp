@@ -23,6 +23,8 @@ const vehiculo = (
   vehiculoId: string,
   estatus: Vehiculo["estatus"],
 ): Vehiculo => ({
+  numeroEconomico: "VEH-001",
+  numeroDeSerie: "3N6AD33A9KK870001",
   vehiculoId,
   marca: "Nissan",
   version: "NP300",

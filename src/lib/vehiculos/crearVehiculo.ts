@@ -4,7 +4,8 @@ import "server-only";
 // transacciones criticas, pero se rige por la misma regla 4 — la mutacion y su
 // evento viajan juntos o no ocurre ninguna de las dos.
 
-import { clave, gsi2 } from "@/lib/data/claves";
+import { AMBITOS_DE_IDENTIFICADOR, clave, gsi2 } from "@/lib/data/claves";
+import { putDeCentinelaDeIdentificador } from "@/lib/data/centinelasDeIdentificador";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import { ejecutarTransaccion } from "@/lib/data/transacciones";
@@ -12,6 +13,17 @@ import { validarDatosVehiculo } from "@/lib/domain/vehiculos";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 import type { DatosVehiculo } from "@/types/vehiculo";
 import { resolver, type ActorUsuario, type DepsDeVehiculos } from "./deps";
+
+/**
+ * Posicion del centinela en la transaccion -> campo que estaba duplicado.
+ *
+ * Depende del orden de los items, asi que vive junto a ellos: mover un centinela
+ * sin mover esta tabla haria que la pantalla senalara el campo equivocado.
+ */
+const CAMPO_POR_CENTINELA: Record<number, string | undefined> = {
+  0: "numeroEconomico",
+  1: "numeroDeSerie",
+};
 
 export type EntradaCrearVehiculo = {
   datos: DatosVehiculo;
@@ -51,6 +63,19 @@ export const crearVehiculo = async (
 
   const resultado = await ejecutarTransaccion(
     [
+      // Los dos centinelas **primero**: `ejecutarTransaccion` devuelve el
+      // indice del item que cancelo, y es la unica forma de saber cual de los
+      // dos numeros estaba duplicado. Con ellos al frente el indice es estable.
+      putDeCentinelaDeIdentificador(
+        AMBITOS_DE_IDENTIFICADOR.numeroEconomicoDeVehiculo,
+        item.numeroEconomico,
+        { vehiculoId },
+      ),
+      putDeCentinelaDeIdentificador(
+        AMBITOS_DE_IDENTIFICADOR.numeroDeSerieDeVehiculo,
+        item.numeroDeSerie,
+        { vehiculoId },
+      ),
       {
         item: {
           Put: {
@@ -85,6 +110,14 @@ export const crearVehiculo = async (
     { cliente },
   );
 
-  if (!resultado.ok) return fallo(resultado.error);
+  if (!resultado.ok) {
+    // El indice dice **cual** de los dos numeros estaba tomado. Sin esto la
+    // pantalla solo podria decir "revisa los datos" y quien captura tendria que
+    // adivinar cual de los dos repitio.
+    const duplicado = CAMPO_POR_CENTINELA[resultado.indice ?? -1];
+    if (duplicado)
+      return fallo("validation_failed", { [duplicado]: "duplicado" });
+    return fallo(resultado.error);
+  }
   return exito({ vehiculoId });
 };

@@ -2,11 +2,18 @@ import "server-only";
 
 // Edicion de los atributos de una convocatoria. Solo en `BORRADOR`.
 
-import { clave } from "@/lib/data/claves";
+import { AMBITOS_DE_IDENTIFICADOR, clave } from "@/lib/data/claves";
+import {
+  deleteDeCentinelaDeIdentificador,
+  putDeCentinelaDeIdentificador,
+} from "@/lib/data/centinelasDeIdentificador";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
-import { ejecutarTransaccion } from "@/lib/data/transacciones";
+import {
+  ejecutarTransaccion,
+  type ItemDeTransaccion,
+} from "@/lib/data/transacciones";
 import { validarDatosConvocatoria } from "@/lib/domain/convocatorias";
 import type { ActorUsuario } from "@/types/auditoria";
 import {
@@ -84,8 +91,28 @@ export const editarConvocatoria = async (
     asignaciones.push(`#${campo} = :${campo}`);
   }
 
+  // Renombrar el folio es **una sola transaccion**: reservar el nuevo, liberar
+  // el viejo y actualizar la convocatoria. Partirlo en dos dejaria, si el
+  // segundo paso falla, o un folio reservado que nadie puede volver a usar, o
+  // dos convocatorias con el mismo. Es lo que hace corregible un typo sin
+  // mover el ancla de la bitacora, que es el identificador interno.
+  const renombrado: ItemDeTransaccion[] = modificados.includes("folio")
+    ? [
+        putDeCentinelaDeIdentificador(
+          AMBITOS_DE_IDENTIFICADOR.folioDeConvocatoria,
+          validacion.datos.folio,
+          { convocatoriaId: actual.convocatoriaId },
+        ),
+        deleteDeCentinelaDeIdentificador(
+          AMBITOS_DE_IDENTIFICADOR.folioDeConvocatoria,
+          actual.folio,
+        ),
+      ]
+    : [];
+
   const resultado = await ejecutarTransaccion(
     [
+      ...renombrado,
       {
         item: {
           Update: {
@@ -120,6 +147,13 @@ export const editarConvocatoria = async (
     { cliente },
   );
 
-  if (!resultado.ok) return fallo(resultado.error);
+  if (!resultado.ok) {
+    // El `Put` del folio nuevo es el item 0 cuando hay renombrado: si fue el
+    // que cancelo, ese folio ya estaba tomado.
+    if (renombrado.length > 0 && resultado.indice === 0) {
+      return fallo("validation_failed", { folio: "duplicado" });
+    }
+    return fallo(resultado.error);
+  }
   return exito({ convocatoriaId: actual.convocatoriaId });
 };

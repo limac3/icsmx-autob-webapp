@@ -38,6 +38,8 @@ export const aVehiculo = (
   item: Record<string, unknown>,
 ): Vehiculo | undefined => {
   const vehiculoId = texto(item.vehiculoId);
+  const numeroEconomico = texto(item.numeroEconomico);
+  const numeroDeSerie = texto(item.numeroDeSerie);
   const marca = texto(item.marca);
   const version = texto(item.version);
   const modelo = entero(item.modelo);
@@ -47,6 +49,10 @@ export const aVehiculo = (
 
   if (
     !vehiculoId ||
+    // Los dos son obligatorios: un vehiculo sin numero economico no se puede
+    // identificar en el inventario, y ademas tendria su centinela huerfano.
+    !numeroEconomico ||
+    !numeroDeSerie ||
     !marca ||
     !version ||
     modelo === undefined ||
@@ -60,6 +66,8 @@ export const aVehiculo = (
 
   return {
     vehiculoId,
+    numeroEconomico,
+    numeroDeSerie,
     marca,
     version,
     modelo,

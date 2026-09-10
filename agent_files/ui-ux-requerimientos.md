@@ -220,12 +220,25 @@ Filtros por estatus y busqueda por marca o version. Acciones por fila en
 Formulario con `eden-form-parts`, en secciones: identificacion, especificacion, condicion,
 fotografias.
 
+**La seccion de identificacion abre con los dos numeros que teclea el operador** —numero economico
+y numero de serie—, antes de marca y version: son con lo que la organizacion nombra el vehiculo, y
+el identificador interno nunca se captura. Los dos son unicos, pero **eso no lo puede saber el
+navegador**: lo decide un centinela dentro de la transaccion, y el motivo `duplicado` vuelve
+marcado en el campo que repitio, para que quien captura no tenga que adivinar cual de los dos fue.
+
 Cada seccion es una **tarjeta** (`Card renderAs="fieldset"` con un `Stack` dentro): el marco es
 lo que separa a la vista —con solo un titulo encima, las secciones se leen como una lista
 continua—, y el `renderAs` conserva el `<fieldset>`/`<legend>`, que es lo que hace que un lector
 de pantalla anuncie la seccion como contexto de cada campo. El titulo va con `H4 renderAs="legend"`
 y no con el `Legend` de `eden-form-parts`, que renderiza `Text4` —tamano de descripcion— y dejaba
 los titulos indistinguibles de las etiquetas de campo.
+
+**Un rechazo del servidor conserva lo capturado.** React 19 reinicia el formulario a
+`defaultValue` cuando la action termina, asi que la action devuelve lo que llego y el formulario lo
+repinta. Sin eso, el unico rechazo que el navegador no puede anticipar —un numero duplicado— dejaba
+todos los campos vacios con el error senalado sobre nada. Aplica igual al formulario de convocatoria,
+donde ademas hay que **remontar el editor enriquecido**: Lexical solo lee su contenido inicial al
+montar, asi que una prop nueva se ignora en silencio (`desafios-implementacion.md` 48).
 
 **No se usa el `FieldSet` de Eden**: esta documentado para agrupar `Radio` y `Checkbox`, y con
 campos de texto reparte mal el ancho y duplica los mensajes de error. Eden **no tiene** separador
@@ -275,8 +288,13 @@ pasa los seis grupos ya resueltos.
 
 ### 4.4 `/admin/convocatorias/nueva` y `/[id]/editar`
 
-Formulario: tipo (`Radio`), titulo, descripcion (`TextArea` o editor enriquecido), y las tres
-fechas con hora, **etiquetadas explicitamente en hora de Ciudad de Mexico**.
+Formulario en tres secciones: **identificacion** (folio y nombre corto), participacion (tipo con
+`Radio` y la descripcion en editor enriquecido) y calendario — las tres fechas con hora,
+**etiquetadas explicitamente en hora de Ciudad de Mexico**.
+
+**El folio es unico y el nombre corto no**, y la ayuda de cada campo lo dice: dos ventas
+recurrentes pueden llamarse igual y el folio las distingue. Un folio repetido vuelve marcado en su
+campo, igual que los numeros del vehiculo.
 
 Validacion en vivo de R-14 (`publicadaEn <= inicioVenta < finVenta`), con el error junto al
 campo culpable, no en un aviso general.
@@ -363,26 +381,32 @@ Solo lectura, sin un solo boton de mutacion.
     El rango de fechas es entonces un filtro en memoria, asi que **no se acota**; si hay eventos
     anteriores al rango, la pantalla lo dice y ofrece ampliarlo ("ver historia completa"), lo que
     no cuesta ninguna lectura extra porque la particion ya se leyo entera.
-  - **Sin identificador** (por tipo de evento o por participante): PA-13 lee una particion **por
-    dia** del rango. Ahi el rango **es la llave** de la consulta y no un filtro: de eso salen las
-    dos reglas de abajo —obligatorio y acotado a 31 dias.
+  - **Sin identificador** (por tipo de evento o por participante): PA-13 consulta la particion
+    que corresponde al criterio —el tipo de evento y la persona tienen cada uno su indice— y el
+    rango va como **condicion de clave**. Ahi el rango **es la llave** de la consulta y no un
+    filtro: de eso salen las dos reglas de abajo —obligatorio y acotado a 90 dias.
 
   Reglas de los filtros:
-  - **El rango nunca esta vacio.** Por defecto, los ultimos 30 dias contando hoy (31 dias de
-    calendario, que es exactamente el tope). Los dos campos van **primero** en el formulario y son
-    `required`. Un rango ausente en la URL se sustituye por el defecto; uno **presente y mal
+  - **El rango nunca esta vacio.** Por defecto, los ultimos 30 dias contando hoy. El tope son 90,
+    y los dos numeros dejaron de estar pegados: el tope era 31 cuando media el numero de `Query`
+    que costaba el rango, y ahora mide cuanta historia cabe en una pantalla sin paginar. Los dos
+    campos van **primero** en el formulario y son `required`. Un rango ausente en la URL se sustituye por el defecto; uno **presente y mal
     formado** se rechaza con aviso, sin sustituirlo en silencio — quien escribio esas fechas
     espera esas fechas.
   - **Buscar exige al menos un criterio completo**: identificador, tipo de evento o participante.
     Un tipo de registro sin identificador no es un criterio: solo acota las opciones del select.
   - **`Identificador` y `Participante` son selects, no campos de texto.** Sus opciones salen de la
     bitacora del rango —no del catalogo de entidades—, de modo que **toda opcion ofrecida devuelve
-    resultados**. Cada una se presenta con datos legibles y su identificador al final: vehiculo
-    con marca, version y modelo; convocatoria con su tipo traducido y su fecha de inicio de venta;
-    lote con el vehiculo y la fecha de la convocatoria; solicitud con el vehiculo, el turno y quien
-    la pidio; participante con nombre y correo. Cambiar el tipo de registro o una fecha **reenvia
-    el formulario solo** para recalcular las opciones, y limpia el identificador elegido antes de
+    resultados**. Cada una se presenta con datos legibles y su identificador al final: vehiculo con
+    marca, version, modelo y **numero economico**; convocatoria con su **nombre corto y su folio**;
+    lote con el vehiculo y la convocatoria; solicitud con el vehiculo, el turno y quien la pidio;
+    participante con nombre y correo. Cambiar el tipo de registro o una fecha **reenvia el
+    formulario solo** para recalcular las opciones, y limpia el identificador elegido antes de
     hacerlo. Sin JavaScript el boton sigue funcionando.
+  - **Las dos listas son lecturas independientes**, y no un filtro sobre una lectura comun. Cuando
+    lo eran, el tipo de registro con mas volumen consumia el cupo compartido y los demas aparecian
+    como "sin actividad en este rango" siendo falso: en el sandbox el select ofrecia 2 vehiculos
+    donde habia 14 y 1 convocatoria donde habia 60.
   - Se avisa cuando la consulta **se trunco** por volumen, para que se acote el rango, en vez de
     mostrar una lista incompleta que parece completa.
 - **Nomenclatura de los tipos de registro.** "Lote y su fila" y "Solicitud (lugar en la fila)", no
@@ -391,8 +415,9 @@ Solo lectura, sin un solo boton de mutacion.
   es un lugar dentro de ella.
 - **Columnas de la tabla.** Fecha con **milisegundos** en hora de negocio —toda la resolucion que
   el dato tiene; ver `desafios-implementacion.md`—, el registro al que pertenece el evento (solo en
-  el modo global, donde los eventos vienen mezclados), tipo traducido, actor con **nombre y
-  identificador** (el nombre lo hace reconocible; el identificador es lo que quedo escrito y lo que
+  el modo global, donde los eventos vienen mezclados, y **con la misma etiqueta legible que las
+  opciones** — es el mismo etiquetador, para que la misma convocatoria no se llame de dos maneras
+  en la misma pantalla), tipo traducido, actor con **nombre y identificador** (el nombre lo hace reconocible; el identificador es lo que quedo escrito y lo que
   se puede citar), motivo, `correlacionId` y `eventoId`. Los dos ultimos son columnas y no
   agrupaciones visuales: `correlacionId` relaciona los eventos de una misma transaccion sin
   necesitar que queden contiguos, y `eventoId` es lo que **desempata dos eventos del mismo

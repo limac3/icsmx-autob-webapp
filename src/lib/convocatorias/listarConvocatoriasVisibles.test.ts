@@ -26,6 +26,8 @@ const convocatoria = (
   PK: `CONV#${convocatoriaId}`,
   SK: "META",
   convocatoriaId,
+  folio: `CONV-${convocatoriaId}`,
+  nombre: "Venta de octubre",
   tipo,
   estatus: "PUBLICADA",
   descripcionParticipacion: "<p>Descripcion</p>",

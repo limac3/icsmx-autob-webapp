@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  AMBITOS_DE_IDENTIFICADOR,
   ANCHO_ORDEN_FOTO,
   ANCHO_TURNO,
   bitacora,
@@ -13,6 +14,7 @@ import {
   loteYTurnoDesdeIdentificador,
   NOMBRES_DE_INDICE,
   PREFIJO,
+  PREFIJO_PARTICION_AUDITORIA,
   TIPOS_DE_AGREGADO,
   turnoDesdeClave,
 } from "./claves";
@@ -398,13 +400,11 @@ describe("GSI2 — listados por estatus", () => {
     expect(claves.size).toBe(3);
   });
 
-  it("arma la bitacora cronologica global de PA-13", () => {
-    expect(
-      gsi2.bitacoraDelDia("2026-09-15", "2026-09-15T15:00:00.000Z", "E1"),
-    ).toEqual({
-      GSI2PK: "AUDIT#2026-09-15",
-      GSI2SK: "2026-09-15T15:00:00.000Z#E1",
-    });
+  it("ya no escribe la bitacora en GSI2", () => {
+    // PA-13 vivia aqui y ahora vive en GSI5..GSI9. Mientras la clave existiera,
+    // GSI2 duplicaba cada evento —su proyeccion es ALL— y pagaba una escritura
+    // de indice por evento para un patron que ya nadie lee.
+    expect(gsi2).not.toHaveProperty("bitacoraDelDia");
   });
 });
 
@@ -533,12 +533,15 @@ describe("GSI4 — trabajo pendiente", () => {
 
 describe("nombres de indice", () => {
   it("coinciden con los que crea amplify/tabla.ts", () => {
+    // **`GSI5` no esta, y el hueco es deliberado.** Iba a servir el acceso
+    // cronologico y quedo sin lector, asi que se borro del despliegue; sus
+    // atributos se siguen escribiendo. Un alias que apuntara a un indice
+    // inexistente no fallaria al compilar: fallaria en DynamoDB, en runtime.
     expect(Object.values(NOMBRES_DE_INDICE)).toEqual([
       "GSI1",
       "GSI2",
       "GSI3",
       "GSI4",
-      "GSI5",
       "GSI6",
       "GSI7",
       "GSI8",
@@ -662,5 +665,60 @@ describe("bitacora — las claves de los cinco indices", () => {
     // Un `#` colado desplazaria el resto de la clave: en `actorSK` fabricaria
     // el rango de otra persona.
     expect(construir).toThrow(RangeError);
+  });
+});
+
+describe("centinela de identificador de negocio", () => {
+  it("particiona por el valor, no por la entidad", () => {
+    // Es lo unico que dos registros duplicados comparten, y por eso es lo que
+    // tiene que colisionar en la base de datos.
+    expect(
+      clave.centinelaDeIdentificador(
+        AMBITOS_DE_IDENTIFICADOR.numeroEconomicoDeVehiculo,
+        "VEH-001",
+      ),
+    ).toEqual({ PK: "NUMECO_VEH#VEH-001", SK: "CENTINELA" });
+  });
+
+  it.each([
+    ["folioDeConvocatoria", "FOLIO_CONV"],
+    ["numeroEconomicoDeVehiculo", "NUMECO_VEH"],
+    ["numeroDeSerieDeVehiculo", "SERIE_VEH"],
+  ] as const)("el ambito %s usa el prefijo %s", (ambito, prefijo) => {
+    expect(
+      clave.centinelaDeIdentificador(AMBITOS_DE_IDENTIFICADOR[ambito], "X1").PK,
+    ).toBe(`${prefijo}#X1`);
+  });
+
+  it("**los tres ambitos son universos separados**", () => {
+    // Con un ambito compartido, un folio `A-1` impediria registrar el vehiculo
+    // `A-1`. Son cosas distintas y no deben estorbarse.
+    const claves = Object.values(AMBITOS_DE_IDENTIFICADOR).map(
+      (ambito) => clave.centinelaDeIdentificador(ambito, "A-1").PK,
+    );
+    expect(new Set(claves).size).toBe(3);
+  });
+
+  it("no choca con la particion de la entidad ni con la de la bitacora", () => {
+    const centinela = clave.centinelaDeIdentificador(
+      AMBITOS_DE_IDENTIFICADOR.numeroEconomicoDeVehiculo,
+      "V1",
+    ).PK;
+    expect(centinela).not.toBe(clave.vehiculo("V1").PK);
+    expect(centinela.startsWith(PREFIJO_PARTICION_AUDITORIA)).toBe(false);
+  });
+
+  it("rechaza un valor con el separador de claves o vacio", () => {
+    // El valor entra en la `PK`: un `#` colado fabricaria el centinela de otro
+    // registro. `prepararIdentificadorDeNegocio` ya lo rechaza antes, y esto es
+    // la segunda linea de defensa, en el unico lugar que arma la clave.
+    for (const malo of ["A#1", ""]) {
+      expect(() =>
+        clave.centinelaDeIdentificador(
+          AMBITOS_DE_IDENTIFICADOR.folioDeConvocatoria,
+          malo,
+        ),
+      ).toThrow(RangeError);
+    }
   });
 });

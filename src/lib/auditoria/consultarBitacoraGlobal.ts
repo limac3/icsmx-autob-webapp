@@ -1,17 +1,25 @@
 import "server-only";
 
-// PA-13 — bitacora cronologica global de un rango de dias.
+// PA-13 — la bitacora de un rango, **por condicion de clave**.
 //
-// `modelo-datos-dynamodb.md` seccion 5 declaraba este patron desde la Etapa 0 y
-// `eventos.ts` escribe su clave (`AUDIT#<dia>` en GSI2) en cada evento desde la
-// Etapa 5, pero **nadie lo leia**: la pantalla de auditoria solo sabia consultar
-// la particion de un agregado (PA-12), asi que exigia conocer de antemano el
-// identificador de lo que se buscaba. Es lo que hacia imposible responder "toda
-// la actividad de esta persona" o "todos los rechazos de pago del mes".
+// Antes: una `Query` por dia sobre `AUDIT#<dia>` en GSI2, con todo lo demas
+// —tipo de evento, persona, tipo de registro— en `FilterExpression` sobre un
+// tope de 2 000 eventos acumulados en memoria. Ese tope produjo tres defectos
+// seguidos, los tres la misma clase de error: una cota que cambia la respuesta
+// en silencio (`desafios-implementacion.md` 44 y 46).
 //
-// Una `Query` por dia y no una sola: la particion es el dia, precisamente para
-// que el trabajo del sistema no caiga todo en una clave (riesgo R12). El rango
-// de la pantalla es lo que decide cuantas.
+// Ahora cada criterio tiene su propia particion, y el rango es una condicion de
+// **clave de ordenamiento**, no un filtro:
+//
+//   sin criterio     -> GSI5, `MES#<mes>`               1-4 Query por rango
+//   tipo de evento   -> GSI6, `TIPO#<tipo>#<mes>`       1-4
+//   persona que firmo-> GSI9, `ACTOR#<id>#<mes>`        1-4
+//   tipo de registro -> GSI7, `DIA#<dia>` + begins_with 1 por dia
+//
+// Las tres primeras particionan por **mes** porque el rango se acota dentro de
+// la particion: con 90 dias, por dia costarian 90 consultas y por mes cuestan
+// entre una y cuatro. La cuarta se queda por dia a proposito — no es
+// rendimiento sino correccion, y se explica en `bitacora.porAgregadoDelDia`.
 
 import {
   QueryCommand,
@@ -20,53 +28,65 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 
 import {
-  clave,
-  gsi2,
+  bitacora,
+  comparandoClaves,
   NOMBRES_DE_INDICE,
   type TipoDeAgregado,
 } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, type DepsDeServicio } from "@/lib/data/deps";
-import { diasDeNegocioEntre } from "@/lib/domain/fechas";
+import { diasDeNegocioEntre, mesesDeNegocioEntre } from "@/lib/domain/fechas";
 import type { EventoDTO, TipoDeEvento } from "@/types/auditoria";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 import { MAXIMO_DIAS_DE_RANGO } from "./filtrosDeBitacora";
 import { aEventoDTO } from "./mapeo";
+import {
+  condicionDeRango,
+  cotaDeRango,
+  type CotaDeRango,
+} from "./rangoDeBitacora";
 
 /**
- * Tope de eventos que una busqueda global acumula en memoria.
+ * Tope de eventos que una busqueda acumula en memoria.
  *
- * No es una cota de correccion sino de supervivencia: un dia de apertura de
- * convocatoria escribe un evento por solicitud, y treinta y un dias de eso no
- * caben en una pantalla ni deben caber en un render. Cuando se alcanza, la
- * respuesta lo dice (`truncada`) para que la pantalla pida acotar el rango, en
- * vez de mostrar una lista incompleta que parece completa.
+ * Sigue existiendo, pero ya no es lo mismo que antes. Antes acotaba una lectura
+ * que traia el rango entero para descartarlo en memoria, y por eso su corte
+ * cambiaba la respuesta de preguntas que nada tenian que ver. Ahora acota una
+ * lectura **ya restringida al criterio**: lo que sobra del tope son eventos que
+ * de verdad coinciden con lo que se pregunto, y la pantalla lo dice.
+ *
+ * Se conserva porque la tabla de resultados se pinta entera, sin paginar. El
+ * dia que la pantalla pagine, esto se va con ella.
  */
 export const LIMITE_DE_EVENTOS_GLOBAL = 2_000;
 
-/** Tamano de pagina de cada `Query` de dia. */
+/** Tamano de pagina de cada `Query`. */
 const TAMANO_DE_PAGINA = 200;
 
-export type BusquedaGlobal = {
+type RangoDeBusqueda = {
   /** Dia de negocio `yyyy-mm-dd`, inclusivo. */
   desde: string;
   /** Dia de negocio `yyyy-mm-dd`, inclusivo. */
   hasta: string;
-  /** Se aplica en DynamoDB, no en memoria: ver `filtroDeEvento`. */
-  tipo?: TipoDeEvento;
-  /** Compara contra `actorId`: quien firmo el evento. */
-  actorId?: string;
-  /**
-   * Acota a un tipo de registro, por el prefijo de la `PK`.
-   *
-   * **Sin esto, el cupo lo puede consumir un solo tipo.** Medido en el
-   * sandbox: 3 288 eventos de lote en un dia agotaban los 2 000 del tope, y
-   * los 9 de vehiculo y 7 de convocatoria del dia anterior quedaban fuera —
-   * asi que la pantalla ofrecia cero identificadores de vehiculo y afirmaba
-   * "sin actividad en este rango", que era falso.
-   */
-  agregado?: TipoDeAgregado;
 };
+
+/**
+ * Una busqueda de rango, con **al menos un criterio**.
+ *
+ * La union de tres es deliberada y es la parte que el tipo aporta: cada rama
+ * exige uno de los tres, asi que un rango sin criterio **no se puede
+ * construir**. Antes se podia, y caia en un indice cronologico que ya no
+ * existe: un `ValidationException` en runtime sobre codigo que compilaba.
+ *
+ * `validarBusqueda` ya rechazaba `sin_criterio` en la pantalla; esto lo vuelve
+ * una propiedad del servicio, para que una action nueva no pueda pedirlo.
+ */
+export type BusquedaGlobal = RangoDeBusqueda &
+  (
+    | { tipo: TipoDeEvento; actorId?: string; agregado?: TipoDeAgregado }
+    | { tipo?: TipoDeEvento; actorId: string; agregado?: TipoDeAgregado }
+    | { tipo?: TipoDeEvento; actorId?: string; agregado: TipoDeAgregado }
+  );
 
 export type BitacoraGlobal = {
   eventos: readonly EventoDTO[];
@@ -75,75 +95,127 @@ export type BitacoraGlobal = {
 };
 
 /**
- * `FilterExpression` dinamica, contra el criterio general del modulo de
- * filtros.
+ * Una consulta: la particion, su condicion de clave y sus valores.
  *
- * Ahi se argumenta que filtrar en memoria no pierde nada, y es cierto **para
- * la particion de un agregado**: unos cientos de eventos en toda su vida. Una
- * particion de dia es de otra naturaleza — puede traer todos los eventos del
- * sistema de ese dia—, y traerla entera por la red para descartar el 99% en el
- * proceso es un costo real. El filtro no ahorra RCU (DynamoDB cobra lo leido,
- * no lo devuelto), pero si transferencia y memoria, que es lo que aqui se
- * agota primero.
+ * Las particiones se recorren **de la mas nueva a la mas vieja** y cada una se
+ * lee descendente, para que el truncamiento se lleve lo mas viejo. Es la
+ * correccion de la seccion 46: la version anterior leia ascendente y el corte
+ * escondia justamente lo de hoy.
  */
-const filtroDeEvento = (
+type Consulta = Pick<
+  QueryCommandInput,
+  | "IndexName"
+  | "KeyConditionExpression"
+  | "ExpressionAttributeNames"
+  | "ExpressionAttributeValues"
+>;
+
+/**
+ * Traduce la busqueda en la lista de consultas que la responden, de la
+ * particion mas nueva a la mas vieja.
+ *
+ * Un solo lugar decide que indice sirve a que criterio. Repartir esa decision
+ * entre funciones por indice se leeria mas ordenado y escondería lo unico que
+ * de verdad hay que poder revisar de un vistazo: **que ninguna combinacion cae
+ * en un `Scan` ni en un filtro**.
+ */
+const consultasDe = (
+  busqueda: BusquedaGlobal,
+  cota: CotaDeRango,
+  meses: readonly string[],
+  dias: readonly string[],
+): Consulta[] => {
+  const rango = condicionDeRango(cota);
+  const descendente = <T>(valores: readonly T[]): T[] => [...valores].reverse();
+
+  // El tipo de registro va por dia y con `begins_with` sobre `agregadoSK`, que
+  // es la clave de ordenamiento de GSI7: el rango ya lo acota la particion, asi
+  // que no lleva condicion de tiempo.
+  if (busqueda.agregado) {
+    const agregado = busqueda.agregado;
+    return descendente(dias).map((dia) => ({
+      IndexName: NOMBRES_DE_INDICE.porAgregadoDelDia,
+      KeyConditionExpression:
+        "diaPK = :particion AND begins_with(agregadoSK, :prefijo)",
+      ExpressionAttributeValues: {
+        ":particion": bitacora.particionDelDia(dia).diaPK,
+        ":prefijo": bitacora.prefijoDeAgregado(agregado),
+      },
+    }));
+  }
+
+  if (busqueda.tipo) {
+    const tipo = busqueda.tipo;
+    return descendente(meses).map((mes) => ({
+      IndexName: NOMBRES_DE_INDICE.porTipoDeEvento,
+      KeyConditionExpression: `tipoPK = :particion AND ${rango.condicion}`,
+      ExpressionAttributeValues: {
+        ":particion": bitacora.particionDeTipo(tipo, mes).tipoPK,
+        ...rango.valores,
+      },
+    }));
+  }
+
+  if (busqueda.actorId) {
+    const actorId = busqueda.actorId;
+    return descendente(meses).map((mes) => ({
+      IndexName: NOMBRES_DE_INDICE.porActor,
+      KeyConditionExpression: `actorMesPK = :particion AND ${rango.condicion}`,
+      ExpressionAttributeValues: {
+        ":particion": bitacora.particionDeActor(actorId, mes).actorMesPK,
+        ...rango.valores,
+      },
+    }));
+  }
+
+  // Inalcanzable: `BusquedaGlobal` exige uno de los tres criterios. Se lanza en
+  // vez de devolver una consulta de respaldo porque no hay ninguna que sea
+  // correcta — el indice cronologico se borro justamente por no tener lector, y
+  // una consulta contra un indice inexistente fallaria en DynamoDB con un error
+  // que no dice que el criterio venia vacio.
+  throw new Error(
+    "consultarBitacoraGlobal sin criterio: el tipo de BusquedaGlobal lo impide",
+  );
+};
+
+/**
+ * Lo que un indice no puede acotar por clave.
+ *
+ * Solo queda un caso, y es el unico legitimo: **el tipo de evento combinado con
+ * el tipo de registro**. GSI7 particiona por dia y ordena por agregado, asi que
+ * el tipo de evento no cabe en su clave. Es un filtro sobre una lectura ya
+ * restringida a un dia y a un tipo de registro, no sobre la bitacora entera.
+ *
+ * Toda otra combinacion tiene indice. Si esta funcion crece, es la senal de que
+ * alguien agrego un criterio sin darle clave.
+ */
+const filtroResidual = (
   busqueda: BusquedaGlobal,
 ): Pick<QueryCommandInput, "FilterExpression" | "ExpressionAttributeNames"> & {
   valores: Record<string, unknown>;
 } => {
-  const condiciones: string[] = [];
-  const nombres: Record<string, string> = {};
-  const valores: Record<string, unknown> = {};
-
-  if (busqueda.tipo) {
-    // `tipo` no es palabra reservada de DynamoDB, pero `#tipo` cuesta lo mismo
-    // y no hay que volver a comprobarlo cada vez que se lea esta expresion.
-    nombres["#tipo"] = "tipo";
-    valores[":tipo"] = busqueda.tipo;
-    condiciones.push("#tipo = :tipo");
-  }
-  if (busqueda.actorId) {
-    nombres["#actorId"] = "actorId";
-    valores[":actorId"] = busqueda.actorId;
-    condiciones.push("#actorId = :actorId");
-  }
-  if (busqueda.agregado) {
-    // `PK` es la clave de la tabla base, no del indice, asi que **si** se
-    // puede filtrar por ella en una `Query` de GSI2 (comprobado contra
-    // DynamoDB real, no supuesto).
-    nombres["#PK"] = "PK";
-    valores[":prefijoDeAgregado"] = clave.prefijoDeParticionDeEvento(
-      busqueda.agregado,
-    );
-    condiciones.push("begins_with(#PK, :prefijoDeAgregado)");
-  }
-
+  if (!busqueda.agregado || !busqueda.tipo) return { valores: {} };
   return {
-    ...(condiciones.length > 0
-      ? {
-          FilterExpression: condiciones.join(" AND "),
-          ExpressionAttributeNames: nombres,
-        }
-      : {}),
-    valores,
+    FilterExpression: "#tipo = :tipoResidual",
+    ExpressionAttributeNames: { "#tipo": "tipo" },
+    valores: { ":tipoResidual": busqueda.tipo },
   };
 };
 
 /**
- * Un dia, **del evento mas nuevo al mas viejo** y sin pasar de `cupo`.
+ * Una particion, descendente y sin pasar de `cupo`.
  *
- * `ScanIndexForward: false` no es un detalle: es lo que hace que el
- * truncamiento se lleve lo mas viejo. Ver el comentario de
- * `consultarBitacoraGlobal`.
+ * `Limit` **no es el tamano de pagina cuando hay filtro**: DynamoDB aplica el
+ * limite antes de filtrar, asi que una pagina puede volver corta o vacia con
+ * mas datos detras. Por eso se itera `LastEvaluatedKey` hasta llenar el cupo y
+ * no se confunde "pagina vacia" con "no hay mas".
  */
-const leerDia = async (
-  dia: string,
-  busqueda: BusquedaGlobal,
+const leerParticion = async (
+  consulta: Consulta,
+  residual: ReturnType<typeof filtroResidual>,
   cupo: number,
   deps: DepsDeServicio,
 ): Promise<EventoDTO[]> => {
-  const { FilterExpression, ExpressionAttributeNames, valores } =
-    filtroDeEvento(busqueda);
   const eventos: EventoDTO[] = [];
   let cursor: QueryCommandOutput["LastEvaluatedKey"];
 
@@ -151,15 +223,16 @@ const leerDia = async (
     const salida = await clienteDe(deps).send(
       new QueryCommand({
         TableName: nombreDeTabla(),
-        IndexName: NOMBRES_DE_INDICE.porEstatus,
-        KeyConditionExpression: "GSI2PK = :pk",
-        ...(FilterExpression ? { FilterExpression } : {}),
-        ...(ExpressionAttributeNames ? { ExpressionAttributeNames } : {}),
+        ...consulta,
+        ...(residual.FilterExpression
+          ? {
+              FilterExpression: residual.FilterExpression,
+              ExpressionAttributeNames: residual.ExpressionAttributeNames,
+            }
+          : {}),
         ExpressionAttributeValues: {
-          // Los rellenos solo construyen la particion; las claves se siguen
-          // armando en un unico lugar (`claves.ts`).
-          ":pk": gsi2.bitacoraDelDia(dia, "relleno", "relleno").GSI2PK,
-          ...valores,
+          ...consulta.ExpressionAttributeValues,
+          ...residual.valores,
         },
         ScanIndexForward: false,
         Limit: TAMANO_DE_PAGINA,
@@ -173,9 +246,6 @@ const leerDia = async (
     }
 
     cursor = salida.LastEvaluatedKey;
-    // Se corta por dia y no solo al final: un solo dia de apertura puede
-    // agotar el cupo por si mismo, y seguir paginandolo seria traer eventos
-    // que se van a descartar.
   } while (cursor && eventos.length < cupo);
 
   return eventos;
@@ -184,35 +254,33 @@ const leerDia = async (
 /**
  * Eventos del rango en orden cronologico ascendente.
  *
- * **Se lee del dia mas nuevo al mas viejo, y se voltea al final.** Es la
- * decision que hace correcto el truncamiento: cuando el rango tiene mas
- * eventos de los que caben, lo que sobra tiene que ser **lo mas viejo**. La
- * primera version leia al reves —ascendente, cortando al llegar al tope— y con
- * datos reales eso escondia justamente lo de hoy: en el sandbox, un dia de
- * prueba de carga con 3 069 eventos consumia el cupo entero y las opciones de
- * los selects, que se ordenan por actividad mas reciente, se armaban del dia
- * anterior.
+ * **Se lee de lo mas nuevo a lo mas viejo y se voltea al final**, por la razon
+ * de la seccion 46: si el rango tiene mas eventos de los que caben, lo que
+ * sobra tiene que ser lo mas viejo.
  *
- * **Y por eso los dias se leen en secuencia y no en paralelo.** Leerlos a la
- * vez obligaria a traer hasta el cupo de cada uno para quedarse con el cupo
- * total. En secuencia y de nuevo a viejo se deja de leer en cuanto se llena, y
- * el caso lento —recorrer los 31 dias— es exactamente el caso en que casi no
- * hay datos y cada `Query` es barata.
+ * Las particiones se recorren en **secuencia** y no en paralelo: en secuencia se
+ * deja de leer en cuanto se llena el cupo, y el caso lento —recorrer las cuatro
+ * particiones— es exactamente el caso en que hay pocos datos y cada `Query` es
+ * barata.
  *
- * No se ordena en memoria: cada `Query` devuelve su dia ya ordenado (la
- * `GSI2SK` es `<ocurridoEn>#<eventoId>`), las particiones de dia son disjuntas
- * y se recorren en orden, asi que basta un `reverse` al final.
+ * No se ordena en memoria. Las particiones son disjuntas, se recorren en orden
+ * y cada una vuelve ordenada por su clave, asi que basta el `reverse` final.
+ * La unica excepcion es GSI7, donde la particion del dia ordena por agregado y
+ * no por tiempo: ahi si hay que ordenar, y se dice donde ocurre.
  */
 export const consultarBitacoraGlobal = async (
   busqueda: BusquedaGlobal,
   deps: DepsDeServicio = {},
 ): Promise<Resultado<BitacoraGlobal>> => {
   const dias = diasDeNegocioEntre(busqueda.desde, busqueda.hasta);
-  if (!dias) return fallo("validation_failed", { campo: "rango" });
+  const meses = mesesDeNegocioEntre(busqueda.desde, busqueda.hasta);
+  const cota = cotaDeRango(busqueda.desde, busqueda.hasta);
+  if (!dias || !meses || !cota) {
+    return fallo("validation_failed", { campo: "rango" });
+  }
 
   // Segunda linea de defensa, y no una duplicacion de `validarBusqueda`: quien
-  // llama puede ser una action nueva que olvide validar, y treinta y una
-  // `Query` es el techo que este servicio esta dispuesto a ejecutar.
+  // llama puede ser una action nueva que olvide validar.
   if (dias.length > MAXIMO_DIAS_DE_RANGO) {
     return fallo("validation_failed", {
       campo: "rango",
@@ -220,76 +288,44 @@ export const consultarBitacoraGlobal = async (
     });
   }
 
-  // Del mas nuevo al mas viejo. `diasDeNegocioEntre` los entrega ascendentes.
-  const descendentes = [...dias].reverse();
+  const residual = filtroResidual(busqueda);
+  const consultas = consultasDe(busqueda, cota, meses, dias);
   const recientesPrimero: EventoDTO[] = [];
   let truncada = false;
 
-  for (const dia of descendentes) {
+  for (const consulta of consultas) {
     const restante = LIMITE_DE_EVENTOS_GLOBAL - recientesPrimero.length;
     if (restante <= 0) {
-      // Queda rango sin leer: hay mas historia de la que cabe.
       truncada = true;
       break;
     }
 
-    // Se pide uno mas que el cupo para poder distinguir "cabe justo" de "no
-    // cabe": sin ese evento extra, un rango que llena el tope exacto se
-    // reportaria como truncado sin serlo.
-    const delDia = await leerDia(dia, busqueda, restante + 1, deps);
-    if (delDia.length > restante) truncada = true;
-    recientesPrimero.push(...delDia.slice(0, restante));
+    // Se pide uno mas que el cupo para distinguir "cabe justo" de "no cabe":
+    // sin ese evento extra, un rango que llena el tope exacto se reportaria
+    // como truncado sin serlo.
+    const leidos = await leerParticion(consulta, residual, restante + 1, deps);
+    if (leidos.length > restante) truncada = true;
+    recientesPrimero.push(...leidos.slice(0, restante));
   }
 
-  return exito({
-    eventos: recientesPrimero.reverse(),
-    truncada,
-  });
-};
-
-/**
- * Los eventos de un tipo en el rango, reusando una lectura previa **solo si
- * fue completa**.
- *
- * La pantalla ya lee el rango sin filtrar para armar las opciones de sus
- * selects. Si esa lectura no trunco, contiene todo el rango y filtrarla en
- * memoria da exactamente el mismo conjunto que preguntarle a DynamoDB: la
- * segunda consulta seria gasto puro.
- *
- * **Si trunco, no se puede reusar**, y esta es la razon de que exista esta
- * funcion en vez de un `filter` en la pagina: el corte se lleva los eventos
- * mas viejos del rango, y entre ellos puede haber muchos del tipo buscado.
- * Medido en el sandbox: `LOTE_ADJUDICADO` devolvia 483 filas reusando la
- * lectura truncada y devuelve **841** preguntando con el filtro — 358 eventos
- * que se presentaban como "todos los del rango" sin serlo. Y peor que el
- * numero: la respuesta reusada venia marcada como truncada, que le dice al
- * auditor "acota el rango" cuando lo que hacia falta era justo lo contrario.
- *
- * Repetir la lectura cuesta el mismo RCU que la primera —DynamoDB cobra lo
- * leido, no lo devuelto— y se paga: una bitacora que responde de menos sin
- * decirlo no sirve para auditar.
- */
-export const consultarPorTipoDeEvento = async (
-  entrada: {
-    desde: string;
-    hasta: string;
-    tipo: TipoDeEvento;
-    /** Lo que la pantalla ya leyo del rango, sin filtrar. */
-    yaLeido?: BitacoraGlobal;
-  },
-  deps: DepsDeServicio = {},
-): Promise<Resultado<BitacoraGlobal>> => {
-  if (entrada.yaLeido && !entrada.yaLeido.truncada) {
-    return exito({
-      eventos: entrada.yaLeido.eventos.filter(
-        (evento) => evento.tipo === entrada.tipo,
-      ),
-      truncada: false,
-    });
+  // GSI7 ordena su particion por `agregadoSK`, o sea por identificador y luego
+  // por tiempo: dentro de un dia, los eventos no vienen cronologicos. Se ordena
+  // aqui —es un dia de eventos ya acotado, no la bitacora entera— y se hace en
+  // el mismo criterio que la clave: `ocurridoEn` y, a igualdad, `eventoId`.
+  if (busqueda.agregado) {
+    recientesPrimero.sort((a, b) =>
+      a.ocurridoEn === b.ocurridoEn
+        ? comparandoClaves(b.eventoId, a.eventoId)
+        : comparandoClaves(b.ocurridoEn, a.ocurridoEn),
+    );
   }
 
-  return consultarBitacoraGlobal(
-    { desde: entrada.desde, hasta: entrada.hasta, tipo: entrada.tipo },
-    deps,
-  );
+  return exito({ eventos: recientesPrimero.reverse(), truncada });
 };
+
+// `consultarPorTipoDeEvento` ya no existe. Era `consultarBitacoraGlobal` con
+// una heuristica delante: reusar una lectura previa del rango **si no habia
+// truncado**, para ahorrarse una consulta. Esa heuristica produjo el defecto de
+// las 483 filas contra 841 (`desafios` 46), y ahora ademas no ahorra nada — el
+// tipo de evento **es la particion** de GSI6, asi que preguntarlo directo
+// cuesta entre una y cuatro consultas y no puede responder de menos.

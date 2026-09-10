@@ -156,6 +156,8 @@ const DetalleDeConvocatoria = async ({
         convocatoriaId={convocatoria.convocatoriaId}
         editable={editable}
         valores={{
+          folio: convocatoria.folio,
+          nombre: convocatoria.nombre,
           tipo: convocatoria.tipo,
           descripcionParticipacion: convocatoria.descripcionParticipacion,
           publicadaEn: enCampos(convocatoria.publicadaEn),

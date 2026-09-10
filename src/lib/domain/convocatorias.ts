@@ -8,8 +8,14 @@ import { desdeIso } from "./fechas";
 import { revisarHtmlDeDescripcion } from "./htmlDeDescripcion";
 import type { DatosConvocatoria } from "@/types/convocatoria";
 import { TIPOS_CONVOCATORIA } from "@/types/convocatoria";
+import {
+  normalizarIdentificadorDeNegocio,
+  prepararIdentificadorDeNegocio,
+} from "./identificadorDeNegocio";
 
 export const LIMITES_CONVOCATORIA = {
+  /** Cadena corta de identificacion en pantalla, no un titulo largo. */
+  nombre: 80,
   /**
    * La descripcion es HTML del editor enriquecido, asi que el marcado cuenta:
    * 2000 caracteres bastaban para texto plano pero son poco texto con etiquetas.
@@ -35,6 +41,19 @@ export const MOTIVOS_INVALIDEZ_CONVOCATORIA = [
   "sin_lotes",
   "etiqueta_no_admitida",
   "enlace_no_admitido",
+  // Del folio: su alfabeto es lista blanca, porque el valor entra en la clave
+  // de su centinela de unicidad.
+  "caracter_no_permitido",
+  /**
+   * Del folio, y el unico motivo que **`revisarDatosConvocatoria` nunca
+   * devuelve**: la unicidad la decide el centinela dentro de la transaccion,
+   * no una lectura previa.
+   *
+   * Esta en la lista porque llega a la pantalla por el mismo camino y porque es
+   * la lista que recorre la prueba de diccionarios; fuera de aqui, nada
+   * obligaria a traducirlo (regla 11).
+   */
+  "duplicado",
 ] as const;
 
 export type MotivoInvalidezConvocatoria =
@@ -60,6 +79,18 @@ export const revisarDatosConvocatoria = (
 
   if (!(TIPOS_CONVOCATORIA as readonly string[]).includes(datos.tipo)) {
     errores.tipo = "requerido";
+  }
+
+  // El folio se revisa **sobre su forma normalizada**, que es lo que se va a
+  // guardar y lo que va a colisionar en el centinela.
+  const folio = prepararIdentificadorDeNegocio(datos.folio);
+  if (!folio.ok) errores.folio = folio.motivo;
+
+  const nombre = datos.nombre.trim();
+  if (nombre === "") {
+    errores.nombre = "requerido";
+  } else if (nombre.length > LIMITES_CONVOCATORIA.nombre) {
+    errores.nombre = "muy_largo";
   }
 
   const descripcion = datos.descripcionParticipacion.trim();
@@ -138,6 +169,10 @@ export const normalizarDatosConvocatoria = (
   };
 
   return {
+    // Mayusculas y recortado: es lo que hace real la unicidad, porque
+    // `"a-1"` y `"A-1"` tienen que colisionar en el centinela.
+    folio: normalizarIdentificadorDeNegocio(datos.folio),
+    nombre: datos.nombre.trim(),
     tipo: datos.tipo,
     descripcionParticipacion: datos.descripcionParticipacion.trim(),
     publicadaEn: enIso(datos.publicadaEn),

@@ -2620,3 +2620,295 @@ pasan las pruebas de cantidad.
 
 Y una optimizacion que **reusa** un resultado acotado hereda su recorte: solo es valida si ese
 resultado estaba completo. Reusar una lectura truncada no ahorra una consulta, cambia la respuesta.
+
+## 47) `satisfies readonly (keyof T)[]` no exige exhaustividad, y una edicion se perdia en silencio
+
+### Problema
+`CAMPOS_VEHICULO` y `CAMPOS_CONVOCATORIA` son la lista de campos capturables, y de ellas dependen
+dos cosas: `camposModificados` —lo que decide si hay algo que escribir y que campos anota el
+evento— y el reenvio de errores del formulario, que recorre la lista para volver a marcar los
+controles con el mensaje del servidor.
+
+Al agregar `numeroEconomico` y `numeroDeSerie` al tipo `DatosVehiculo`, la lista se quedo sin
+ellos.
+
+### Sintoma
+Editar el numero economico de un vehiculo devolvia `{ ok: true }` **sin escribir nada**. Ni la
+transaccion ni el evento salian, y la pantalla mostraba "Cambios guardados".
+
+`npm run typecheck` estaba limpio y las 2 073 pruebas pasaban.
+
+### Causa raiz
+```ts
+export const CAMPOS_VEHICULO = [...] as const satisfies readonly (keyof DatosVehiculo)[];
+```
+
+`satisfies` comprueba que **cada elemento sea** una clave valida. No comprueba que esten **todas**.
+Es una direccion sola: protege de escribir un campo inexistente y no dice nada de uno olvidado. La
+anotacion parece una garantia de correspondencia con el tipo, y solo la mitad lo es.
+
+Lo que lo volvio invisible: `camposModificados` filtra la lista, asi que un campo ausente no
+produce error — produce un arreglo mas corto. Cero cambios es un caso legitimo (evitar un evento
+"editado" que no edito nada), asi que el camino de "no hay nada que hacer" ya existia y se tomo sin
+protestar.
+
+### Solucion aplicada
+Los dos campos entraron en `CAMPOS_VEHICULO`, y en `src/lib/domain/{vehiculos,convocatorias}.test.ts`
+quedo una prueba que compara la lista contra las claves del literal que devuelve
+`normalizar*`, que el compilador **si** obliga a cubrir entero:
+
+```ts
+expect([...CAMPOS_VEHICULO].sort()).toEqual(
+  Object.keys(normalizarDatosVehiculo(validos)).sort(),
+);
+```
+
+La referencia no es arbitraria: `normalizarDatosVehiculo` declara su retorno como `DatosVehiculo` y
+lo construye con un literal, asi que agregar un campo al tipo rompe **ahi** en compilacion. La
+prueba solo traslada esa garantia a la lista.
+
+### Regla para futuro
+Una lista de nombres de campos derivada de un tipo necesita una comprobacion de **exhaustividad**,
+y `satisfies` no la da. La forma barata es anclarla a un literal completo que el compilador ya
+vigile.
+
+Y el sintoma a reconocer: un cambio que devuelve exito sin escribir es peor que un error. Todo
+camino de "no hay nada que hacer" merece la pregunta de que pasaria si se tomara por equivocacion —
+aqui el precio era una edicion perdida con acuse de recibo.
+
+## 48) React 19 reinicia el formulario al terminar la action, y el rechazo del servidor quedaba sobre campos vacios
+
+### Problema
+Los dos formularios de alta muestran los errores del servidor por campo (seccion 26). Con el
+`duplicado` de la Etapa 11.2 aparecio un rechazo nuevo: el que **solo** el servidor puede emitir,
+porque lo decide un centinela de unicidad dentro de la transaccion. La pantalla tiene que permitir
+corregir ese campo y reenviar.
+
+### Sintoma
+Tras cualquier rechazo del servidor, **todos los campos quedaban vacios** y los mensajes de error
+senalaban campos en blanco. En la convocatoria se perdian ademas la descripcion enriquecida, el
+tipo elegido y las seis mitades de fecha y hora; el navegador anadia encima su
+`Please fill out this field.` sobre cada requerido.
+
+No lo veia ninguna prueba: las de la seccion 26 comprueban el `validationMessage`, que si llegaba.
+
+### Causa raiz
+**React 19 reinicia el formulario cuando la action termina**, y lo reinicia a `defaultValue`. Es
+deliberado —lo normal es que una action exitosa deje el formulario limpio— y aplica igual cuando la
+action devuelve un error. `defaultValue` venia de `valores`, que en el alta esta vacio.
+
+Con el editor enriquecido hay una segunda causa encadenada: **Lexical solo lee `initialContent` al
+montar**. Devolver el contenido capturado en esa prop no alcanza, porque el componente no se
+remonta y la prop nueva se ignora en silencio.
+
+### Solucion aplicada
+El estado de `useActionState` gana `capturado?: Record<string, string>`: el adaptador devuelve el
+`FormData` tal como llego —cadenas crudas, sin normalizar, porque hay que repintar lo que la
+persona escribio, incluido un modelo que no es un numero— y el componente lo usa como primera
+opcion de `defaultValue`:
+
+```tsx
+const inicial = (campo: keyof DatosVehiculo): string =>
+  (estado.estado === "error" ? estado.capturado?.[campo] : undefined) ??
+  valores[campo]?.toString() ??
+  "";
+```
+
+Las claves son nombres de **control**, no campos del dominio: `publicadaEnFecha` y `publicadaEnHora`
+son dos, porque Eden no tiene un campo combinado de fecha y hora.
+
+Para el editor hace falta forzar el remontaje: un contador de rechazos como `key`.
+
+```tsx
+const [intento, setIntento] = useState(0);
+useEffect(() => {
+  if (estado.estado === "error") setIntento((previo) => previo + 1);
+}, [estado]);
+...
+<RichTextEditor key={intento} initialContent={inicial("descripcionParticipacion", ...)} />
+```
+
+### Regla para futuro
+Todo formulario con `action` y errores por campo tiene que **devolver lo capturado**; sin eso, la
+validacion del servidor es inservible en la practica. Y un componente de terceros que solo lee su
+valor inicial al montar necesita `key`, no una prop nueva — la prop no falla, se ignora.
+
+Lo que hizo el defecto invisible: las pruebas afirmaban el **mensaje** y nunca el **valor**. Un
+error correctamente senalado sobre un campo vacio pasa cualquier prueba de mensajeria.
+
+## 49) La compuerta empezo a fallar en un archivo distinto en cada corrida
+
+### Problema
+Terminada la Etapa 11.2, `npm run verify:rapido` fallaba una o dos pruebas por corrida y
+**pasaba** al ejecutar esos mismos archivos por su cuenta.
+
+### Sintoma
+Siempre `Test timed out in 5000ms` y siempre en la prueba generica de accesibilidad, pero **en un
+archivo distinto cada vez**: `FormularioConvocatoria`, luego `CatalogoConvocatorias`, luego
+`FiltrosDeBitacora`. Aparte, `infraestructura.test.ts` cruzaba su limite de 30 s.
+
+### Causa raiz
+Dos limites quedaron chicos, y por la misma razon: el trabajo crecio.
+
+`axe` recorre el arbol renderizado con decenas de reglas, y los componentes de Eden montan sus
+propias hojas de estilo que jsdom reparsea. El formulario de convocatoria con el editor
+enriquecido tarda ~1 s **solo**; con las 128 suites en paralelo, cualquiera de las pesadas cruza
+los 5 s por omision. Que el archivo culpable cambiara de corrida es justo lo que delata la
+contencion de maquina: si fuera una prueba lenta en particular, fallaria siempre la misma.
+
+Y la sintesis de la pila de CDK pasa de 30 s con los nueve GSIs de la Etapa A —43 s medidos con el
+archivo solo—, mientras `backend.test.ts`, que sintetiza lo mismo, ya estaba en 120 s.
+
+### Solucion aplicada
+El limite de las dos pruebas genericas se fija **en `genericTests`** y no archivo por archivo: el
+defecto era de la utilidad compartida, y ponerlo en cada `vi.setConfig` obligaria a recordarlo cada
+vez que un componente engorda. `infraestructura.test.ts` se iguala a los 120 s de
+`backend.test.ts`.
+
+### Regla para futuro
+Una compuerta que falla **a veces** se empieza a reintentar en vez de leerse, y ese es el peor
+resultado posible: el dia que falle de verdad, el reflejo va a ser volver a correrla. Un limite de
+tiempo tiene que dejar margen para la contencion, no ajustarse a la medicion de un archivo solo.
+
+Y la senal a reconocer: si el archivo que falla cambia de corrida, no se busca el defecto en ese
+archivo.
+
+## 50) Las fotografias dejaron de cargar y no habia ningun error en ninguna parte
+
+### Problema
+Al editar un vehiculo con fotografias, la galeria aparecia vacia: los recuadros dibujados y las
+imagenes sin cargar. Se reporto como "las ligas parece que estan rotas", que es exactamente lo que
+parece desde la pantalla.
+
+### Sintoma
+Ningun error. Consola del navegador limpia, nada en el servidor, la pagina 200, el HTML con sus
+`<img>` y su `src` firmado con la forma correcta —`Expires`, `Signature`, `Key-Pair-Id`—. Solo
+`naturalWidth` en cero.
+
+### Causa raiz
+La Etapa 11.2 hizo `npx ampx sandbox delete` y redespliegue para crear los nueve GSIs en una sola
+operacion. Eso **crea una distribucion de CloudFront nueva**, con otro dominio, y `.env.local` se
+quedo con el de la anterior.
+
+Firmar contra un host que ya no existe no produce un error de firma ni un 403: produce una peticion
+que no llega a ningun lado. Medido con `curl`: la distribucion vieja no resuelve a ninguna
+direccion —CloudFront conserva el nombre sin direcciones— y la nueva responde `403` a una peticion
+sin firma, que es lo correcto.
+
+Y el bucket **si** coincidia, porque se retiene al borrar el sandbox. Es lo que hace el desfase tan
+difícil de ver: las fotografias siguen existiendo, con la misma clave, y el codigo que las sirve no
+cambio.
+
+### Solucion aplicada
+`CLOUDFRONT_DOMAIN` corregido, y `configuracionDeFirma` **compara el entorno con
+`amplify_outputs.json` en desarrollo** y falla nombrando la variable, el valor local y el
+desplegado. Lo comparado es puro y probado (`desfasesConElSandbox`); leer el archivo se memoriza,
+porque la funcion corre una vez por fotografia y por peticion. Sin salidas en disco no reporta
+nada: quien trabaja sin sandbox propio no tiene por que ver un error.
+
+**No se corrige el valor sobre la marcha.** Tomar el dominio de `amplify_outputs.json` cuando el
+entorno discrepa seria el fallback silencioso que prohibe la regla 15, y dejaria `.env.local`
+mintiendo para siempre.
+
+Verificado en el navegador en los dos sentidos: con el dominio viejo la pantalla responde 500 con el
+mensaje y **cero** imagenes; con el corregido, 200 y las dos fotografias con `naturalWidth` de
+1946 y 640.
+
+### Regla para futuro
+Recrear el sandbox invalida todo valor de `.env.local` que apunte a un recurso **reemplazable**: la
+distribucion cambia, la tabla cambia, el bucket no. Y de esos, el unico cuyo desfase es **silencioso**
+es el dominio de CloudFront — una tabla equivocada lanza `ResourceNotFoundException` en la primera
+lectura.
+
+La senal general: una configuracion que se duplica entre dos fuentes necesita una comprobacion que
+las enfrente. Si el sintoma del desfase no es un error, la comprobacion no es opcional.
+
+## 51) `KeyConditionExpression` no admite dos condiciones sobre la misma clave
+
+### Problema
+La Etapa 11.2 convirtio el rango de fechas de la bitacora en una condicion de **clave** en lugar de
+un filtro. El limite superior tenia que ser **exclusivo** —la medianoche del dia siguiente— para no
+necesitar el centinela `U+FFFF` que `gsi2.cotaSuperiorPorFecha` usa en PA-05.
+
+La expresion natural para eso son dos comparaciones:
+
+```
+cronoSK >= :desdeCrono AND cronoSK < :hastaCrono
+```
+
+### Sintoma
+`ValidationException: Invalid KeyConditionExpression: KeyConditionExpressions must only contain one
+condition per key`, y con ella un 500 en `/auditoria`.
+
+**Ninguna prueba lo detecto.** Las 18 pruebas del lector afirmaban la cadena exacta de la
+`KeyConditionExpression` y pasaban en verde: `clienteDynamoFalso` captura comandos, no los evalua,
+asi que acepta cualquier expresion — incluida una que DynamoDB rechaza. Aparecio en el primer
+recorrido con el navegador.
+
+### Causa raiz
+DynamoDB admite **una sola condicion por clave** en una `KeyConditionExpression`. Para un rango de
+dos extremos sobre la clave de ordenamiento existe `BETWEEN`, y solo `BETWEEN`.
+
+### Solucion aplicada
+`BETWEEN`, y el limite superior sigue siendo exclusivo **sin centinela**:
+
+```
+cronoSK BETWEEN :desdeCrono AND :hastaCrono   -- :hastaCrono = medianoche siguiente
+```
+
+`BETWEEN` es inclusivo en los dos extremos, pero `cronoSK` es `<ocurridoEn>#<eventoId>` y toda
+cadena ordena despues que su propio prefijo: un evento ocurrido exactamente en esa medianoche tiene
+`cronoSK` **mayor** que la cota y queda fuera. La misma propiedad que obligaba a inventar un
+centinela cuando la cota era el ultimo instante del rango trabaja a favor cuando la cota es la
+medianoche siguiente, donde no puede haber ningun evento ambiguo.
+
+### Regla para futuro
+Un doble que **captura** comandos no puede validar **expresiones**. Sirve para afirmar que se pide
+la particion correcta, con el indice correcto y sin filtro; no dice nada sobre si DynamoDB acepta la
+sintaxis. Toda expresion nueva —de clave, de condicion o de filtro— necesita al menos un recorrido
+contra la tabla real antes de considerarse terminada.
+
+Es la misma leccion que la seccion 34 con `ampx sandbox`: hay clases de error que la compuerta no
+puede ver porque su doble es mas permisivo que el sistema real.
+
+## 52) El sondeo por valor era optimo para el peor caso y pesimo para el normal
+
+### Problema
+Las opciones de los dos selects de auditoria salen de los valores **distintos** con actividad en el
+rango. Para no leer miles de eventos, GSI7 y GSI8 agrupan por valor antes que por tiempo y se
+recorren saltando cada grupo con `ExclusiveStartKey`.
+
+La primera version sondeaba con `Limit: 1`: un item por consulta, y el salto lleva al siguiente
+grupo.
+
+### Sintoma
+La pantalla tardaba **20 segundos** en cargar, con cualquier filtro y en cualquier modo. Antes del
+cambio tardaba entre 1,8 y 4,3 s. Todas las latencias eran casi identicas, que es la senal de un
+costo fijo pagado en cada peticion.
+
+### Causa raiz
+El calculo del plan —"una consulta por valor distinto"— era correcto en **numero de consultas** y no
+contaba la **latencia acumulada**. Con `Limit: 1`, 200 valores distintos son 200 viajes de red
+encadenados: a ~80 ms cada uno, 16 segundos. El sondeo estaba afinado para el caso de un grupo
+enorme (un lote con 3 288 eventos, que se salta con una consulta) y era el peor posible para el caso
+normal, que es mucha gente y muchos vehiculos con pocos eventos cada uno.
+
+Los dias tambien se recorrian en serie: 31 dias mas 200 sondeos, todo encadenado.
+
+### Solucion aplicada
+Dos cambios, y el primero es el importante:
+
+1. **Leer una pagina (`Limit: 100`) en vez de un item**, extraer de ella todos los valores distintos
+   y aplicar el salto **desde el ultimo grupo de la pagina**. El costo pasa a ser el mejor de los dos
+   mundos: nunca mas de una consulta por grupo grande, y hasta cien valores en una sola consulta
+   cuando los grupos son chicos. Medido: 60 vehiculos distintos en **una** consulta contra 60.
+2. **Los dias en tandas de ocho**, concurrentes, procesadas en orden para no perder el criterio de
+   "ultimo dia con actividad primero".
+
+Resultado medido en el sandbox: **20,6 s -> 3,5 s**.
+
+### Regla para futuro
+Contar consultas no es medir latencia. N consultas **encadenadas** cuestan N veces el viaje de red,
+y ese numero no aparece en ningun analisis de RCU. Cuando un recorrido se optimiza para un caso
+extremo, hay que preguntar explicitamente cuanto cuesta el caso normal — aqui el diseno optimo para
+"un grupo de 3 288 eventos" era el peor para "200 grupos de 3".
