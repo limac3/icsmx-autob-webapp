@@ -19,7 +19,8 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { clave } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
-import { clienteDe, type DepsDeServicio } from "@/lib/data/deps";
+import type { DepsDeServicio } from "@/lib/data/deps";
+import { contarConQuery } from "@/lib/data/paginacion";
 import { exito, type Resultado } from "@/types/resultado";
 import { ESTADOS_VIVOS_SOLICITUD } from "@/types/solicitud";
 
@@ -43,28 +44,37 @@ const VALORES_DE_ESTADO = Object.fromEntries(
 
 type Rango = { desde: string; hasta: string };
 
+/**
+ * **Suma el `Count` de todas las paginas.** `Select: "COUNT"` no exime del
+ * corte de 1 MB: DynamoDB lee igual hasta ese limite y devuelve solo lo que
+ * paso el filtro **de esa pagina**, asi que un conteo de una sola consulta se
+ * queda corto igual que una lectura de items — y aqui eso saldria en pantalla
+ * como una posicion o un tamano de fila menores que los reales.
+ *
+ * Paginar no trae items, asi que la garantia de arriba sigue intacta.
+ */
 const contar = async (
   loteId: string,
   rango: Rango,
   deps: DepsDeServicio,
-): Promise<number> => {
-  const salida = await clienteDe(deps).send(
-    new QueryCommand({
-      TableName: nombreDeTabla(),
-      KeyConditionExpression: "PK = :pk AND SK BETWEEN :desde AND :hasta",
-      FilterExpression: FILTRO_VIVAS,
-      ExpressionAttributeValues: {
-        ":pk": clave.solicitud(loteId, 0).PK,
-        ":desde": rango.desde,
-        ":hasta": rango.hasta,
-        ...VALORES_DE_ESTADO,
-      },
-      Select: "COUNT",
-    }),
+): Promise<number> =>
+  contarConQuery(
+    (desde) =>
+      new QueryCommand({
+        TableName: nombreDeTabla(),
+        KeyConditionExpression: "PK = :pk AND SK BETWEEN :desde AND :hasta",
+        FilterExpression: FILTRO_VIVAS,
+        ExpressionAttributeValues: {
+          ":pk": clave.solicitud(loteId, 0).PK,
+          ":desde": rango.desde,
+          ":hasta": rango.hasta,
+          ...VALORES_DE_ESTADO,
+        },
+        Select: "COUNT",
+        ExclusiveStartKey: desde,
+      }),
+    deps,
   );
-
-  return salida.Count ?? 0;
-};
 
 /**
  * Turno maximo representable en una `SK` de solicitud. Sirve de cota superior

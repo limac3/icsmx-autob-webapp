@@ -33,9 +33,10 @@ export type Nivel = (typeof NIVELES)[number];
  * serie en dos y la alarma deja de ver la mitad de los datos.
  *
  * Las tres primeras son las "operaciones criticas" que nombra
- * `arquitectura-tecnica-aws.md` 7 (solicitar, adjudicar, vencer). Las dos del
- * barrido se agregan porque corren sin nadie mirando: son las unicas cuyo fallo
- * no lo reporta un usuario.
+ * `arquitectura-tecnica-aws.md` 7 (solicitar, adjudicar, vencer). Las demas se
+ * agregan por un criterio comun: **su fallo no lo reporta ningun usuario**, asi
+ * que sin esta linea no hay forma de enterarse. Cada una dice abajo por que
+ * cumple ese criterio.
  */
 export const OPERACIONES = [
   "solicitarCompra",
@@ -47,6 +48,12 @@ export const OPERACIONES = [
   // De mejor esfuerzo y fuera de toda transaccion: su fallo no cancela nada,
   // asi que la unica forma de enterarse es esta linea (`session.ts`).
   "registrarPerfil",
+  // Por la misma razon que las dos del barrido: cuando el cierre de la fila
+  // falla **despues** de que la venta quedo firme (`avalarPago`), nadie lo
+  // reporta — el tesorero ve la venta hecha y los participantes solo ven una
+  // posicion que ya no significa nada. Esta linea es la unica forma de
+  // enterarse antes de que el barrido lo repare.
+  "cerrarFilaDelLote",
 ] as const;
 export type Operacion = (typeof OPERACIONES)[number];
 

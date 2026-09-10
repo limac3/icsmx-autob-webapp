@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { crearClienteFalso } from "@/utils/clienteDynamoFalso";
 import { cerrarFilaDelLote } from "@/lib/fila/cerrarFilaDelLote";
+import { registrar } from "@/lib/observabilidad/registro";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
@@ -12,8 +13,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/fila/cerrarFilaDelLote", () => ({
   cerrarFilaDelLote: vi.fn(),
 }));
+vi.mock("@/lib/observabilidad/registro", () => ({ registrar: vi.fn() }));
 
 const cierre = vi.mocked(cerrarFilaDelLote);
+const registro = vi.mocked(registrar);
 
 const AHORA = new Date("2026-10-07T15:00:00.000Z");
 
@@ -155,7 +158,7 @@ describe("avalarPago — T4", () => {
     );
 
     if (!resultado.ok) throw new Error("se esperaba exito");
-    expect(resultado.data.cerradas).toBe(3);
+    expect(resultado.data.cierre).toEqual({ ok: true, cerradas: 3 });
     expect(cierre).toHaveBeenCalledWith(
       { lote: expect.objectContaining({ estatus: "VENDIDO" }), actor },
       expect.anything(),
@@ -171,5 +174,88 @@ describe("avalarPago — T4", () => {
     );
 
     expect(cierre).not.toHaveBeenCalled();
+  });
+});
+
+describe("cuando el cierre de la fila falla despues de la venta", () => {
+  // El camino que la auditoria externa encontro descubierto: el mock de
+  // `cerrarFilaDelLote` solo se resolvia `ok`, asi que nada probaba lo que pasa
+  // cuando falla — y lo que pasaba era que el error se convertia en
+  // `cerradas: 0` y salia como exito.
+
+  it("la venta se sostiene: revertirla seria peor", async () => {
+    cierre.mockResolvedValue({ ok: false, error: "conflicto_concurrencia" });
+    const falso = crearClienteFalso();
+
+    const resultado = await avalarPago(
+      { lote, solicitud, actor },
+      deps(falso.cliente),
+    );
+
+    expect(resultado.ok).toBe(true);
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data.estatus).toBe("VENDIDA");
+  });
+
+  it("el resultado delata el fallo, en vez de confundirlo con cero cerradas", async () => {
+    // La ambiguedad que se elimino: `cerrarFilaDelLote` devuelve `exito(0)`
+    // legitimamente cuando no habia nada que cerrar, asi que un `0` no podia
+    // distinguir "no habia fila" de "el cierre fallo".
+    cierre.mockResolvedValue({ ok: false, error: "conflicto_concurrencia" });
+    const falso = crearClienteFalso();
+
+    const resultado = await avalarPago(
+      { lote, solicitud, actor },
+      deps(falso.cliente),
+    );
+
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data.cierre).toEqual({
+      ok: false,
+      error: "conflicto_concurrencia",
+    });
+  });
+
+  it("no confunde 'no habia fila que cerrar' con un fallo", async () => {
+    cierre.mockResolvedValue({ ok: true, data: 0 });
+    const falso = crearClienteFalso();
+
+    const resultado = await avalarPago(
+      { lote, solicitud, actor },
+      deps(falso.cliente),
+    );
+
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data.cierre).toEqual({ ok: true, cerradas: 0 });
+  });
+
+  it("deja una linea de registro: nadie mas va a reportar este fallo", async () => {
+    // Sin esta linea el fallo era invisible por completo — el tesorero ve la
+    // venta hecha y los participantes solo ven una posicion que ya no
+    // significa nada. `registrar` se silencia dentro de Vitest, asi que lo que
+    // se comprueba es que se le llama y con que.
+    cierre.mockResolvedValue({ ok: false, error: "conflicto_concurrencia" });
+    const falso = crearClienteFalso();
+
+    await avalarPago({ lote, solicitud, actor }, deps(falso.cliente));
+
+    expect(registro).toHaveBeenCalledWith(
+      "warn",
+      "cerrarFilaDelLote",
+      expect.objectContaining({
+        loteId: "L1",
+        desenlace: "rechazado",
+        error: "conflicto_concurrencia",
+      }),
+    );
+  });
+
+  it("no registra nada cuando el cierre funciona", async () => {
+    cierre.mockResolvedValue({ ok: true, data: 2 });
+    const falso = crearClienteFalso();
+
+    await avalarPago({ lote, solicitud, actor }, deps(falso.cliente));
+
+    expect(registro).not.toHaveBeenCalled();
   });
 });

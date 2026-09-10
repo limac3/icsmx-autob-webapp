@@ -7,8 +7,23 @@
 // (plan-ejecucion.md, Etapa 10). Agregar un tipo nuevo es agregar un valor a
 // `TipoDeCorreo` y su plantilla, no reabrir el modelo del mensaje.
 
-/** `PENDIENTE` es el unico estatus que aparece en GSI4 (dispersion, seccion 3). */
-export type EstatusMensaje = "PENDIENTE" | "ENVIADO" | "FALLIDO";
+/**
+ * `PENDIENTE` y `ENVIANDO` son los dos estatus que aparecen en GSI4
+ * (dispersion, seccion 3): las claves se retiran al llegar a `ENVIADO` o
+ * `FALLIDO`.
+ *
+ * **`ENVIANDO` es una adquisicion con plazo, no un estado de negocio.** El
+ * barrido corre cada 5 minutos y puede tardar hasta 300 s, asi que dos corridas
+ * se solapan; sin este estado las dos leian el mismo mensaje `PENDIENTE` y las
+ * dos lo enviaban, porque la condicion del `Update` a `ENVIADO` se evalua
+ * **despues** de que CES ya acepto. Con el, la corrida que gana la escritura
+ * condicional es la unica que llama a CES.
+ *
+ * El plazo (`leaseHasta` de `MensajeDeCorreo`) es lo que impide que una corrida
+ * muerta deje el mensaje atascado para siempre: vencido, otra corrida lo
+ * retoma.
+ */
+export type EstatusMensaje = "PENDIENTE" | "ENVIANDO" | "ENVIADO" | "FALLIDO";
 
 export type TipoDeCorreo = "ADJUDICACION";
 
@@ -44,5 +59,13 @@ export type MensajeDeCorreo = {
   intentos: number;
   ultimoIntentoEn?: string;
   ultimoError?: string;
+  /**
+   * Hasta cuando vale la adquisicion de `ENVIANDO`, en ISO-8601 UTC.
+   *
+   * Solo existe mientras el mensaje esta adquirido. Pasado ese instante, otra
+   * corrida puede retomarlo: es la unica salida para un mensaje cuya corrida
+   * murio despues de adquirirlo.
+   */
+  leaseHasta?: string;
   datos: DatosCorreoAdjudicacion;
 };

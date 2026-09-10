@@ -29,6 +29,15 @@
 > Corrige tambien una afirmacion de este ADR (seccion Etapa 10, mas abajo) que daba por cerrado el
 > problema con solo instalar el paquete. Ver `desafios-implementacion.md` 53.
 >
+> **Etapa 13 — los cuatro hallazgos de la auditoria externa que bloqueaban produccion.** Los seis
+> hallazgos del informe eran ciertos en su mecanismo; lo que cambio fue la severidad, aplicada la
+> escala real (decenas de solicitudes por lote). Toca **D-6** (adquisicion con plazo antes de llamar
+> a CES) y tres filas de las decisiones de modelo de datos: la excepcion de una sola pagina queda
+> acotada a PA-10 y PA-14, todo lo demas pagina por `src/lib/data/paginacion.ts`, y `avalarPago`
+> separa el desenlace del cierre de fila del de la venta. **D-13** gana `cerrarFilaDelLote` en su
+> catalogo de operaciones. Los hallazgos 5 y 6 quedan fuera de alcance por decision, con su razon en
+> `plan-ejecucion.md`. Ver `desafios-implementacion.md` 54 a 57.
+>
 > Este archivo es la copia local y versionada del ADR. El ADR que vive en el grafo se pierde
 > en cada `index_repository`; se recarga desde aqui. Ver "Mantenimiento de este ADR" y
 > `agent_files/desafios-implementacion.md` seccion 21.
@@ -115,6 +124,25 @@ o adjudicar sin notificar, o fallar la adjudicacion por un problema de correo. E
 desacopla: la adjudicacion es atomica y el envio se reintenta aparte.
 El argumento no dependia del proveedor y sobrevivio al cambio de SES a **CES** (REST
 corporativo, `arquitectura-tecnica-aws.md` 2.5): con un tercero remoto por HTTP se refuerza.
+**Ampliacion de la Etapa 13 — el despacho adquiere el mensaje antes de llamar a CES.** El estatus
+recorre `PENDIENTE -> ENVIANDO (con plazo) -> ENVIADO | FALLIDO`, y la vuelta a `PENDIENTE` para el
+fallo reintentable. Razon: el barrido corre cada 5 min con un limite de ejecucion de 300 s, asi que
+dos corridas se solapan y leian la misma lista; llamar a CES **antes** del `Update` condicional
+hacia que las dos enviaran y solo una lo anotara — la bitacora quedaba correcta, porque la condicion
+impedia el segundo `CORREO_ENVIADO`, y el participante recibia dos correos. El plazo (`LEASE_MS`,
+15 min) tiene que ser **mayor que el limite de ejecucion**: mas corto, una corrida lenta veria vencer
+su propia adquisicion mientras todavia envia. `ENVIANDO` se queda en GSI4 para que un plazo vencido
+sea recuperable.
+Descartado: acotar la corrida por **cantidad** de mensajes en vez de por tiempo. No garantiza la
+propiedad que se busca —no pasarse del limite de ejecucion—, porque con CES lento cien se pasan y con
+CES rapido mil no llegan a la mitad. Se acota con `performance.now()`, por lo mismo que `conTraza`.
+Ventana **aceptada y documentada**: si el proceso muere entre que CES acepta y que se escribe
+`ENVIADO`, el mensaje se reenvia. CES no ofrece clave de idempotencia —responde una confirmacion de
+envio, o la causa del error—, y el `id` que devuelve se guarda como `idExterno` pero solo sirve para
+rastrear. Es aceptable porque el correo es un aviso informativo (monto, plazo y enlace a la pagina del
+lote), sin token ni enlace de pago (`desafios-implementacion.md` 57).
+Anclas: `src/lib/correo/outbox.ts::itemsDeEncoladoAdjudicacion`,
+`src/lib/correo/procesarOutbox.ts::procesarOutbox`, `src/types/correo.ts::EstatusMensaje`.
 
 ### D-7 — Barrido mas verificacion perezosa
 Descartado: solo el barrido programado.
@@ -303,8 +331,14 @@ Descartado:
 - Una variable de entorno propia para silenciar el registro. Seria una palanca para apagar el
   diagnostico en produccion sin que nada lo delate; se comprueba `VITEST`, que no se puede
   activar por error en un despliegue.
+El catalogo `OPERACIONES` es **cerrado** y crece solo con un criterio: que el fallo de esa operacion
+**no lo reporte ningun usuario**, porque entonces la linea es la unica forma de enterarse. Con ese
+criterio entraron las dos del barrido, `registrarPerfil` y —en la Etapa 13— `cerrarFilaDelLote`,
+cuyo fallo ocurre despues de que la venta quedo firme: el tesorero la ve hecha y los participantes
+solo ven una posicion que ya no significa nada.
 Anclas: `amplify/alarmas.ts::AlarmasAutob`, `amplify/backend.ts::grupoDeLogsDelBarrido`,
 `src/lib/observabilidad/registro.ts::registrar`, `src/lib/observabilidad/registro.ts::redactar`,
+`src/lib/observabilidad/registro.ts::OPERACIONES`,
 `src/lib/observabilidad/traza.ts::conTraza`, `src/lib/data/transacciones.ts::ejecutarTransaccion`,
 `src/lib/data/transacciones.ts::esConflictoDeTransaccion`.
 
@@ -492,7 +526,9 @@ Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
 | Nuevo motivo de adjudicacion `RECUPERACION_POR_BARRIDO` | Un lote huerfano recuperado por el barrido no es "primera adjudicacion" ni ninguna reasignacion con causa conocida — forzarlo a uno de los cuatro existentes falsearia la bitacora |
 | Los GSIs se quedan en `ALL`: **revisado en la Etapa 12 y confirmado**, no estrechado a `INCLUDE` | DynamoDB cobra la escritura en bloques de 1 KB redondeando hacia arriba, asi que el ahorro es **cero** justo donde esta el volumen —solicitudes (~600 B) y eventos (~400 B), ya bajo el minimo facturable— y solo aparece en vehiculos y convocatorias, que se escriben unas pocas veces al mes: menos de un centavo mensual. Contra eso, la proyeccion de un GSI **no se puede modificar**: estrechar exige recrear el indice, y en esa ventana PA-05 y PA-11 dejan de responder (modelo-datos-dynamodb.md 8.1) |
 | Las tres escrituras sueltas sobre items transaccionales contemplan `TransactionConflictException` | Son el `ADD contadorTurnos` del paso 1 de T1, `liberarReserva` y `incrementarIntento` del outbox: las tres tocan items que si participan en transacciones (el lote en T2, la reserva en el paso 2 de T1, el mensaje en `marcarEnviado`/`marcarFallido`). El SDK la reintenta —`maxAttempts` 3— asi que nunca se habia visto; con contencion sostenida los tres intentos se agotan. En T1 el participante recibia un 500 en lugar de "relee y reintenta"; en los otros dos, un helper documentado como "de mejor esfuerzo" tumbaba una adjudicacion o abortaba el outbox de la corrida. Lo encontro la prueba de carga de la Etapa 12 corriendo sin reintentos (desafios-implementacion.md 41) |
-| `leerVencidasDelDia` y `leerPendientes` leen **una sola pagina**, sin recorrer `LastEvaluatedKey` | GSI4 es disperso, las dos leen de lo mas viejo a lo mas nuevo y el barrido es idempotente cada 5 minutos: una pagina truncada es un retraso, no trabajo perdido, porque la corrida siguiente empieza donde la anterior dejo de ver. La cota son ~1 700 solicitudes por corrida. Paginar dentro de una corrida la acercaria a su limite de 300 s sin resolver mas de lo que la siguiente ya resuelve (modelo-datos-dynamodb.md 8.2) |
+| `leerVencidasDelDia` y `leerPendientes` leen **una sola pagina**, sin recorrer `LastEvaluatedKey` — **y son las dos unicas** | GSI4 es disperso, las dos leen de lo mas viejo a lo mas nuevo y el barrido es idempotente cada 5 minutos: una pagina truncada es un retraso, no trabajo perdido, porque la corrida siguiente empieza donde la anterior dejo de ver. La cota son ~1 700 solicitudes por corrida. Paginar dentro de una corrida la acercaria a su limite de 300 s sin resolver mas de lo que la siguiente ya resuelve (modelo-datos-dynamodb.md 8.2). **La Etapa 13 acoto la excepcion en el documento** porque leerla como permiso general costo cinco lecturas de fila sin paginar: ninguna de las tres propiedades aplica a la particion `LOTE#<id>`, que conserva sus solicitudes terminales para siempre y por tanto no se autocura (desafios 55) |
+| Todo el resto de las lecturas pagina por **un solo camino**: `src/lib/data/paginacion.ts` | El patron estaba resuelto cuatro veces a mano en `src/lib/auditoria/` y `src/lib/fila/` no lo usaba en ninguna de sus cinco lecturas. El helper **no lleva tope de paginas** a proposito: cortar en silencio es exactamente el defecto que viene a arreglar —`adjudicarLote` escribiendo `FILA_AGOTADA` con candidatos vivos detras—, y quien necesite acotar trabajo acota **resultados**, que es lo unico que quien llama sabe medir. Tampoco lleva `import "server-only"`, porque el Lambda del barrido lo alcanza (desafios 53) |
+| `avalarPago` devuelve el desenlace del cierre de fila **separado** del de la venta | El cierre ocurre fuera de la transaccion (cantidad no acotada, T4) y puede fallar con la venta ya firme. Antes el error se volvia `cerradas: 0` y salia como exito, indistinguible del `0` legitimo de "no habia fila que cerrar" — y sin ninguna linea de registro, asi que nadie podia enterarse. La venta **no se revierte**: lo que se agrega es que el resultado lo delate, que quede registrado y que el barrido lo repare en la corrida siguiente. La cuenta nueva (`filasCerradas`) no entra en `errores`, para no cambiar lo que significa la alarma `vencimientos-sin-resolver` (desafios 56) |
 
 Centinelas: vehiculo activo (R-10), fila (R-07), adjudicacion activa (R-09), reserva de turno
 (R18). Transacciones criticas T1–T8 en `modelo-datos-dynamodb.md` seccion 6 (linea 258).

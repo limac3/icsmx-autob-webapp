@@ -23,7 +23,8 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { clave, PREFIJO } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
-import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
+import { resolver, type DepsDeServicio } from "@/lib/data/deps";
+import { itemsDeQuery } from "@/lib/data/paginacion";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import {
   ejecutarTransaccion,
@@ -31,7 +32,12 @@ import {
   type ItemDeTransaccion,
 } from "@/lib/data/transacciones";
 import { transicion } from "@/lib/domain/transiciones";
-import type { ActorUsuario } from "@/types/auditoria";
+// `ActorDeEvento` y no `ActorUsuario`: el cierre lo dispara una persona
+// (`avalarPago`, `concluirConvocatoria`) pero tambien el barrido cuando
+// reconcilia una fila que quedo viva en un lote ya cerrado, y ese acto lo firma
+// `SISTEMA`. La funcion solo reenvia el actor a su evento, y el evento ya
+// admitia los dos.
+import type { ActorDeEvento } from "@/types/auditoria";
 import type { Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
 import { exito, fallo, type Resultado } from "@/types/resultado";
@@ -62,7 +68,7 @@ const CERRABLES = ["EN_FILA", "CONGELADA"] as const;
  * participante.
  */
 export const cerrarFilaDelLote = async (
-  entrada: { lote: Lote; actor: ActorUsuario },
+  entrada: { lote: Lote; actor: ActorDeEvento },
   deps: DepsDeServicio = {},
 ): Promise<Resultado<number>> => {
   const { ahora } = resolver(deps);
@@ -93,26 +99,36 @@ export const cerrarFilaDelLote = async (
   return exito(porCerrar.length);
 };
 
-/** PA-07 restringido a lo que R-18 cierra. */
+/**
+ * PA-07 restringido a lo que R-18 cierra.
+ *
+ * **Recorre todas las paginas.** Una primera pagina truncada dejaria
+ * solicitudes `EN_FILA` o `CONGELADA` vivas en un lote ya cerrado, y
+ * `cerrarFilaDelLote` devolveria exito con el conteo de lo que alcanzo a ver —
+ * el peor de los dos lados segun R-18.
+ */
 const leerCerrables = async (
   loteId: string,
   deps: DepsDeServicio,
 ): Promise<Solicitud[]> => {
-  const salida = await clienteDe(deps).send(
-    new QueryCommand({
-      TableName: nombreDeTabla(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefijo)",
-      ExpressionAttributeValues: {
-        ":pk": clave.solicitud(loteId, 0).PK,
-        ":prefijo": PREFIJO.solicitud,
-      },
-      ScanIndexForward: true,
-      ConsistentRead: true,
-    }),
+  const items = await itemsDeQuery(
+    (desde) =>
+      new QueryCommand({
+        TableName: nombreDeTabla(),
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefijo)",
+        ExpressionAttributeValues: {
+          ":pk": clave.solicitud(loteId, 0).PK,
+          ":prefijo": PREFIJO.solicitud,
+        },
+        ScanIndexForward: true,
+        ConsistentRead: true,
+        ExclusiveStartKey: desde,
+      }),
+    deps,
   );
 
   const cerrables: Solicitud[] = [];
-  for (const item of salida.Items ?? []) {
+  for (const item of items) {
     const solicitud = aSolicitud(item);
     if (!solicitud) continue;
     if (!(CERRABLES as readonly string[]).includes(solicitud.estatus)) continue;
@@ -124,7 +140,7 @@ const leerCerrables = async (
 const itemsParaCerrar = (entrada: {
   solicitud: Solicitud;
   lote: Lote;
-  actor: ActorUsuario;
+  actor: ActorDeEvento;
   ahora: Date;
 }): ItemDeTransaccion[] => {
   const { solicitud, lote, ahora } = entrada;

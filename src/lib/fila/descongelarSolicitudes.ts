@@ -25,15 +25,26 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { clave, gsi3, NOMBRES_DE_INDICE } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
-import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
+import { resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
+import { paginasDeQuery } from "@/lib/data/paginacion";
 import { ejecutarTransaccion } from "@/lib/data/transacciones";
+import type { Solicitud } from "@/types/fila";
 import { aSolicitud } from "./mapeo";
 
 /**
- * Tope de solicitudes congeladas que se revisan de una vez. Un participante se
- * forma en unos cuantos lotes, no en cientos; el tope evita que un dato raro
+ * Tope de solicitudes congeladas que se descongelan de una vez. Un participante
+ * se forma en unos cuantos lotes, no en cientos; el tope evita que un dato raro
  * convierta una cancelacion en un recorrido sin fin.
+ *
+ * **Acota resultados, no items leidos, y esa distincion era el defecto.** Antes
+ * viajaba como `Limit` de la `Query`, que DynamoDB aplica **antes** del
+ * `FilterExpression`: se leian las 100 solicitudes mas antiguas del
+ * participante —las ya terminales, porque `GSI3SK` ordena por `solicitadoEn` y
+ * el recorrido es ascendente— y las `CONGELADA` recientes quedaban detras,
+ * invisibles. Con mas de 100 solicitudes historicas, R-09 dejaba de devolver
+ * turnos **en silencio**: la funcion respondia cero y no habia nada que
+ * distinguiera "no tenia congeladas" de "no las alcance a ver".
  */
 export const MAXIMO_A_DESCONGELAR = 100;
 
@@ -50,32 +61,11 @@ export const descongelarSolicitudes = async (
 ): Promise<number> => {
   const { ahora } = resolver(deps);
 
-  const salida = await clienteDe(deps).send(
-    new QueryCommand({
-      TableName: nombreDeTabla(),
-      IndexName: NOMBRES_DE_INDICE.porParticipante,
-      KeyConditionExpression: "GSI3PK = :pk",
-      FilterExpression: "estatus = :congelada",
-      ExpressionAttributeValues: {
-        // La fecha y el lote de relleno solo construyen la particion; las
-        // claves se siguen armando en un unico lugar.
-        ":pk": gsi3.solicitudDeParticipante(
-          entrada.participanteId,
-          "relleno",
-          "relleno",
-        ).GSI3PK,
-        ":congelada": "CONGELADA",
-      },
-      Limit: MAXIMO_A_DESCONGELAR,
-    }),
-  );
+  const congeladas = await leerCongeladas(entrada.participanteId, deps);
 
   let descongeladas = 0;
 
-  for (const item of salida.Items ?? []) {
-    const solicitud = aSolicitud(item);
-    if (!solicitud) continue;
-
+  for (const solicitud of congeladas) {
     const resultado = await ejecutarTransaccion(
       [
         {
@@ -116,4 +106,51 @@ export const descongelarSolicitudes = async (
   }
 
   return descongeladas;
+};
+
+/**
+ * Las `CONGELADA` del participante, recorriendo paginas hasta reunir
+ * `MAXIMO_A_DESCONGELAR` o agotar su historia.
+ *
+ * El orden se mantiene **ascendente** por `GSI3SK` (`SOL#<solicitadoEn>#<lote>`),
+ * que es la equidad de la fila: si el tope llega a morder, muerde a las
+ * congeladas mas nuevas y no a las que llevan mas tiempo esperando. Lo que
+ * cambio es que el tope ya no puede esconder resultados detras de items
+ * terminales, porque cuenta lo que pasa el filtro y no lo que se leyo.
+ */
+const leerCongeladas = async (
+  participanteId: string,
+  deps: DepsDeServicio,
+): Promise<Solicitud[]> => {
+  const congeladas: Solicitud[] = [];
+
+  for await (const pagina of paginasDeQuery(
+    (desde) =>
+      new QueryCommand({
+        TableName: nombreDeTabla(),
+        IndexName: NOMBRES_DE_INDICE.porParticipante,
+        KeyConditionExpression: "GSI3PK = :pk",
+        FilterExpression: "estatus = :congelada",
+        ExpressionAttributeValues: {
+          // La fecha y el lote de relleno solo construyen la particion; las
+          // claves se siguen armando en un unico lugar.
+          ":pk": gsi3.solicitudDeParticipante(
+            participanteId,
+            "relleno",
+            "relleno",
+          ).GSI3PK,
+          ":congelada": "CONGELADA",
+        },
+        ExclusiveStartKey: desde,
+      }),
+    deps,
+  )) {
+    for (const item of pagina.Items ?? []) {
+      const solicitud = aSolicitud(item);
+      if (solicitud) congeladas.push(solicitud);
+    }
+    if (congeladas.length >= MAXIMO_A_DESCONGELAR) break;
+  }
+
+  return congeladas.slice(0, MAXIMO_A_DESCONGELAR);
 };

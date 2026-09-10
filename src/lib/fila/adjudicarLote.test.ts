@@ -602,3 +602,111 @@ describe("fila agotada — R-17", () => {
     expect(escrituras).toHaveLength(0);
   });
 });
+
+describe("el corte de 1 MB no puede declarar agotada una fila viva", () => {
+  /**
+   * Fila partida en dos paginas: la primera trae solo terminales y la segunda
+   * el unico candidato vivo.
+   *
+   * Es el escenario que pidio la auditoria externa, y el que ninguna prueba
+   * cubria porque todas caben de sobra en una pagina. La particion de un lote
+   * conserva sus solicitudes terminales para siempre, asi que es la primera
+   * pagina la que se llena de ellas — y no se autocura: la corrida siguiente
+   * lee exactamente la misma.
+   */
+  const enDosPaginas = (
+    primera: Record<string, unknown>[],
+    segunda: Record<string, unknown>[],
+  ) => {
+    let consultasDeFila = 0;
+    return (comando: ComandoEnviado): unknown => {
+      if (comando.nombre !== "QueryCommand") return {};
+      const valores = comando.input.ExpressionAttributeValues as Record<
+        string,
+        string
+      >;
+      if (valores[":prefijo"] === "RESERVA#") return { Items: [] };
+
+      consultasDeFila += 1;
+      return consultasDeFila === 1
+        ? { Items: primera, LastEvaluatedKey: { PK: "LOTE#L1", SK: "corte" } }
+        : { Items: segunda };
+    };
+  };
+
+  const terminal = (turno: number, estatus: string) => ({
+    ...solicitudEnFila(turno, `P${String(turno)}`),
+    estatus,
+  });
+
+  it("adjudica al candidato que estaba detras del corte", async () => {
+    const falso = crearClienteFalso({
+      responder: enDosPaginas(
+        [
+          terminal(1, "CANCELADA_POR_PARTICIPANTE"),
+          terminal(2, "CANCELADA_POR_VENCIMIENTO"),
+        ],
+        [solicitudEnFila(3, "P3")],
+      ),
+    });
+
+    const resultado = await adjudicarLote(
+      { lote, motivo: "PRIMERA_ADJUDICACION" },
+      deps(falso.cliente),
+    );
+
+    expect(resultado).toMatchObject({ estado: "adjudicado", turno: 3 });
+  });
+
+  it("no escribe FILA_AGOTADA con un candidato vivo en la pagina siguiente", async () => {
+    // El daño real del defecto: `FILA_AGOTADA` es un evento de auditoria, y
+    // escribirlo con turnos vivos detras deja la bitacora afirmando algo falso
+    // sobre la equidad de la fila.
+    const falso = crearClienteFalso({
+      responder: enDosPaginas(
+        [terminal(1, "NO_ADJUDICADA")],
+        [solicitudEnFila(2, "P2")],
+      ),
+    });
+
+    await adjudicarLote(
+      { lote, motivo: "PRIMERA_ADJUDICACION" },
+      deps(falso.cliente),
+    );
+
+    const eventos = falso.comandos
+      .filter((c) => c.nombre === "TransactWriteCommand")
+      .flatMap(
+        (c) =>
+          c.input.TransactItems as Record<string, Record<string, unknown>>[],
+      )
+      .map((item) => item.Put?.Item as Record<string, unknown> | undefined)
+      .filter((item) => item !== undefined);
+
+    expect(eventos.map((evento) => evento.tipo)).not.toContain("FILA_AGOTADA");
+  });
+
+  it("la segunda consulta de la fila continua desde la clave de la primera", async () => {
+    const falso = crearClienteFalso({
+      responder: enDosPaginas([terminal(1, "NO_ADJUDICADA")], []),
+    });
+
+    await adjudicarLote(
+      { lote, motivo: "PRIMERA_ADJUDICACION" },
+      deps(falso.cliente),
+    );
+
+    const consultasDeFila = falso.comandos.filter(
+      (c) =>
+        c.nombre === "QueryCommand" &&
+        (c.input.ExpressionAttributeValues as Record<string, string>)[
+          ":prefijo"
+        ] === "SOL#",
+    );
+    expect(consultasDeFila).toHaveLength(2);
+    expect(consultasDeFila[1]?.input.ExclusiveStartKey).toEqual({
+      PK: "LOTE#L1",
+      SK: "corte",
+    });
+  });
+});

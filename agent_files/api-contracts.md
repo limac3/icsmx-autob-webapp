@@ -275,6 +275,18 @@ vencerlo por demora propia.
 
 **`rechazarPago`** exige motivo no vacio (R-16) y libera el lote como un vencimiento.
 
+**`avalarPago` separa el desenlace de la venta del desenlace del cierre de fila.** La action
+devuelve `{ estatus }`, pero el servicio devuelve ademas
+`cierre: { ok: true, cerradas } | { ok: false, error }`. La venta se confirma en su propia
+transaccion y el cierre de las solicitudes restantes ocurre **fuera** de ella (son una cantidad no
+acotada, T4), asi que puede fallar con la venta ya firme.
+
+En ese caso la venta **no se revierte** —es correcto que no se revierta— y pasan tres cosas: el
+resultado lo delata en `cierre.ok`, queda una linea de registro operativo
+(`operacion: "cerrarFilaDelLote"`, nivel `warn`) y **el barrido lo repara en la corrida siguiente**.
+Antes el error se convertia en `cerradas: 0` y salia como exito, indistinguible de "no habia fila que
+cerrar" (`desafios-implementacion.md` 56).
+
 **`listarPendientesVerificacion` no acepta `cursor` todavia.** El documento original lo
 preveia para paginar; al volumen de hoy (decenas de solicitudes en verificacion a la vez) PA-11
 lee la particion entera, igual que la bandeja del aprobador. Se agrega cuando haga falta.

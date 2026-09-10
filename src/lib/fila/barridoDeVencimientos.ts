@@ -22,6 +22,13 @@
 // siempre. `adjudicarLote` no es idempotente en eventos cuando la fila esta
 // vacia — solo en mutaciones —, y esa diferencia es la que este barrido evita
 // pagar (`desafios-implementacion.md`).
+//
+// **Y reconcilia el cierre de fila que `avalarPago` no pudo completar.** Ese
+// cierre ocurre fuera de la transaccion de la venta, asi que puede fallar con la
+// venta ya firme y dejar a los demas viendo una posicion en un lote vendido.
+// Antes eso duraba hasta que alguien concluyera la convocatoria; aqui se repara
+// en la corrida siguiente. Es el mismo recorrido de lotes que el punto anterior:
+// una condicion mas, ninguna lectura extra.
 
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -31,9 +38,11 @@ import { clave, gsi4, NOMBRES_DE_INDICE, PREFIJO } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { diaDeNegocio } from "@/lib/domain/fechas";
+import { registrar } from "@/lib/observabilidad/registro";
 import { conTraza } from "@/lib/observabilidad/traza";
 import type { Solicitud } from "@/types/fila";
 import { adjudicarLote } from "./adjudicarLote";
+import { cerrarFilaDelLote } from "./cerrarFilaDelLote";
 import { aSolicitud } from "./mapeo";
 import { vencerYReasignar } from "./vencerYReasignar";
 
@@ -53,6 +62,16 @@ export type ResultadoDeBarrido = {
   /** Reintentos agotados (`en_conflicto`) o datos inconsistentes. El siguiente barrido reintenta. */
   errores: number;
   lotesRecuperados: number;
+  /**
+   * Solicitudes cerradas al reconciliar un lote ya vendido cuya fila habia
+   * quedado viva — el cierre que `avalarPago` no pudo completar.
+   *
+   * Cuenta aparte de `errores` a proposito: un valor mayor que cero no es un
+   * fallo del barrido, es el barrido haciendo su trabajo. Lo que si conviene
+   * mirar es que sea distinto de cero **de forma sostenida**, porque significa
+   * que algo esta fallando aguas arriba en cada venta.
+   */
+  filasCerradas: number;
 };
 
 export const barridoDeVencimientos = async (
@@ -91,6 +110,7 @@ const ejecutarBarrido = async (
     vencimientosAbstenidos: 0,
     errores: 0,
     lotesRecuperados: 0,
+    filasCerradas: 0,
   };
 
   for (let i = 0; i < dias; i += 1) {
@@ -103,7 +123,7 @@ const ejecutarBarrido = async (
     }
   }
 
-  await recuperarLotesLibres(resultado, deps);
+  await reconciliarLotesPublicados(resultado, deps);
 
   return resultado;
 };
@@ -226,16 +246,39 @@ const hayFilaViva = async (
 };
 
 /**
- * Recoge lotes `EN_OFERTA` con fila viva que nadie llego a adjudicar
- * (callout de T5b en `modelo-datos-dynamodb.md`).
- *
- * Acotado a convocatorias `PUBLICADA`: fuera de ahi ningun lote admite fila
- * nueva, asi que no hay nada que recuperar. `contadorTurnos === 0` descarta
- * sin ninguna lectura extra al lote que nunca tuvo una sola solicitud —la
- * inmensa mayoria del inventario en cualquier instante—, y `hayFilaViva`
- * descarta al que las tuvo pero ya se resolvieron todas.
+ * Estatus de lote en los que una fila viva **no tiene sentido**: el lote ya
+ * salio de juego y quien siguiera `EN_FILA` o `CONGELADA` espera algo que no va
+ * a pasar. `EN_OFERTA` y `ADJUDICADO` no estan aqui a proposito — en el primero
+ * la fila espera su turno, y en el segundo sigue abierta por R-17.
  */
-const recuperarLotesLibres = async (
+const CERRADOS = ["VENDIDO", "NO_VENDIDO"] as const;
+
+/**
+ * Un recorrido, dos reparaciones. Las dos sobre los lotes de las convocatorias
+ * `PUBLICADA`, que es donde puede haber fila viva.
+ *
+ *  1. **Lotes `EN_OFERTA` con fila viva que nadie llego a adjudicar** (callout
+ *     de T5b en `modelo-datos-dynamodb.md`): T1 y la liberacion no pueden
+ *     adjudicar dentro de su propia transaccion, asi que un proceso que muere
+ *     entre las dos escrituras deja el lote sin nadie que dispare la
+ *     adjudicacion.
+ *  2. **Lotes ya cerrados con fila viva detras**: `avalarPago` confirma la
+ *     venta en su transaccion y cierra la fila **despues**, fuera de ella. Si
+ *     ese cierre falla —o si se corta a mitad de una tanda—, la venta queda
+ *     firme y los demas siguen viendo una posicion en un lote vendido. Antes
+ *     eso duraba hasta que alguien concluyera la convocatoria; aqui se repara
+ *     en la corrida siguiente.
+ *
+ * Acotado a `PUBLICADA` y no a todo el catalogo porque al concluir la
+ * convocatoria `concluirConvocatoria` ya recorre **todos** sus lotes y cierra
+ * lo que quede: entre las dos, la ventana se cubre completa.
+ *
+ * `contadorTurnos === 0` descarta sin ninguna lectura extra al lote que nunca
+ * tuvo una sola solicitud —la inmensa mayoria del inventario en cualquier
+ * instante— y `hayFilaViva` descarta al que las tuvo pero ya se resolvieron
+ * todas.
+ */
+const reconciliarLotesPublicados = async (
   resultado: ResultadoDeBarrido,
   deps: DepsDeServicio,
 ): Promise<void> => {
@@ -259,8 +302,34 @@ const recuperarLotesLibres = async (
     }
 
     for (const lote of detalle.data.lotes) {
-      if (lote.estatus !== "EN_OFERTA" || lote.contadorTurnos === 0) continue;
+      const cerrado = (CERRADOS as readonly string[]).includes(lote.estatus);
+      if (lote.contadorTurnos === 0) continue;
+      if (lote.estatus !== "EN_OFERTA" && !cerrado) continue;
       if (!(await hayFilaViva(lote.loteId, deps))) continue;
+
+      if (cerrado) {
+        const cierre = await cerrarFilaDelLote(
+          { lote, actor: { tipo: "SISTEMA" } },
+          deps,
+        );
+        if (cierre.ok) {
+          resultado.filasCerradas += cierre.data;
+        } else {
+          // No entra en `errores` a proposito: esa cuenta mide vencidas que no
+          // se pudieron resolver y es lo que dispara
+          // `vencimientos-sin-resolver`, "el sintoma mas grave del sistema".
+          // Meter aqui un cierre fallido cambiaria lo que esa alarma significa.
+          registrar("warn", "cerrarFilaDelLote", {
+            loteId: lote.loteId,
+            convocatoriaId: lote.convocatoriaId,
+            desenlace: "rechazado",
+            error: cierre.error,
+            descripcion:
+              "reconciliacion del barrido: el cierre volvio a fallar",
+          });
+        }
+        continue;
+      }
 
       const desenlace = await adjudicarLote(
         { lote, motivo: "RECUPERACION_POR_BARRIDO" },

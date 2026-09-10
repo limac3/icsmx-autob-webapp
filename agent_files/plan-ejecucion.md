@@ -1663,6 +1663,82 @@ nombres. **Cumplida.**
 
 ---
 
+## Etapa 13 — Los cuatro hallazgos de la auditoria externa que bloqueaban produccion ✅
+
+**Objetivo:** cerrar lo que una auditoria externa encontro y no aprobaba para produccion.
+
+**Dependencias:** Etapa 12.
+
+Se verificaron los seis hallazgos leyendo el codigo —no aceptando la afirmacion— y **los seis eran
+ciertos en su mecanismo**. Lo que cambio respecto del informe fue la **severidad**, una vez aplicada
+la escala real del negocio (decenas de solicitudes por lote, no miles) y una vez encontradas dos
+mitigaciones que la auditoria no vio: el centinela de fila es **por lote**, asi que el hallazgo 2 no
+bloquea a nadie para otras filas; y `concluirConvocatoria` recorre **todos** los lotes, asi que las
+filas huerfanas se cerraban al concluir.
+
+- [x] **Transporte de archivos.** `serverActions.bodySizeLimit` en `next.config.ts` (11 MB, con el
+      margen que hace que el mensaje de error sea el del dominio y no el genérico del framework), mas
+      tres pruebas que atan ese numero a `MAXIMO_BYTES_FOTOGRAFIA`/`MAXIMO_BYTES_COMPROBANTE`. **Era
+      el unico de los cuatro que estaba roto para un usuario real**: el tope efectivo eran 1 MB, asi
+      que cualquier fotografia de celular se rechazaba antes de entrar a la action
+      (`desafios-implementacion.md` 54)
+- [x] **Paginacion.** `src/lib/data/paginacion.ts` —el patron estaba resuelto cuatro veces en
+      `src/lib/auditoria/` y nunca se habia extraido— y los cinco lectores de fila pasando por ahi.
+      El defecto real de los cinco era `descongelarSolicitudes`, que esta en otro eje: `Limit: 100`
+      antes del filtro y orden ascendente hacian que con mas de 100 solicitudes historicas R-09
+      dejara de devolver turnos en silencio. `leerFilaCompleta` gana ademas el `ConsistentRead` que
+      le faltaba, que la auditoria no senalo (`desafios-implementacion.md` 55)
+- [x] **El cierre de fila que no avisaba.** `avalarPago` devuelve el desenlace del cierre separado
+      del de la venta, deja una linea de registro cuando falla, y el barrido lo **repara** en la
+      corrida siguiente reconciliando los lotes cerrados con fila viva. La venta no se revierte: es
+      correcto que no se revierta (`desafios-implementacion.md` 56)
+- [x] **Idempotencia del outbox.** Adquisicion condicional `PENDIENTE -> ENVIANDO` con plazo antes de
+      llamar a CES, y presupuesto de tiempo por corrida. Era **latente** (CES sin aprobar, cero
+      correos salen) pero probable en el arranque, porque R17 hace que el outbox acumule mora por
+      diseno (`desafios-implementacion.md` 57)
+- [ ] **Queda abierto y documentado:** si el proceso muere entre que CES acepta y que se escribe
+      `ENVIADO`, el mensaje se reenvia. CES no ofrece clave de idempotencia — responde una
+      confirmacion de envio, o la causa del error — asi que esa ventana no se cierra desde la
+      aplicacion. El dano esta acotado: el correo es un aviso informativo, sin token ni enlace de pago
+
+**Verificacion:**
+
+- [x] Compuerta completa en verde — **2 134 pruebas** (33 nuevas), `typecheck` y `build` limpios
+- [x] Pruebas de dos paginas donde la primera trae solo estados terminales y la segunda un candidato
+      vivo, que es la forma del caso real: son las terminales las que se acumulan al frente de la
+      particion
+- [x] Prueba de concurrencia del outbox (regla 16): dos corridas solapadas, **un** envio
+- [x] **Verificado en el navegador: una fotografia de 4 MB se sube sin problema y se muestra
+      correctamente al consultarla.** Es la unica prueba posible del hallazgo 54, porque el defecto
+      vive en la frontera HTTP que ninguna prueba en proceso cruza — que es exactamente por lo que
+      paso inadvertido. **Son cuatro veces el tope viejo**: antes del cambio ese archivo se
+      rechazaba sin llegar a la Server Action. Que ademas se vea al consultarla confirma el camino
+      completo, incluida la firma de CloudFront
+- [ ] **[OPERADOR]**, menor: un archivo de entre 10 y 11 MB, para ver que el rechazo lo da la
+      validacion del **dominio** con su mensaje propio y no el error genérico del framework. Es lo
+      unico que el margen de `bodySizeLimit` compra y lo unico que queda sin comprobar; el camino
+      principal ya esta verificado arriba
+
+**Lo que quedo fuera de alcance, por decision, con su razon:**
+
+- **Hallazgo 5 — la carrera de `no_vigente`** en `consultarMiLugar`. Confirmado: el docstring
+  promete releer *"si alguien mas la resolvio entre la lectura y este intento"*, que es exactamente
+  `no_vigente`, y es la unica rama que no relee. Es **estrictamente cosmetico**: `subirComprobante`
+  condiciona a `#estatus = :adjudicada AND venceEn > :ahora` y la action pre-verifica
+  `dentroDePlazo`, asi que no hay escritura indebida posible. El arreglo son dos lineas y esta
+  disponible cuando se quiera.
+- **Hallazgo 6 — la bitacora ante `PutItem` del propio rol.** Es **R20**, ya evaluado y diferido.
+  Cerrarlo exige un sumidero fuera del rol de la aplicacion (Streams -> S3 con Object Lock), y la
+  decision de fondo no es tecnica sino si la bitacora va a tener valor probatorio o regulatorio.
+- **`ProjectionExpression`.** La observacion es literalmente cierta —cero apariciones en `src`— pero
+  a la escala real no sostiene nada: los DTO ya evitan la filtracion (R-12) y con decenas de
+  solicitudes por lote el limite de 1 MB no esta cerca. La seccion 8.1 ya fijo la condicion para
+  revisitarlo: que el volumen crezca dos ordenes de magnitud.
+
+**Salida esperada:** los cuatro defectos que bloqueaban produccion, cerrados con prueba. **Cumplida.**
+
+---
+
 ## Riesgos y mitigaciones
 
 Ordenados por severidad. La **senal de alerta temprana** es lo que hay que vigilar para

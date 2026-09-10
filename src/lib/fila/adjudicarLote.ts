@@ -28,6 +28,7 @@ import {
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
+import { itemsDeQuery } from "@/lib/data/paginacion";
 import {
   CONDICION_CENTINELA_NUEVO,
   CONDICION_LOTE_LIBRE,
@@ -235,26 +236,36 @@ const intentarRonda = async (
  * `ConsistentRead` porque alimenta un bucle de escrituras condicionales
  * (modelo-datos 8): una lectura eventual podria no ver al turno menor y coronar
  * al siguiente.
+ *
+ * **Recorre todas las paginas.** La particion de un lote conserva sus
+ * solicitudes terminales para siempre, asi que no basta con la primera: si los
+ * `EN_FILA` quedaran detras del corte de 1 MB, esta funcion devolveria una
+ * lista vacia y `adjudicarLote` escribiria `FILA_AGOTADA` con candidatos vivos
+ * esperando. Y no se autocura, al contrario que el barrido (8.2): la corrida
+ * siguiente lee la misma primera pagina.
  */
 export const leerFila = async (
   loteId: string,
   deps: DepsDeServicio,
 ): Promise<Candidato[]> => {
-  const salida = await clienteDe(deps).send(
-    new QueryCommand({
-      TableName: nombreDeTabla(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefijo)",
-      ExpressionAttributeValues: {
-        ":pk": clave.solicitud(loteId, 0).PK,
-        ":prefijo": PREFIJO.solicitud,
-      },
-      ScanIndexForward: true,
-      ConsistentRead: true,
-    }),
+  const items = await itemsDeQuery(
+    (desde) =>
+      new QueryCommand({
+        TableName: nombreDeTabla(),
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefijo)",
+        ExpressionAttributeValues: {
+          ":pk": clave.solicitud(loteId, 0).PK,
+          ":prefijo": PREFIJO.solicitud,
+        },
+        ScanIndexForward: true,
+        ConsistentRead: true,
+        ExclusiveStartKey: desde,
+      }),
+    deps,
   );
 
   const candidatos: Candidato[] = [];
-  for (const item of salida.Items ?? []) {
+  for (const item of items) {
     const turno = turnoDesdeClave(String(item.SK));
     if (turno === undefined || item.estatus !== "EN_FILA") continue;
     candidatos.push({

@@ -6,7 +6,10 @@ import {
   crearClienteFalso,
   type ComandoEnviado,
 } from "@/utils/clienteDynamoFalso";
-import { descongelarSolicitudes } from "./descongelarSolicitudes";
+import {
+  descongelarSolicitudes,
+  MAXIMO_A_DESCONGELAR,
+} from "./descongelarSolicitudes";
 
 vi.mock("server-only", () => ({}));
 
@@ -166,5 +169,84 @@ describe("descongelarSolicitudes — R-09", () => {
     expect(
       falso.comandos.filter((c) => c.nombre === "TransactWriteCommand"),
     ).toHaveLength(0);
+  });
+});
+
+describe("descongelarSolicitudes — el corte de 1 MB no puede esconder congeladas", () => {
+  it("sigue LastEvaluatedKey cuando la primera pagina vuelve vacia por el filtro", async () => {
+    // Es el defecto que encontro la auditoria externa, y su forma exacta: con
+    // `FilterExpression` DynamoDB puede devolver `Items: []` **y**
+    // `LastEvaluatedKey`, porque el filtro se evalua despues de leer. Un
+    // participante con mas de 100 solicitudes historicas terminales llenaba la
+    // primera pagina con ellas y su `CONGELADA` quedaba detras: R-09 dejaba de
+    // devolverle el turno y la funcion respondia cero, sin nada que distinguiera
+    // "no tenia" de "no la alcance a ver".
+    let consultas = 0;
+    const falso = crearClienteFalso({
+      responder: (comando) => {
+        if (comando.nombre !== "QueryCommand") return {};
+        consultas += 1;
+        return consultas === 1
+          ? { Items: [], LastEvaluatedKey: { GSI3PK: "PART#P1", GSI3SK: "x" } }
+          : { Items: [congelada("L9", 4)] };
+      },
+    });
+
+    const descongeladas = await descongelarSolicitudes(
+      { participanteId: "P1" },
+      deps(falso.cliente),
+    );
+
+    expect(descongeladas).toBe(1);
+    expect(consultas).toBe(2);
+  });
+
+  it("la segunda pagina continua desde la clave de la primera", async () => {
+    const cursor = { GSI3PK: "PART#P1", GSI3SK: "SOL#2026-01-01#L1" };
+    let consultas = 0;
+    const falso = crearClienteFalso({
+      responder: (comando) => {
+        if (comando.nombre !== "QueryCommand") return {};
+        consultas += 1;
+        return consultas === 1
+          ? { Items: [], LastEvaluatedKey: cursor }
+          : { Items: [] };
+      },
+    });
+
+    await descongelarSolicitudes({ participanteId: "P1" }, deps(falso.cliente));
+
+    const consultasEnviadas = falso.comandos.filter(
+      (c) => c.nombre === "QueryCommand",
+    );
+    expect(consultasEnviadas[0]?.input.ExclusiveStartKey).toBeUndefined();
+    expect(consultasEnviadas[1]?.input.ExclusiveStartKey).toEqual(cursor);
+  });
+
+  it("no manda Limit: acotaria items leidos y no congeladas encontradas", async () => {
+    // La guarda de la regresion. `Limit` aqui es justo lo que producia el
+    // defecto, y la regla ya estaba escrita en tres archivos del repo.
+    const falso = crearClienteFalso({ responder: conCongeladas([]) });
+
+    await descongelarSolicitudes({ participanteId: "P1" }, deps(falso.cliente));
+
+    expect(falso.comandos[0]?.input).not.toHaveProperty("Limit");
+  });
+
+  it("el tope acota congeladas descongeladas, no paginas leidas", async () => {
+    // Con el tope viejo esto habria leido 100 items y descongelado las que
+    // pasaran el filtro; ahora lee lo que haga falta y se detiene al reunir 100
+    // congeladas de verdad.
+    const muchas = Array.from({ length: 130 }, (_, indice) =>
+      congelada(`L${String(indice)}`, indice + 1),
+    );
+    const falso = crearClienteFalso({ responder: conCongeladas(muchas) });
+
+    const descongeladas = await descongelarSolicitudes(
+      { participanteId: "P1" },
+      deps(falso.cliente),
+    );
+
+    expect(descongeladas).toBe(MAXIMO_A_DESCONGELAR);
   });
 });

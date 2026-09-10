@@ -12,6 +12,29 @@ const nextConfig: NextConfig = {
     // Habilita forbidden()/unauthorized() de next/navigation (Etapa 2: la
     // pagina protegida de prueba usa forbidden() para el rol insuficiente).
     authInterrupts: true,
+    serverActions: {
+      /**
+       * Sin esto el tope es **1 MB** y la aplicacion prometia 10:
+       * `MAXIMO_BYTES_FOTOGRAFIA` y `MAXIMO_BYTES_COMPROBANTE`
+       * (`src/lib/media/almacenamiento.ts`) admiten 10 MB, pero el framework
+       * rechazaba el cuerpo **antes** de llegar a la Server Action — o sea que
+       * cualquier fotografia de celular fallaba con un error genérico, sin
+       * pasar por las validaciones de tipo y tamano ni por la auditoria.
+       *
+       * **El margen de 1 MB sobre los 10 no es holgura, tiene funcion.** El
+       * tope se aplica al cuerpo HTTP crudo, incluidos los 10-20 KB que
+       * `multipart/form-data` agrega en fronteras y cabeceras de parte, asi que
+       * exactamente 10 MB no alcanzaria para un archivo de 10 MB justos. Con el
+       * margen, un archivo que se pasa del limite del dominio **llega al
+       * servidor y lo rechaza la validacion del dominio con su mensaje
+       * propio**, en vez de morir en el framework sin explicacion.
+       *
+       * `next.config.test.ts` ata este numero a esas dos constantes: si alguna
+       * sube, la compuerta falla en vez de que el framework empiece a rechazar
+       * en silencio.
+       */
+      bodySizeLimit: 11 * 1024 * 1024,
+    },
   },
   // Cabeceras que no dependen de la peticion. Las que si —la CSP, con su nonce
   // por peticion— viven en `src/proxy.ts`.

@@ -21,11 +21,17 @@ import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import { ejecutarTransaccion } from "@/lib/data/transacciones";
 import { transicion } from "@/lib/domain/transiciones";
 import { cerrarFilaDelLote } from "@/lib/fila/cerrarFilaDelLote";
+import { registrar } from "@/lib/observabilidad/registro";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
 import type { EstatusSolicitud } from "@/types/solicitud";
-import { exito, fallo, type Resultado } from "@/types/resultado";
+import {
+  exito,
+  fallo,
+  type CodigoError,
+  type Resultado,
+} from "@/types/resultado";
 
 export type EntradaAvalarPago = {
   /** El lote ya leido por quien invoca, el mismo que evaluo el permiso. */
@@ -39,8 +45,16 @@ export type EntradaAvalarPago = {
 export type ResultadoDeAval = {
   /** El destino sale de `transicion(...)`, no de una constante local. */
   estatus: EstatusSolicitud;
-  /** Cuantas solicitudes `EN_FILA`/`CONGELADA` del lote pasaron a `NO_ADJUDICADA`. */
-  cerradas: number;
+  /**
+   * Desenlace del cierre de la fila restante, **separado del de la venta**.
+   *
+   * Es un discriminado y no un contador porque un contador los confundia: con
+   * `cerradas: number`, el `0` de "no habia fila que cerrar" y el `0` de "el
+   * cierre fallo" eran el mismo valor, y quien invocaba no tenia con que
+   * distinguirlos. La venta sale `ok` en los dos casos —esta confirmada y no se
+   * revierte—; lo que cambia es si quedo trabajo pendiente detras.
+   */
+  cierre: { ok: true; cerradas: number } | { ok: false; error: CodigoError };
 };
 
 export const avalarPago = async (
@@ -187,8 +201,31 @@ export const avalarPago = async (
     deps,
   );
 
+  // **La venta no se revierte y el fallo del cierre no se calla.** Son dos
+  // cosas distintas y antes se resolvian como una sola: el error se convertia
+  // en `cerradas: 0` y salia como exito, indistinguible de "no habia fila que
+  // cerrar" (`cerrarFilaDelLote` devuelve `exito(0)` en ese caso). Nadie lo
+  // reportaba: el tesorero ve la venta hecha, y los participantes solo ven una
+  // posicion que ya no significa nada.
+  //
+  // Revertir no es opcion —la venta esta confirmada y es correcto que lo este—,
+  // asi que lo que queda es lo unico que faltaba: dejarlo dicho. La reparacion
+  // la hace el barrido en la corrida siguiente
+  // (`barridoDeVencimientos.ts::reconciliarLotesPublicados`).
+  if (!cierre.ok) {
+    registrar("warn", "cerrarFilaDelLote", {
+      loteId: lote.loteId,
+      convocatoriaId: lote.convocatoriaId,
+      desenlace: "rechazado",
+      error: cierre.error,
+      descripcion: "la venta quedo firme y la fila restante sigue viva",
+    });
+  }
+
   return exito({
     estatus: destinoSolicitud,
-    cerradas: cierre.ok ? cierre.data : 0,
+    cierre: cierre.ok
+      ? { ok: true, cerradas: cierre.data }
+      : { ok: false, error: cierre.error },
   });
 };

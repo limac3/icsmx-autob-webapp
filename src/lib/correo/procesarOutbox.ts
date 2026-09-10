@@ -1,14 +1,31 @@
 // Camino 2 del barrido — `arquitectura-tecnica-aws.md` 2.6 y 4.5:
 //
 //   Barrido -> Query GSI4 OUTBOX_PENDIENTE
-//       -> CES -> exito: CORREO_ENVIADO y se retiran las claves GSI4
-//              -> fallo: reintento con retroceso; agotados, CORREO_FALLIDO
+//       -> PENDIENTE -> ENVIANDO (condicional, con plazo)
+//       -> CES -> exito: ENVIADO, CORREO_ENVIADO y se retiran las claves GSI4
+//              -> fallo reintentable: vuelve a PENDIENTE con un intento mas
+//              -> agotados o no reintentable: FALLIDO y CORREO_FALLIDO
+//
+// **El envio va despues de la adquisicion, y ese orden es el mecanismo.** El
+// barrido corre cada 5 minutos y puede tardar hasta 300 s, asi que dos corridas
+// se solapan y leen la misma lista. Antes las dos llamaban a CES y solo una
+// lograba el `Update` a `ENVIADO`: la bitacora quedaba correcta —la condicion
+// impedia el segundo evento— y el participante recibia dos correos.
+// Adquiriendo primero, la unica corrida que llega a CES es la que gano la
+// escritura condicional.
+//
+// **Lo que no se puede cerrar desde aqui**: si el proceso muere entre que CES
+// acepta y que se escribe `ENVIADO`, el plazo vence y el mensaje se reenvia.
+// CES no ofrece clave de idempotencia —responde una confirmacion de envio, o la
+// causa del error— asi que no hay forma de que el reintento se reconozca como
+// duplicado. El `id` que CES devuelve se guarda como `idExterno`, pero sirve
+// para rastrear, no para deduplicar. Ver `desafios-implementacion.md`.
 //
 // **El retroceso es el propio horario del barrido, no una espera dentro de la
 // funcion.** Un mensaje que falla no se reintenta en la misma corrida —eso
-// solo martillaria a un CES caido sin ganar nada— sino que se deja `PENDIENTE`
-// para la siguiente pasada (D-6). `MAXIMO_INTENTOS_CORREO` acota cuantas
-// pasadas se le dan antes de declarar el fallo permanente y escribir
+// solo martillaria a un CES caido sin ganar nada— sino que se devuelve a
+// `PENDIENTE` para la siguiente pasada (D-6). `MAXIMO_INTENTOS_CORREO` acota
+// cuantas pasadas se le dan antes de declarar el fallo permanente y escribir
 // `CORREO_FALLIDO`.
 //
 // **Un fallo no reintentable (401, 4xx) no espera esos intentos.**
@@ -40,10 +57,58 @@ import { correoDeAdjudicacion } from "./plantillas";
  */
 export const MAXIMO_INTENTOS_CORREO = 5;
 
+/**
+ * Cuanto vale una adquisicion antes de que otra corrida pueda retomar el
+ * mensaje.
+ *
+ * **Tiene que ser mayor que el limite de ejecucion de la funcion** (300 s,
+ * `amplify/barrido/resource.ts`). Si fuera menor, una corrida lenta podria ver
+ * vencer su propia adquisicion mientras todavia esta enviando, y la corrida
+ * siguiente reenviaria el mismo correo — el defecto que este mecanismo viene a
+ * cerrar. Quince minutos son tres horarios de holgura sobre ese limite, y a la
+ * vez el peor caso de espera para un mensaje cuya corrida murio a mitad del
+ * envio.
+ */
+export const LEASE_MS = 15 * 60 * 1000;
+
+/**
+ * Cuanto tiempo de la corrida se dedica a enviar antes de dejar el resto para
+ * la siguiente.
+ *
+ * **Acota tiempo y no cantidad de mensajes, y la diferencia importa.** El
+ * limite que hay que respetar es el de ejecucion de la funcion (300 s), y un
+ * tope de mensajes no lo garantiza: con CES lento, cien mensajes se pasan; con
+ * CES rapido, mil no llegan ni a la mitad. Se mide con `performance.now()` por
+ * lo mismo que `conTraza`: el `ahora` inyectable esta congelado por invocacion
+ * a proposito y daria siempre cero.
+ *
+ * Importa sobre todo en el arranque: mientras CES siga sin aprobar (R17) el
+ * outbox acumula pendientes **por diseno**, asi que la primera corrida real
+ * empieza con toda la mora junta. Una corrida truncada aqui es un retraso, no
+ * trabajo perdido — la misma doctrina que `modelo-datos-dynamodb.md` 8.2 —
+ * mientras una corrida que se pasa del limite es justo lo que produce el
+ * solapamiento.
+ *
+ * 120 s dejan mas de la mitad del presupuesto de la funcion al barrido de
+ * vencimientos, que corre antes en el mismo `handler`.
+ */
+export const PRESUPUESTO_DE_ENVIO_MS = 120 * 1000;
+
 export type ResultadoDeProcesarOutbox = {
   enviados: number;
   fallidosPermanentes: number;
   reintentaraDespues: number;
+  /**
+   * Mensajes que otra corrida tenia adquiridos. No es un fallo: es el
+   * mecanismo funcionando, y la corrida que los tiene los esta enviando.
+   */
+  enVuelo: number;
+  /**
+   * Mensajes que quedaron sin mirar al agotarse el presupuesto de la corrida.
+   * La siguiente empieza por ellos, porque PA-14 lee de lo mas viejo a lo mas
+   * nuevo.
+   */
+  sinPresupuesto: number;
   /**
    * Antiguedad, en minutos, del pendiente mas viejo **al empezar** la corrida.
    * `0` si no habia ninguno.
@@ -85,15 +150,44 @@ const ejecutarOutbox = async (
     enviados: 0,
     fallidosPermanentes: 0,
     reintentaraDespues: 0,
+    enVuelo: 0,
+    sinPresupuesto: 0,
     antiguedadMaximaMin: antiguedadEnMinutos(pendientes[0]?.creadoEn, ahora),
   };
 
-  for (const mensaje of pendientes) {
+  const inicio = performance.now();
+
+  for (const [indice, mensaje] of pendientes.entries()) {
+    if (performance.now() - inicio > PRESUPUESTO_DE_ENVIO_MS) {
+      resultado.sinPresupuesto = pendientes.length - indice;
+      break;
+    }
+
+    // Otra corrida lo tiene y su plazo sigue vivo: no se toca. La escritura
+    // condicional de `adquirir` lo impediria igual, pero preguntar primero
+    // ahorra un `Update` por mensaje en el caso que el solapamiento hace
+    // frecuente.
+    if (adquiridoPorOtra(mensaje, ahora)) {
+      resultado.enVuelo += 1;
+      continue;
+    }
+
     await procesarUno(mensaje, resultado, deps);
   }
 
   return resultado;
 };
+
+/**
+ * Si el mensaje esta `ENVIANDO` con su plazo todavia vigente.
+ *
+ * Un `ENVIANDO` con plazo vencido **si** se retoma: significa que la corrida
+ * que lo adquirio murio sin resolverlo.
+ */
+const adquiridoPorOtra = (mensaje: MensajeDeCorreo, ahora: Date): boolean =>
+  mensaje.estatus === "ENVIANDO" &&
+  mensaje.leaseHasta !== undefined &&
+  new Date(mensaje.leaseHasta).getTime() > ahora.getTime();
 
 /**
  * El primero de la lista es el mas viejo: `GSI4SK` es `creadoEn` y PA-14
@@ -163,18 +257,43 @@ const aMensaje = (
     tipo: "ADJUDICACION",
     destinatario,
     creadoEn,
-    estatus: "PENDIENTE",
+    // **Se lee del item y no se fija como literal.** Antes era `"PENDIENTE"`
+    // constante, y tenia su logica: estar en la particion `OUTBOX_PENDIENTE`
+    // *era* la definicion de pendiente, porque el indice es disperso. Con
+    // `ENVIANDO` en el mismo indice, esa equivalencia dejo de valer y el
+    // estatus real es lo que decide si el mensaje se puede retomar.
+    estatus: item.estatus === "ENVIANDO" ? "ENVIANDO" : "PENDIENTE",
     intentos: typeof item.intentos === "number" ? item.intentos : 0,
+    ...(typeof item.leaseHasta === "string"
+      ? { leaseHasta: item.leaseHasta }
+      : {}),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     datos: datos as any,
   };
 };
 
+/**
+ * Adquiere, envia y resuelve — en ese orden, que es el arreglo.
+ *
+ * Antes llamaba a CES **primero** y despues intentaba el `Update` condicional a
+ * `ENVIADO`: la condicion garantizaba una sola escritura de estado y un solo
+ * evento `CORREO_ENVIADO` —la bitacora nunca se duplico— pero se evaluaba
+ * cuando CES ya habia aceptado, asi que dos corridas solapadas mandaban dos
+ * correos y solo una lo anotaba. Adquirir antes invierte eso: la unica corrida
+ * que llega a CES es la que gano la escritura condicional.
+ */
 const procesarUno = async (
   mensaje: MensajeDeCorreo,
   resultado: ResultadoDeProcesarOutbox,
   deps: DepsDeServicio,
 ): Promise<void> => {
+  if (!(await adquirir(mensaje, deps))) {
+    // La perdio contra otra corrida entre la lectura y este intento. Es el
+    // mecanismo funcionando, no un fallo.
+    resultado.enVuelo += 1;
+    return;
+  }
+
   const { asunto, cuerpoHtml } = correoDeAdjudicacion(mensaje.datos);
   const envio = await enviarCorreo({
     destinatario: mensaje.destinatario,
@@ -195,8 +314,60 @@ const procesarUno = async (
     return;
   }
 
-  await incrementarIntento(mensaje, envio.error, intentos, deps);
+  await devolverAPendiente(mensaje, envio.error, intentos, deps);
   resultado.reintentaraDespues += 1;
+};
+
+/**
+ * `PENDIENTE -> ENVIANDO` con plazo, o `false` si otra corrida lo tiene.
+ *
+ * La condicion admite los dos casos legitimos: el mensaje esta `PENDIENTE`, o
+ * esta `ENVIANDO` con el plazo ya vencido —una corrida que murio despues de
+ * adquirirlo—. Un `ENVIANDO` con plazo vivo pierde la condicion, y eso es
+ * exactamente lo que se busca.
+ *
+ * **No lleva evento de auditoria.** Adquirir no es un acto de negocio: es
+ * coordinacion entre dos corridas del mismo proceso, y el catalogo de
+ * `trazabilidad-auditoria.md` deja los errores y detalles tecnicos fuera de la
+ * bitacora a proposito. Lo que si queda registrado es el envio (`CORREO_ENVIADO`)
+ * y el fallo permanente (`CORREO_FALLIDO`).
+ */
+const adquirir = async (
+  mensaje: MensajeDeCorreo,
+  deps: DepsDeServicio,
+): Promise<boolean> => {
+  const { ahora } = resolver(deps);
+  const momento = ahora.toISOString();
+
+  try {
+    await clienteDe(deps).send(
+      new UpdateCommand({
+        TableName: nombreDeTabla(),
+        Key: clave.mensaje(mensaje.mensajeId),
+        UpdateExpression:
+          "SET #estatus = :enviando, leaseHasta = :leaseHasta," +
+          " ultimoIntentoEn = :ahora",
+        ConditionExpression:
+          "#estatus = :pendiente" +
+          " OR (#estatus = :enviando AND leaseHasta <= :ahora)",
+        ExpressionAttributeNames: { "#estatus": "estatus" },
+        ExpressionAttributeValues: {
+          ":enviando": "ENVIANDO",
+          ":pendiente": "PENDIENTE",
+          ":leaseHasta": new Date(ahora.getTime() + LEASE_MS).toISOString(),
+          ":ahora": momento,
+        },
+      }),
+    );
+    return true;
+  } catch (error) {
+    if (esFalloDeCondicion(error)) return false;
+    // Un conflicto de transaccion tambien significa que alguien mas lo esta
+    // tocando: mismo tratamiento que la condicion perdida, por la misma razon
+    // que en `devolverAPendiente`.
+    if (esConflictoDeTransaccion(error)) return false;
+    throw error;
+  }
 };
 
 /** Exito: CORREO_ENVIADO, y se retiran las claves de GSI4 (seccion 3, dispersion). */
@@ -218,18 +389,22 @@ const marcarEnviado = async (
             UpdateExpression:
               "SET estatus = :enviado, ultimoIntentoEn = :ahora" +
               (idExterno ? ", idExterno = :idExterno" : "") +
-              " REMOVE GSI4PK, GSI4SK",
-            ConditionExpression: "estatus = :pendiente",
+              " REMOVE GSI4PK, GSI4SK, leaseHasta",
+            // Condiciona a `ENVIANDO` porque esta corrida acaba de adquirirlo:
+            // si el estatus ya no es ese, alguien retomo el mensaje —lease
+            // vencido— y quien escriba primero gana. La condicion sigue siendo
+            // lo que garantiza **un solo** evento `CORREO_ENVIADO`.
+            ConditionExpression: "estatus = :enviando",
             ExpressionAttributeValues: {
               ":enviado": "ENVIADO",
-              ":pendiente": "PENDIENTE",
+              ":enviando": "ENVIANDO",
               ":ahora": ahora.toISOString(),
               ...(idExterno ? { ":idExterno": idExterno } : {}),
             },
           },
         },
         siFalla: "conflicto_concurrencia",
-        descripcion: `mensaje ${mensaje.mensajeId} sigue PENDIENTE`,
+        descripcion: `mensaje ${mensaje.mensajeId} sigue adquirido por esta corrida`,
       },
       eventoParaTransaccion({
         tipo: "CORREO_ENVIADO",
@@ -269,11 +444,11 @@ const marcarFallido = async (
             UpdateExpression:
               "SET estatus = :fallido, ultimoIntentoEn = :ahora," +
               " intentos = :intentos, ultimoError = :error" +
-              " REMOVE GSI4PK, GSI4SK",
-            ConditionExpression: "estatus = :pendiente",
+              " REMOVE GSI4PK, GSI4SK, leaseHasta",
+            ConditionExpression: "estatus = :enviando",
             ExpressionAttributeValues: {
               ":fallido": "FALLIDO",
-              ":pendiente": "PENDIENTE",
+              ":enviando": "ENVIANDO",
               ":ahora": ahora.toISOString(),
               ":intentos": intentos,
               ":error": error,
@@ -281,7 +456,7 @@ const marcarFallido = async (
           },
         },
         siFalla: "conflicto_concurrencia",
-        descripcion: `mensaje ${mensaje.mensajeId} sigue PENDIENTE`,
+        descripcion: `mensaje ${mensaje.mensajeId} sigue adquirido por esta corrida`,
       },
       eventoParaTransaccion({
         tipo: "CORREO_FALLIDO",
@@ -303,14 +478,19 @@ const marcarFallido = async (
 };
 
 /**
- * Fallo transitorio: solo se anota el intento, sin evento — es dato
- * operativo, no de auditoria (`trazabilidad-auditoria.md` seccion 6). Un
- * `UpdateItem` suelto y no una transaccion: no hay evento que acompanarlo.
+ * Fallo transitorio: **suelta la adquisicion** y anota el intento, sin evento —
+ * es dato operativo, no de auditoria (`trazabilidad-auditoria.md` seccion 6).
+ * Un `UpdateItem` suelto y no una transaccion: no hay evento que acompanarlo.
+ *
+ * Devolverlo a `PENDIENTE` en vez de dejarlo `ENVIANDO` hasta que venza el
+ * plazo es lo que conserva el retroceso de D-6: el mensaje vuelve a estar
+ * disponible para la corrida siguiente, dentro de 5 minutos y no dentro de 15.
+ * El plazo queda como red para la corrida que muere **antes** de llegar aqui.
  *
  * Si la condicion falla es porque otra corrida ya lo resolvio: de mejor
  * esfuerzo, se ignora.
  */
-const incrementarIntento = async (
+const devolverAPendiente = async (
   mensaje: MensajeDeCorreo,
   error: string,
   intentos: number,
@@ -323,13 +503,16 @@ const incrementarIntento = async (
         TableName: nombreDeTabla(),
         Key: clave.mensaje(mensaje.mensajeId),
         UpdateExpression:
-          "SET intentos = :intentos, ultimoIntentoEn = :ahora, ultimoError = :error",
-        ConditionExpression: "estatus = :pendiente",
+          "SET estatus = :pendiente, intentos = :intentos," +
+          " ultimoIntentoEn = :ahora, ultimoError = :error" +
+          " REMOVE leaseHasta",
+        ConditionExpression: "estatus = :enviando",
         ExpressionAttributeValues: {
           ":intentos": intentos,
           ":ahora": ahora.toISOString(),
           ":error": error,
           ":pendiente": "PENDIENTE",
+          ":enviando": "ENVIANDO",
         },
       }),
     );

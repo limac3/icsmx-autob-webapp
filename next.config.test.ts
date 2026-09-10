@@ -1,6 +1,15 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  MAXIMO_BYTES_COMPROBANTE,
+  MAXIMO_BYTES_FOTOGRAFIA,
+} from "@/lib/media/almacenamiento";
 import config from "./next.config";
+
+// `almacenamiento.ts` lleva `import "server-only"`, que fuera del build de Next
+// resuelve a su rama de `throw`. Mismo modismo que el resto de las pruebas que
+// tocan esa capa (`almacenamiento.test.ts`, `agregarFotografia.test.ts`).
+vi.mock("server-only", () => ({}));
 
 // Etapa 12 — "cabeceras de seguridad y CSP".
 //
@@ -82,5 +91,58 @@ describe("cabeceras de seguridad", () => {
     expect((await cabeceras()).get("Cross-Origin-Resource-Policy")).toBe(
       "same-origin",
     );
+  });
+});
+
+// --- Tope del cuerpo de las Server Actions --------------------------------
+//
+// El defecto que estas pruebas existen para que no vuelva: el tope por omision
+// de las Server Actions es 1 MB, la aplicacion prometia 10, y **ninguna prueba
+// lo veia** porque todas llaman al servicio en proceso y ninguna cruza la
+// frontera HTTP. El resultado era que cualquier fotografia de celular se
+// rechazaba antes de entrar a la action.
+//
+// No se prueba subiendo un archivo de verdad —montar un cliente RSC en Vitest
+// seria mas fragil que el defecto que atraparia—; se prueba la **relacion**
+// entre el limite del framework y el limite del dominio, que es lo que se
+// rompio y lo que puede volver a romperse solo.
+
+const SOBRECOSTO_MULTIPART = 20 * 1024;
+
+const topeDeServerActions = (): number => {
+  const tope = config.experimental?.serverActions?.bodySizeLimit;
+  expect(
+    typeof tope,
+    "bodySizeLimit debe estar declarado como numero de bytes",
+  ).toBe("number");
+  return tope as number;
+};
+
+describe("tope del cuerpo de las Server Actions", () => {
+  it("esta declarado: sin el, el tope real es 1 MB", () => {
+    // Es la asercion que faltaba. `undefined` aqui significa que la aplicacion
+    // vuelve a prometer 10 MB y a entregar 1.
+    expect(topeDeServerActions()).toBeGreaterThan(1024 * 1024);
+  });
+
+  it("alcanza para el mayor archivo que el dominio admite, con el sobrecosto multipart", () => {
+    // El tope se aplica al cuerpo HTTP crudo, no al archivo: `multipart/form-data`
+    // agrega fronteras y cabeceras de parte. Un tope igual al maximo del dominio
+    // dejaria fuera un archivo de exactamente ese tamano.
+    const mayor = Math.max(MAXIMO_BYTES_FOTOGRAFIA, MAXIMO_BYTES_COMPROBANTE);
+
+    expect(
+      topeDeServerActions(),
+      "subir MAXIMO_BYTES_* sin subir bodySizeLimit deja al framework rechazando en silencio",
+    ).toBeGreaterThanOrEqual(mayor + SOBRECOSTO_MULTIPART);
+  });
+
+  it("deja que el archivo demasiado grande lo rechace el dominio y no el framework", () => {
+    // Con margen, un archivo que se pasa del limite del dominio **llega** y
+    // recibe el mensaje de `agregarFotografia`/`subirComprobante`. Sin margen,
+    // muere en el framework con un error que no dice cual es el limite.
+    const mayor = Math.max(MAXIMO_BYTES_FOTOGRAFIA, MAXIMO_BYTES_COMPROBANTE);
+
+    expect(topeDeServerActions()).toBeGreaterThan(mayor + SOBRECOSTO_MULTIPART);
   });
 });

@@ -7,8 +7,10 @@ import {
 } from "@/utils/clienteDynamoFalso";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { listarConvocatorias } from "@/lib/convocatorias/listarConvocatorias";
+import { registrar } from "@/lib/observabilidad/registro";
 import type { Lote } from "@/types/lote";
 import { adjudicarLote } from "./adjudicarLote";
+import { cerrarFilaDelLote } from "./cerrarFilaDelLote";
 import { vencerYReasignar } from "./vencerYReasignar";
 import { barridoDeVencimientos } from "./barridoDeVencimientos";
 
@@ -20,12 +22,16 @@ vi.mock("@/lib/convocatorias/listarConvocatorias", () => ({
   listarConvocatorias: vi.fn(),
 }));
 vi.mock("./adjudicarLote", () => ({ adjudicarLote: vi.fn() }));
+vi.mock("./cerrarFilaDelLote", () => ({ cerrarFilaDelLote: vi.fn() }));
 vi.mock("./vencerYReasignar", () => ({ vencerYReasignar: vi.fn() }));
+vi.mock("@/lib/observabilidad/registro", () => ({ registrar: vi.fn() }));
 
 const obtener = vi.mocked(obtenerConvocatoria);
 const listar = vi.mocked(listarConvocatorias);
 const adjudicar = vi.mocked(adjudicarLote);
+const cerrar = vi.mocked(cerrarFilaDelLote);
 const vencer = vi.mocked(vencerYReasignar);
+const registro = vi.mocked(registrar);
 
 const AHORA = new Date("2026-10-08T15:00:00.000Z");
 
@@ -86,6 +92,9 @@ const escenario = (
 beforeEach(() => {
   vi.stubEnv("AUTOB_TABLE_NAME", "tabla-de-prueba");
   listar.mockResolvedValue({ ok: true, data: [] });
+  // Por omision el cierre no encuentra nada que cerrar: cada prueba que le
+  // importa el cierre pone su propia respuesta.
+  cerrar.mockResolvedValue({ ok: true, data: 0 });
 });
 
 afterEach(() => {
@@ -297,7 +306,7 @@ describe("barridoDeVencimientos — recuperacion de lotes libres", () => {
     expect(resultado.lotesRecuperados).toBe(1);
   });
 
-  it("no toca lotes ADJUDICADO, VENDIDO ni RETIRADO", async () => {
+  it("no adjudica lotes ADJUDICADO, VENDIDO ni RETIRADO", async () => {
     const { deps } = escenario({ filaViva: true });
     listar.mockResolvedValue({
       ok: true,
@@ -313,6 +322,99 @@ describe("barridoDeVencimientos — recuperacion de lotes libres", () => {
         ],
       } as never,
     });
+
+    await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
+
+    expect(adjudicar).not.toHaveBeenCalled();
+  });
+});
+
+describe("barridoDeVencimientos — reconciliacion de filas en lotes ya cerrados", () => {
+  // El cierre de la fila que `avalarPago` hace **fuera** de su transaccion
+  // puede fallar con la venta ya firme. Antes eso duraba hasta que alguien
+  // concluyera la convocatoria; ahora lo repara la corrida siguiente.
+
+  const convocatoriaCon = (lotes: unknown[]) => {
+    listar.mockResolvedValue({
+      ok: true,
+      data: [{ convocatoriaId: "C1" } as never],
+    });
+    obtener.mockResolvedValue({
+      ok: true,
+      data: { convocatoriaId: "C1", lotes } as never,
+    });
+  };
+
+  it("cierra la fila viva de un lote VENDIDO y la cuenta", async () => {
+    const { deps } = escenario({ filaViva: true });
+    convocatoriaCon([{ ...lote, estatus: "VENDIDO", contadorTurnos: 3 }]);
+    cerrar.mockResolvedValue({ ok: true, data: 2 });
+
+    const resultado = await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
+
+    expect(cerrar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lote: expect.objectContaining({ estatus: "VENDIDO" }),
+        actor: { tipo: "SISTEMA" },
+      }),
+      expect.anything(),
+    );
+    expect(resultado.filasCerradas).toBe(2);
+  });
+
+  it("tambien reconcilia un lote NO_VENDIDO", async () => {
+    const { deps } = escenario({ filaViva: true });
+    convocatoriaCon([{ ...lote, estatus: "NO_VENDIDO", contadorTurnos: 3 }]);
+    cerrar.mockResolvedValue({ ok: true, data: 1 });
+
+    const resultado = await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
+
+    expect(resultado.filasCerradas).toBe(1);
+  });
+
+  it("no cierra nada si el lote cerrado ya no tiene fila viva", async () => {
+    const { deps } = escenario({ filaViva: false });
+    convocatoriaCon([{ ...lote, estatus: "VENDIDO", contadorTurnos: 3 }]);
+
+    await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
+
+    expect(cerrar).not.toHaveBeenCalled();
+  });
+
+  it("no cierra la fila de un lote ADJUDICADO: sigue abierta por R-17", async () => {
+    // La distincion que importa: con el lote adjudicado los demas siguen
+    // esperando legitimamente su turno si el ganador no paga.
+    const { deps } = escenario({ filaViva: true });
+    convocatoriaCon([{ ...lote, estatus: "ADJUDICADO", contadorTurnos: 3 }]);
+
+    await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
+
+    expect(cerrar).not.toHaveBeenCalled();
+  });
+
+  it("un cierre que vuelve a fallar se registra y no cuenta como error del barrido", async () => {
+    // `errores` mide vencidas sin resolver y es lo que dispara
+    // `vencimientos-sin-resolver`, la alarma mas grave. Un cierre fallido no
+    // puede cambiar lo que esa alarma significa.
+    const { deps } = escenario({ filaViva: true });
+    convocatoriaCon([{ ...lote, estatus: "VENDIDO", contadorTurnos: 3 }]);
+    cerrar.mockResolvedValue({ ok: false, error: "conflicto_concurrencia" });
+
+    const resultado = await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
+
+    expect(resultado.errores).toBe(0);
+    expect(resultado.filasCerradas).toBe(0);
+    expect(registro).toHaveBeenCalledWith(
+      "warn",
+      "cerrarFilaDelLote",
+      expect.objectContaining({ loteId: "L1", desenlace: "rechazado" }),
+    );
+  });
+
+  it("no adjudica el lote cerrado que reconcilia", async () => {
+    const { deps } = escenario({ filaViva: true });
+    convocatoriaCon([{ ...lote, estatus: "VENDIDO", contadorTurnos: 3 }]);
+    cerrar.mockResolvedValue({ ok: true, data: 1 });
 
     await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
 

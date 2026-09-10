@@ -16,29 +16,42 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import { clave, PREFIJO, turnoDesdeClave } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
-import { clienteDe, type DepsDeServicio } from "@/lib/data/deps";
+import type { DepsDeServicio } from "@/lib/data/deps";
+import { itemsDeQuery } from "@/lib/data/paginacion";
 import type { Solicitud } from "@/types/fila";
 import { exito, type Resultado } from "@/types/resultado";
 import { aSolicitud } from "./mapeo";
 
+/**
+ * **Recorre todas las paginas y lee consistente**, y las dos cosas por la misma
+ * razon: es la lectura contra la que el auditor contrasta la bitacora. Una
+ * pagina truncada o una lectura eventual producen diferencias que no existen —o
+ * peor, dejan invisible la mutacion sin evento que la comprobacion 5 existe
+ * para atrapar—. Sus dos hermanas (`leerFila` y `leerCerrables`) ya leian
+ * consistente; esta se habia quedado sin `ConsistentRead`.
+ */
 export const leerFilaCompleta = async (
   loteId: string,
   deps: DepsDeServicio = {},
 ): Promise<Resultado<Solicitud[]>> => {
-  const salida = await clienteDe(deps).send(
-    new QueryCommand({
-      TableName: nombreDeTabla(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefijo)",
-      ExpressionAttributeValues: {
-        ":pk": clave.solicitud(loteId, 0).PK,
-        ":prefijo": PREFIJO.solicitud,
-      },
-      ScanIndexForward: true,
-    }),
+  const items = await itemsDeQuery(
+    (desde) =>
+      new QueryCommand({
+        TableName: nombreDeTabla(),
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :prefijo)",
+        ExpressionAttributeValues: {
+          ":pk": clave.solicitud(loteId, 0).PK,
+          ":prefijo": PREFIJO.solicitud,
+        },
+        ScanIndexForward: true,
+        ConsistentRead: true,
+        ExclusiveStartKey: desde,
+      }),
+    deps,
   );
 
   const solicitudes: Solicitud[] = [];
-  for (const item of salida.Items ?? []) {
+  for (const item of items) {
     if (turnoDesdeClave(String(item.SK)) === undefined) continue;
     const solicitud = aSolicitud(item);
     if (solicitud) solicitudes.push(solicitud);

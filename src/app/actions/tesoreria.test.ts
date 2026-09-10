@@ -206,7 +206,7 @@ describe("pago:avalar y pago:rechazar — solo Autob_Operar_Tesoreria", () => {
     });
     avalar.mockResolvedValue({
       ok: true,
-      data: { estatus: "VENDIDA", cerradas: 0 },
+      data: { estatus: "VENDIDA", cierre: { ok: true, cerradas: 0 } },
     });
 
     const resultado = await acciones.avalarPago({ solicitudId: "L1-2" });

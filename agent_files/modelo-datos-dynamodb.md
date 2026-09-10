@@ -703,6 +703,27 @@ El envio real —el `POST` a CES— sigue sin participar nunca: ocurre aparte, e
 `src/lib/correo/procesarOutbox.ts`, que el barrido invoca despues de resolver los vencimientos
 (`arquitectura-tecnica-aws.md` 4.5).
 
+**El despacho adquiere el mensaje antes de llamar a CES** (Etapa 13). El estatus del item recorre
+cuatro valores, y `ENVIANDO` es una adquisicion con plazo y no un estado de negocio:
+
+```
+PENDIENTE --[Update condicional: estatus = PENDIENTE
+             OR (estatus = ENVIANDO AND leaseHasta <= ahora)]--> ENVIANDO  (+ leaseHasta)
+                 -> CES ok            -> ENVIADO    (+ CORREO_ENVIADO, REMOVE GSI4 y leaseHasta)
+                 -> fallo reintentable -> PENDIENTE  (+ intentos+1, REMOVE leaseHasta)
+                 -> no reintentable o intentos agotados -> FALLIDO (+ CORREO_FALLIDO, REMOVE GSI4)
+```
+
+`PENDIENTE` y `ENVIANDO` son los **dos** estatus presentes en GSI4: el item se queda en el indice
+mientras esta adquirido, que es lo que permite retomarlo si la corrida que lo tenia murio. Las claves
+se retiran al llegar a `ENVIADO` o `FALLIDO`, igual que antes.
+
+El orden importa y es el arreglo de un defecto: llamar a CES **antes** del `Update` hacia que dos
+corridas solapadas del barrido —cada 5 min, con limite de ejecucion de 300 s— mandaran dos correos,
+aunque la condicion impidiera el segundo evento `CORREO_ENVIADO`. Ver
+`desafios-implementacion.md` 57, incluida la ventana que **no** se puede cerrar: CES no ofrece clave
+de idempotencia.
+
 `venceEn = adjudicadoEn + horasLiquidacion` en horas naturales (R-13).
 
 > **Dos correcciones al escribir la Etapa 8.**
@@ -1075,6 +1096,14 @@ GSI1 se queda en `KEYS_ONLY` porque nunca necesito mas: traduce `oktaSub` a `par
 el perfil se lee de la tabla base.
 
 ### 8.2 Cota de una corrida del barrido
+
+> **Esta excepcion vale para estas dos consultas y para ninguna otra.** Todo el resto del sistema
+> recorre `LastEvaluatedKey`, y desde la Etapa 13 lo hace por un solo camino:
+> `src/lib/data/paginacion.ts`. La excepcion se apoya en tres propiedades concretas —las de abajo— y
+> leerla como permiso general costo cinco lecturas de fila sin paginar, una de ellas un defecto real
+> (`desafios-implementacion.md` 55). Antes de reusar el argumento, comprobar que las tres se
+> cumplen: si la lectura no es sobre un indice disperso que se vacia al resolver, o no hay corrida
+> siguiente que retome donde quedo, **no basta una pagina**.
 
 `leerVencidasDelDia` (PA-10) y `leerPendientes` (PA-14) leen **una sola pagina** de `Query`, sin
 recorrer `LastEvaluatedKey`. Es deliberado, y la razon es que las dos consultas se apoyan en tres

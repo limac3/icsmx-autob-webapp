@@ -2967,3 +2967,232 @@ no compartir la condicion de exportacion que hace inofensivo ese import, y la un
 es mirar los logs de una invocacion real despues de desplegar, porque Vitest no lo va a ver. Antes
 de marcar "Lambda desplegada y probada" como hecho, invocarla al menos una vez —o revisar sus logs
 si ya tiene un horario— y no solo verificar que la sintesis de CDK no truena.
+
+## 54) Los archivos de 10 MB no podian llegar: el tope real eran 1 MB
+
+### Problema
+La aplicacion admite fotografias de vehiculo y comprobantes de pago de hasta 10 MB
+(`MAXIMO_BYTES_FOTOGRAFIA` y `MAXIMO_BYTES_COMPROBANTE`), y los valida en el servicio despues de
+tener los bytes en memoria.
+
+### Sintoma
+Lo encontro una auditoria externa leyendo el codigo, no un usuario, y ese es el dato interesante:
+**estaba roto desde siempre para cualquier fotografia de celular**. El framework rechazaba el
+cuerpo con un error genérico antes de entrar a la Server Action, asi que no pasaba por las
+validaciones de tipo y tamano ni dejaba rastro en la auditoria.
+
+### Causa raiz
+Las Server Actions de Next.js tienen un tope de cuerpo de **1 MB por omision**
+(`experimental.serverActions.bodySizeLimit`, sin configurar en `next.config.ts`). Ninguna prueba lo
+veia porque **ninguna cruza la frontera HTTP**: las pruebas de action llaman la funcion exportada en
+proceso y mockean el servicio, y la prueba del tope de tamano vive en la capa de servicio con un
+bufer sintetico. `next-action` no aparece en ningun archivo del repo.
+
+### Solucion aplicada
+`bodySizeLimit: 11 * 1024 * 1024` en `next.config.ts`, y tres pruebas en `next.config.test.ts` que
+atan ese numero a las constantes del dominio.
+
+**El margen de 1 MB sobre los 10 no es holgura, tiene funcion.** El tope se aplica al cuerpo HTTP
+crudo, incluidos los 10-20 KB que `multipart/form-data` agrega en fronteras y cabeceras de parte
+—asi que `10mb` exacto no alcanzaria para un archivo de 10 MB justos—, y con el margen un archivo
+que se pasa del limite del dominio **llega al servidor y lo rechaza la validacion del dominio con su
+mensaje propio**, en vez de morir en el framework sin decir cual es el limite.
+
+Se evaluo y se **difirio** la carga directa a S3 con URL prefirmada, que evitaria tener 10 MB en la
+memoria del proceso SSR. No es solo trabajo nuevo: `almacenamiento.ts` documenta que la ausencia de
+prefirmada es deliberada —con una, el cliente elegiria la clave del objeto— y hay una prueba que lo
+fija. Cambiar eso es una decision de arquitectura, no el arreglo de este defecto.
+
+### Regla para futuro
+Un limite del framework y un limite del dominio son dos cosas, y el que manda es el menor. Cuando el
+dominio declare una cota de tamano, la prueba tiene que atarla a la del transporte: sin eso, subir
+`MAXIMO_BYTES_*` deja al framework rechazando en silencio. Y una capacidad que solo se ejercita
+llamando al servicio en proceso **no esta probada de punta a punta**; si el defecto vive en el
+transporte, hay que mirarlo en el navegador.
+
+## 55) `LastEvaluatedKey` sin recorrer en cinco lecturas de la fila
+
+### Problema
+DynamoDB corta cada `Query` en 1 MB de datos **leidos** y entrega el resto tras un
+`LastEvaluatedKey`. La misma auditoria encontro cinco funciones de `src/lib/fila` que no lo
+recorrian: `adjudicarLote.leerFila`, `cerrarFilaDelLote.leerCerrables`, `leerFilaCompleta`,
+`conteosDeFila` y `descongelarSolicitudes`.
+
+### Sintoma
+Ninguno observable a la escala actual, con una excepcion importante. Las cuatro primeras exigen
+~1 700 solicitudes en **un** lote y la escala real son decenas. La quinta no: esta en otro eje.
+
+### Causa raiz
+Dos causas distintas que conviene no mezclar.
+
+**Las cuatro primeras: la excepcion documentada se leyo como regla general.** La seccion 8.2 de
+`modelo-datos-dynamodb.md` justifica leer una sola pagina en `leerVencidasDelDia` (PA-10) y
+`leerPendientes` (PA-14), y lo hace apoyandose en tres propiedades: GSI4 es disperso, las dos leen de
+viejo a nuevo, y el barrido es idempotente cada 5 minutos. **Ninguna de las tres aplica a las
+lecturas de fila**: la particion `LOTE#<id>` conserva sus solicitudes terminales para siempre, asi
+que una primera pagina truncada no se autocura — vuelve identica en cada corrida. El peor caso es
+`adjudicarLote` escribiendo `FILA_AGOTADA` con candidatos vivos detras, o sea la bitacora afirmando
+algo falso sobre la equidad de la fila.
+
+**`descongelarSolicitudes` era un defecto de verdad, y su eje es el participante.** Combinaba
+`Limit: 100` con un `FilterExpression`, y DynamoDB aplica el `Limit` **antes** de filtrar; sin
+`ScanIndexForward` explicito el orden es ascendente sobre `GSI3SK` (`SOL#<solicitadoEn>#<loteId>`).
+Resultado: se leian las 100 solicitudes **mas antiguas** de esa persona —las ya terminales— y sus
+`CONGELADA` recientes quedaban detras, invisibles. Con mas de 100 solicitudes historicas, R-09
+dejaba de devolver turnos **en silencio**: la funcion respondia cero, y un cero no distinguia "no
+tenia congeladas" de "no las alcance a ver". No hace falta ningun dato raro para llegar ahi.
+
+La regla que viola esa combinacion **ya era doctrina escrita** del proyecto, en
+`barridoDeVencimientos.ts`, `consultarBitacoraGlobal.ts` y `consultarActividadDeParticipante.ts`. El
+patron de recorrido estaba resuelto cuatro veces en `src/lib/auditoria/` y nunca se habia extraido.
+
+### Solucion aplicada
+`src/lib/data/paginacion.ts`: `paginasDeQuery` (generador), `itemsDeQuery` y `contarConQuery`. Los
+cinco lectores pasan por ahi.
+
+- `descongelarSolicitudes` conserva el tope de 100 pero **acotando resultados y no items leidos**.
+- `conteosDeFila` **suma el `Count` entre paginas**: `Select: "COUNT"` no exime del corte de 1 MB, y
+  paginarlo no trae items, asi que la garantia de R-12 sigue intacta.
+- `leerFilaCompleta` gana ademas el `ConsistentRead` que le faltaba —sus dos hermanas ya lo
+  llevaban— porque es la lectura contra la que el auditor contrasta la bitacora: una lectura eventual
+  puede reportar diferencias que no existen, o dejar invisible la mutacion sin evento que la
+  comprobacion 5 existe para atrapar. Esto no lo senalo la auditoria.
+- El helper **no lleva tope de paginas**, a proposito: un tope seria el mismo defecto que viene a
+  arreglar. Quien necesite acotar trabajo acota resultados, que es lo unico que quien llama sabe
+  medir.
+- Y **no lleva `import "server-only"`**, porque el Lambda del barrido alcanza `adjudicarLote.ts` y
+  este modulo con el (seccion 53).
+
+Las pruebas que faltaban son de dos paginas, con la primera trayendo solo estados terminales: es
+justo la forma del caso real, porque son las terminales las que se acumulan al frente de la
+particion.
+
+### Regla para futuro
+Una excepcion documentada vale **solo** para lo que enumera y por las propiedades que enumera. Antes
+de reusar "aqui basta una pagina", hay que comprobar que las tres propiedades de 8.2 se cumplen: si
+la lectura no es sobre un indice disperso que se vacia al resolver, o no hay una corrida siguiente
+que retome donde quedo, no basta.
+
+Y con `FilterExpression` de por medio, **una pagina puede volver vacia y traer `LastEvaluatedKey`**:
+quien se detiene ahi concluye "no hay nada" con datos detras.
+
+## 56) Una venta respondia exito aunque el cierre de la fila hubiera fallado
+
+### Problema
+`avalarPago` (T4) confirma la venta en una `TransactWriteItems` y **despues**, fuera de ella, cierra
+la fila restante del lote llamando a `cerrarFilaDelLote`. Fuera de la transaccion porque son una
+cantidad no acotada y `TransactWriteItems` admite 100.
+
+### Sintoma
+El error del cierre se convertia en `cerradas: 0` y la operacion salia como exito. Sin log, sin
+metrica y sin valor de retorno distinguible: **nadie podia enterarse**. El tesorero ve la venta
+hecha; los participantes ven una posicion en un lote ya vendido.
+
+Y `0` era ambiguo por partida doble, porque `cerrarFilaDelLote` devuelve `exito(0)` legitimamente
+cuando no habia nada que cerrar.
+
+### Causa raiz
+Un `cierre.ok ? cierre.data : 0` que trataba el fallo como un valor. Que fue descuido y no decision
+lo prueba la asimetria dentro del propio repo: `concluirConvocatoria` hace el mismo llamado y
+**propaga** el error (`if (!cierre.ok) return cierre;`). Solo `avalarPago` lo descartaba, y el
+comentario que hay ahi explica por que el cierre va **fuera** de la transaccion, no por que su fallo
+se ignora.
+
+Contradecia la regla 15 de `CLAUDE.md` ("sin fallback silencioso") y la regla 16 (el camino de fallo
+no tenia ni una prueba: el mock de `cerrarFilaDelLote` solo se resolvia `ok`).
+
+### Solucion aplicada
+Tres cosas, y **ninguna es revertir la venta**: esta confirmada y es correcto que lo este. Revertirla
+convertiria un cierre pendiente en una venta deshecha, que es peor.
+
+1. **Se registra.** `registrar("warn", "cerrarFilaDelLote", …)`, con `cerrarFilaDelLote` agregado al
+   catalogo cerrado de `OPERACIONES` por el mismo criterio que las dos del barrido: su fallo no lo
+   reporta ningun usuario.
+2. **El resultado lo delata.** `ResultadoDeAval.cerradas: number` pasa a
+   `cierre: { ok: true; cerradas } | { ok: false; error }`. La venta sale `ok` en los dos casos; lo
+   que cambia es si quedo trabajo detras.
+3. **Se reconcilia en minutos.** El barrido ya recorria los lotes de las convocatorias `PUBLICADA`
+   buscando lotes `EN_OFERTA` con fila viva; ahora tambien cierra la fila de los que estan `VENDIDO`
+   o `NO_VENDIDO`, donde una fila viva no tiene sentido. Es una condicion mas en el mismo recorrido:
+   ninguna lectura extra. De paso cubre el otro modo de fallo — `cerrarFilaDelLote` corta en la
+   primera tanda que falla, asi que una fila puede quedar cerrada a medias.
+
+`cerrarFilaDelLote` acepta ahora `ActorDeEvento` y no solo `ActorUsuario`, porque la reconciliacion
+la firma `SISTEMA`. Solo reenvia el actor a su evento, y el evento ya admitia los dos.
+
+**La cuenta nueva (`filasCerradas`) no entra en `errores`.** Esa mide vencidas que no se pudieron
+resolver y es lo que dispara `vencimientos-sin-resolver`, "el sintoma mas grave del sistema": meter
+ahi un cierre fallido cambiaria lo que la alarma significa.
+
+### Regla para futuro
+Cuando una operacion irreversible deja trabajo pendiente fuera de su transaccion, hay **tres**
+preguntas y no una: si se revierte (aqui no), como se **entera** alguien, y quien lo **repara**.
+Contestar solo la primera deja el estado inconsistente y ciego a la vez.
+
+Y ante dos invocadores del mismo helper que tratan su error de forma distinta, la diferencia es un
+defecto o una decision documentada. Si no hay comentario que la explique, es un defecto.
+
+## 57) El outbox podia enviar el mismo correo dos veces
+
+### Problema
+El barrido despacha el outbox cada 5 minutos, y su limite de ejecucion es de 300 s: dos corridas
+**se solapan** y leen la misma lista de `PENDIENTE`. El propio comentario de `procesarOutbox` ya lo
+decia.
+
+### Sintoma
+Ninguno todavia, y por una razon que conviene no confundir con estar a salvo: CES sigue sin aprobar
+(R17), sus credenciales estan vacias y **no sale ningun correo**. El defecto era latente, no
+inexistente.
+
+### Causa raiz
+`procesarUno` llamaba a CES **antes** de intentar el `Update` condicional a `ENVIADO`. Esa condicion
+(`estatus = :pendiente`) garantizaba una sola escritura de estado y un solo evento `CORREO_ENVIADO`
+—la bitacora nunca se duplico, dato que la auditoria omitio— pero se evaluaba cuando CES ya habia
+aceptado. Dos corridas solapadas mandaban dos correos y solo una lo anotaba.
+
+Y era **probable en el arranque**, no remoto: R17 hace que el outbox acumule pendientes *por diseno*,
+asi que la primera corrida real empieza con toda la mora junta, la envia en serie, se pasa de los
+300 s y se solapa con la siguiente.
+
+### Solucion aplicada
+Una adquisicion con plazo, antes de CES:
+
+```
+PENDIENTE --(Update condicional, leaseHasta = ahora + 15 min)--> ENVIANDO --> CES
+   ENVIADO (con CORREO_ENVIADO, se retiran GSI4 y leaseHasta)
+   PENDIENTE + intentos+1   si el fallo es reintentable
+   FALLIDO (con CORREO_FALLIDO)  si no lo es, o si se agotaron los intentos
+```
+
+La condicion admite `PENDIENTE` **o** `ENVIANDO con plazo vencido`, que es la unica salida para un
+mensaje cuya corrida murio despues de adquirirlo. El plazo es de 15 minutos porque **tiene que ser
+mayor que el limite de ejecucion de la funcion**: mas corto, una corrida lenta veria vencer su propia
+adquisicion mientras todavia envia.
+
+El item **se queda en GSI4 mientras esta `ENVIANDO`**, para que el plazo vencido sea recuperable. Eso
+obligo a un cambio pequeno y necesario: `aMensaje` fijaba `estatus: "PENDIENTE"` como literal —estar
+en la particion `OUTBOX_PENDIENTE` *era* la definicion de pendiente, porque el indice es disperso— y
+ahora lee el estatus real.
+
+Ademas, **la corrida se acota por tiempo y no por cantidad de mensajes** (`PRESUPUESTO_DE_ENVIO_MS`,
+120 s, medido con `performance.now()` por lo mismo que `conTraza`). El limite que hay que respetar es
+el de ejecucion, y un tope de mensajes no lo garantiza: con CES lento cien se pasan, con CES rapido
+mil no llegan a la mitad. Una corrida truncada es un retraso, no trabajo perdido — la misma doctrina
+que 8.2.
+
+**Lo que queda abierto, y no se puede cerrar desde aqui:** si el proceso muere entre que CES acepta y
+que se escribe `ENVIADO`, el plazo vence y el mensaje se reenvia. CES no ofrece clave de
+idempotencia —responde una confirmacion de envio, o la causa del error— asi que el reintento no
+tiene forma de reconocerse como duplicado. El `id` que CES devuelve se guarda como `idExterno`, pero
+sirve para rastrear, no para deduplicar. El dano acotado es lo que hace aceptable esa ventana: el
+correo es un aviso informativo —monto, plazo y enlace a la pagina del lote—, sin token ni enlace de
+pago, asi que un duplicado es molesto y no peligroso.
+
+### Regla para futuro
+Un efecto **externo** no lo protege una escritura condicional posterior. Si la llamada al tercero va
+antes del `Update` que la registra, la condicion no impide el segundo efecto: solo impide el segundo
+**registro**, que es precisamente lo que hace el defecto invisible en la bitacora. Adquirir primero
+—con plazo, para no atascar el mensaje si el proceso muere— es el patron.
+
+Y "es idempotente" hay que leerlo preguntando *para quien*: el barrido lo era para DynamoDB y no lo
+era para el buzon del participante.

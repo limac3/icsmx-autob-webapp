@@ -81,6 +81,27 @@ resuelve su propio vencimiento. Comunica la demora y prioriza el arreglo.
 2. Reejecuta el procesador del outbox. Los mensajes pendientes se reintentan solos.
 3. Para un caso puntual, reencola con el runbook R-3.
 
+**Mensajes en `ENVIANDO`:** es una adquisicion con plazo, no un estado atascado. Una corrida del
+barrido lo pone antes de llamar a CES para que dos corridas solapadas no manden el mismo correo dos
+veces, y lo quita al resolverlo. Un `ENVIANDO` con `leaseHasta` **futuro** esta en vuelo ahora
+mismo; con `leaseHasta` **pasado** significa que la corrida que lo tenia murio, y la siguiente lo
+retoma sola —hasta 15 minutos, `LEASE_MS`—. No hay que sanearlo a mano.
+
+Lo que **si** hay que mirar: si `enVuelo` de la linea de traza es alto de forma sostenida, las
+corridas se estan solapando mucho, y si `sinPresupuesto` no baja, la mora es mayor de lo que una
+corrida alcanza a drenar (`PRESUPUESTO_DE_ENVIO_MS`). Las dos se ven aqui:
+
+```
+fields @timestamp, message.enviados, message.enVuelo, message.sinPresupuesto, message.reintentaraDespues
+| filter message.operacion = "procesarOutbox"
+| sort @timestamp desc
+```
+
+**Un correo duplicado es posible y esta acotado:** si el proceso muere entre que CES acepta y que se
+escribe `ENVIADO`, el reintento lo reenvia. CES no ofrece clave de idempotencia, asi que esa ventana
+no se cierra desde la aplicacion. El contenido es un aviso —monto, plazo y enlace a la pagina del
+lote—, sin token ni enlace de pago: molesto, no peligroso. Ver `desafios-implementacion.md` 57.
+
 > **Si el correo estuvo caido durante una ventana de venta, evalua ampliar el plazo de los
 > adjudicados afectados (R-5).** No es justo vencer a alguien que nunca fue notificado. La
 > decision es de negocio, no de operacion — escalala.
@@ -118,9 +139,24 @@ es el runbook R-5 y es una decision distinta que debe quedar registrada como tal
 | Lote `EN_OFERTA` con fila viva | Adjudicacion no disparada | Invocar la adjudicacion (T2) |
 | Todas las solicitudes `CONGELADA` | Sus titulares tienen adjudicacion activa en otros lotes | **Correcto.** Se desbloquea solo (R-09) |
 | `adjudicacionActual` con valor `null` | Se uso `SET ... = null` en lugar de `REMOVE` | **Defecto de codigo.** Corregir el codigo y sanear el item |
+| Lote `VENDIDO` o `NO_VENDIDO` con solicitudes `EN_FILA`/`CONGELADA` | El cierre de fila de `avalarPago` fallo despues de que la venta quedo firme | **Se repara solo** en la corrida siguiente del barrido. Confirmar con la consulta de abajo; si persiste dos corridas, es un fallo sostenido y hay que mirar el motivo |
 
-El ultimo caso rompe toda la exclusion mutua: `attribute_not_exists` da falso con un `null`
+El caso del `null` rompe toda la exclusion mutua: `attribute_not_exists` da falso con un `null`
 presente y el lote se puede adjudicar dos veces. Trata el hallazgo como incidente grave.
+
+**Si el cierre de fila fallo**, la linea que lo dice es esta (Logs Insights):
+
+```
+fields @timestamp, message.loteId, message.error, message.descripcion
+| filter message.operacion = "cerrarFilaDelLote"
+| sort @timestamp desc
+```
+
+Es la unica senal: la venta salio con exito y nadie mas la reporta. La reparacion la hace
+`barridoDeVencimientos` al recorrer los lotes de las convocatorias `PUBLICADA`, y se cuenta en
+`filasCerradas` de su linea de traza. Un `filasCerradas` distinto de cero **de forma sostenida** no
+es el barrido trabajando: significa que cada venta esta fallando su cierre y hay que buscar la causa
+aguas arriba.
 
 ---
 
@@ -459,15 +495,19 @@ pudo resolver; `vencimientosAbstenidos` son las que dejo para la corrida siguien
 vuelo (R18), que es correcto y no un problema:
 
 ```
-fields @timestamp, message.vencimientosResueltos, message.vencimientosAbstenidos, message.errores, message.lotesRecuperados
+fields @timestamp, message.vencimientosResueltos, message.vencimientosAbstenidos, message.errores, message.lotesRecuperados, message.filasCerradas
 | filter message.operacion = "barridoDeVencimientos"
 | sort @timestamp desc
 ```
 
+`filasCerradas` son las solicitudes que el barrido cerro al reconciliar un lote ya vendido cuya fila
+habia quedado viva — el cierre que `avalarPago` no pudo completar (R-4). Cuenta aparte de `errores` a
+proposito: mayor que cero es el barrido trabajando, no un fallo.
+
 **Cuanto lleva esperando el correo** — R-2:
 
 ```
-fields @timestamp, message.antiguedadMaximaMin, message.enviados, message.fallidosPermanentes, message.reintentaraDespues
+fields @timestamp, message.antiguedadMaximaMin, message.enviados, message.fallidosPermanentes, message.reintentaraDespues, message.enVuelo, message.sinPresupuesto
 | filter message.operacion = "procesarOutbox"
 | sort @timestamp desc
 ```
