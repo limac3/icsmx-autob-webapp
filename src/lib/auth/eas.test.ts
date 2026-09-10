@@ -49,13 +49,23 @@ describe("obtenerPermisos — conmutacion de adaptador", () => {
     expect(consultarMock).not.toHaveBeenCalled();
   });
 
-  it("MOCK_USERS en produccion lanza — salvaguarda de la regla 15", async () => {
+  it("MOCK_USERS en un despliegue sin habilitar lanza — salvaguarda de la regla 15", async () => {
     vi.stubEnv("ENABLE_DEV_TOOLS", "MOCK_USERS");
     vi.stubEnv("NODE_ENV", "production");
 
-    await expect(obtenerPermisos("okta|1")).rejects.toThrow(
-      /no esta permitido con NODE_ENV=production/,
-    );
+    await expect(obtenerPermisos("okta|1")).rejects.toThrow(/APP_ENV/);
+    expect(consultarMock).not.toHaveBeenCalled();
+  });
+
+  it("en un ambiente de pruebas habilitado devuelve permisos simulados y no toca EAS", async () => {
+    // Es la consecuencia que hay que tener presente al habilitarlo: con
+    // cualquier modo distinto de OFF, **EAS no se consulta**. Quien se autentica
+    // recibe los permisos simulados, no los suyos.
+    vi.stubEnv("ENABLE_DEV_TOOLS", "MOCK_USERS");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("APP_ENV", "pruebas");
+
+    expect((await obtenerPermisos("okta|1")).size).toBeGreaterThan(0);
     expect(consultarMock).not.toHaveBeenCalled();
   });
 });

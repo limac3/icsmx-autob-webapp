@@ -133,9 +133,9 @@ perdida. La UI lo trata releyendo y reintentando, no mostrando un error rojo.
 
 ### 3.2 Lo que si lanza
 
-Solo lo irrecuperable: configuracion ausente al arrancar, `ENABLE_DEV_TOOLS` distinto de `OFF`
-en produccion, o un fallo de infraestructura que la capa superior no puede manejar. Llegan al
-`error.tsx` mas cercano.
+Solo lo irrecuperable: configuracion ausente al arrancar, `ENABLE_DEV_TOOLS` distinto de `OFF` en un
+despliegue que no lo habilito explicitamente (`arquitectura-tecnica-aws.md` 6), o un fallo de
+infraestructura que la capa superior no puede manejar. Llegan al `error.tsx` mas cercano.
 
 ---
 

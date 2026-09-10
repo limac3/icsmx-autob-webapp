@@ -505,7 +505,48 @@ que importa para un despliegue:
 | EAS | `EAS_PROFILE_URL`, `EAS_API_KEY` | Del equipo de EAS (contrato aun sin confirmar: riesgo R19) |
 | Datos | `AUTOB_TABLE_NAME`, `AUTOB_MEDIA_BUCKET` | `amplify_outputs.json`, bajo `custom.autob` |
 | CloudFront | `CLOUDFRONT_DOMAIN`, `CLOUDFRONT_KEY_PAIR_ID`, `CLOUDFRONT_PRIVATE_KEY` | Los dos primeros de `custom.autob`. **`llavePublicaCloudFront`, no `grupoDeLlavesCloudFront`**: confundirlos da un 403 que no dice cual de los dos esta mal (desafios 50) |
-| Herramientas | `ENABLE_DEV_TOOLS=OFF` | **Obligatorio.** La aplicacion lanza un error de arranque si `NODE_ENV=production` y el valor no es `OFF` |
+| Herramientas | `ENABLE_DEV_TOOLS`, `APP_ENV` | `OFF` + `produccion` en produccion. En un ambiente de pruebas, `FULL` + `pruebas` — ver abajo |
+
+#### Un ambiente de pruebas con el conmutador de identidades
+
+`NODE_ENV=production` **no distingue produccion de pruebas**: Amplify Hosting compila y sirve toda
+rama en modo produccion. El entorno se declara, y son dos variables:
+
+```
+ENABLE_DEV_TOOLS=FULL
+APP_ENV=pruebas
+```
+
+`ON` **no es un valor valido** de `ENABLE_DEV_TOOLS` — los tres son `OFF`, `MOCK_USERS` y `FULL`, y
+uno invalido cae a `OFF` con un aviso en el registro. El sintoma no es un error de configuracion
+sino que la aplicacion intenta consultar EAS de verdad. Para recorrer el flujo completo hace falta
+`FULL`: `MOCK_USERS` da los permisos de una sola identidad por variable de entorno, y el ciclo exige
+**dos distintas** (R-12).
+
+De `APP_ENV`, los dos valores son `produccion` y `pruebas`. **Ausente o desconocido se asume
+`produccion`**, asi que olvidarla deja las herramientas bloqueadas, no abiertas; la aplicacion lanza
+en cada peticion con un mensaje que la nombra. `production` en ingles es un valor invalido y cae del
+lado seguro.
+
+**La matriz completa de las dos variables** —las 40 combinaciones, con lo que hace la aplicacion en
+cada una— esta en `identidad-autorizacion.md` 4.1.2, y la verifica
+`src/lib/auth/modoYEntorno.test.ts`.
+
+**Lo que hay que aceptar para hacerlo, dicho sin rodeos:** con cualquier modo distinto de `OFF`,
+`src/lib/auth/eas.ts` **no consulta EAS**. La autenticacion de Okta sigue siendo real y obligatoria
+—es cierto que es un candado—, pero **deja de implicar autorizacion**: cualquier cuenta del tenant
+que alcance la URL recibe los permisos de `DEV_TOOLS_MOCK_ROLES` (`ADMINISTRADOR` si no se pone) y
+puede cambiarse a cualquier identidad del roster. Es admisible con **datos desechables**; deja de
+serlo en cuanto el ambiente tenga datos reales.
+
+Si se quiere estrechar sin perder el conmutador, las dos palancas son gratis y no exigen codigo:
+restringir la aplicacion en Okta a un grupo de prueba, y poner `DEV_TOOLS_MOCK_ROLES` con el rol
+minimo en vez del `ADMINISTRADOR` por omision.
+
+Al pasar ese mismo ambiente a produccion: `ENABLE_DEV_TOOLS=OFF` y `APP_ENV=produccion`. Poner las
+dos y no solo la primera: `APP_ENV` no enciende nada por si sola —la fila de `OFF` es EAS en las
+cuatro columnas de la matriz— pero dejarla en `pruebas` deja armada la trampa para el proximo cambio
+de `ENABLE_DEV_TOOLS`.
 
 Los cuatro de **CES** —`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`— van por
 `ampx ... secret set` y no como variables de la app: los consume la **Lambda del barrido**, que los
@@ -533,9 +574,11 @@ De la carga sale el dato con el que **calibrar `UMBRAL_CONFLICTOS_POR_PERIODO`**
 partida, no medidas.
 
 Falta ademas la prueba de humo del ciclo completo, que exige **dos identidades distintas**: R-05
-impide aprobar la propia convocatoria y una fila de un solo participante no tiene orden. En un
-entorno desplegado con `ENABLE_DEV_TOOLS=OFF` no hay conmutador de identidad simulada, asi que son
-dos personas de verdad — ver R-12 para el recorrido y por que.
+impide aprobar la propia convocatoria y una fila de un solo participante no tiene orden. Con
+`ENABLE_DEV_TOOLS=OFF` no hay conmutador de identidad simulada, asi que son dos personas de verdad;
+en un ambiente de pruebas habilitado, una sola persona las recorre con el conmutador —dos ventanas,
+o una normal y una de incognito, porque la cookie es por navegador—. Ver R-12 para el recorrido y
+por que.
 
 ### Si el build falla
 

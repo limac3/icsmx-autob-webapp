@@ -328,13 +328,23 @@ amplio pasaria inadvertido).
 
 ## 6. Entornos
 
-| Entorno | Backend | Datos | `ENABLE_DEV_TOOLS` |
-| --- | --- | --- | --- |
-| Local | `npx ampx sandbox` personal | Desechables | `MOCK_USERS` o `FULL` |
-| Desarrollo | Rama compartida | De prueba | `MOCK_USERS` |
-| Produccion | Rama principal | Reales | **`OFF` obligatorio** |
+| Entorno | Backend | Datos | `ENABLE_DEV_TOOLS` | `APP_ENV` |
+| --- | --- | --- | --- | --- |
+| Local | `npx ampx sandbox` personal | Desechables | `MOCK_USERS` o `FULL` | no se pone |
+| Pruebas desplegado | Rama de pruebas en Amplify Hosting | Desechables | `FULL` | `pruebas` |
+| Desarrollo | Rama compartida | De prueba | `MOCK_USERS` | `pruebas` |
+| Produccion | Rama principal | Reales | **`OFF` obligatorio** | `produccion` |
 
-`devMode.ts` **lanza un error de arranque** si `NODE_ENV=production` y el valor no es `OFF`.
+**La matriz completa de las dos variables, con lo que hace la aplicacion en cada casilla, esta en
+`identidad-autorizacion.md` 4.1.2**, y la verifica `src/lib/auth/modoYEntorno.test.ts` recorriendo
+las 40 combinaciones. No se resume aqui para no tener dos versiones de la misma tabla.
+
+> **`NODE_ENV` no distingue produccion de un ambiente de pruebas.** Amplify Hosting compila y sirve
+> **toda** rama con `NODE_ENV=production`, asi que la guarda original —"lanza si
+> `NODE_ENV=production` y el modo no es `OFF`"— hacia imposible desplegar un ambiente de prueba con
+> el conmutador de identidades. Y hace falta ahi precisamente: el flujo completo exige **dos
+> identidades distintas**, porque R-05 impide aprobar la propia convocatoria y una fila de un solo
+> participante no tiene orden. De ahi `APP_ENV`, que declara el entorno en vez de deducirlo.
 
 > En esta maquina, `npx ampx sandbox` y los SDK de AWS fallan sin `NODE_EXTRA_CA_CERTS` por la
 > inspeccion TLS corporativa (riesgo R11). El sintoma parece un problema de credenciales o de

@@ -146,10 +146,15 @@ rol representa.
 > negocio, y desde la Etapa 2.2 la verifica `rolesSimulados.test.ts` recorriendo el arbol de
 > fuentes — no una revision manual.
 
-`src/lib/auth/devMode.ts` expone `exigirModoSeguro()`, que **lanza** si `NODE_ENV=production` y
-el modo no es `OFF`. Se invoca justo antes de usar el mock (en `eas.ts`), no al importar el
-modulo — importar tambien ocurre durante `next build`, y ahi no debe lanzar. Es una salvaguarda
-deliberada: el modo de desarrollo nunca debe poder activarse por accidente en produccion.
+`src/lib/auth/devMode.ts` expone `exigirModoSeguro()`, que **lanza** si el modo no es `OFF` en un
+despliegue compilado que no lo haya habilitado explicitamente. Se invoca justo antes de usar el mock
+(en `eas.ts`), no al importar el modulo — importar tambien ocurre durante `next build`, y ahi no
+debe lanzar. Es una salvaguarda deliberada: el modo de desarrollo nunca debe poder activarse por
+accidente en produccion.
+
+El entorno lo declara `APP_ENV` (`produccion` | `pruebas`), y **ausente o desconocido se asume
+`produccion`**. Esa asimetria es la propiedad que importa: olvidar la variable deja las herramientas
+bloqueadas, no abiertas (regla 18).
 
 #### 4.1.1 Impersonacion de identidad — modo `FULL`
 
@@ -202,6 +207,58 @@ Tres condiciones se exigen **las tres** para cambiar de persona (`src/app/action
 modo `FULL`, `NODE_ENV` distinto de `production` y sesion real de Okta. La action **no pasa por
 `puedeEjecutar`**, y no debe: no hay permiso que cubra "elegir con quien navego", y crearlo seria
 codificar en EAS una herramienta de desarrollo (regla 17).
+
+#### 4.1.2 Tabla de verdad de `ENABLE_DEV_TOOLS` x `APP_ENV`
+
+Las dos variables juntas deciden si la autorizacion de una peticion es **real** o **simulada**, y
+esa es la decision mas consecuente de la configuracion. La tabla es la especificacion, y
+`src/lib/auth/modoYEntorno.test.ts` la recorre **completa** —las 40 combinaciones, incluidos los
+valores invalidos y ausentes— para que no pueda quedar en buena intencion.
+
+Tres desenlaces posibles, y ninguno mas:
+
+| Desenlace | Que hace la aplicacion |
+| --- | --- |
+| **EAS** | Autorizacion real. `eas.ts` consulta EAS con el `oktaSub` de la sesion |
+| **SIMULADO** | Autorizacion simulada. No se consulta EAS; los permisos salen de `DEV_TOOLS_MOCK_ROLES`/`DEV_TOOLS_MOCK_PERMISOS` |
+| **LANZA** | La peticion falla con un error explicito. La aplicacion queda inservible hasta que se corrija la configuracion — es el fallo cerrado |
+
+**En un despliegue compilado** (`NODE_ENV=production`, que es lo que Amplify Hosting usa en **toda**
+rama):
+
+| `ENABLE_DEV_TOOLS` | `APP_ENV` ausente | `APP_ENV=produccion` | `APP_ENV=pruebas` | `APP_ENV` invalido |
+| --- | --- | --- | --- | --- |
+| ausente | EAS | EAS | EAS | EAS |
+| `OFF` | EAS | EAS | EAS | EAS |
+| invalido (p. ej. `ON`) | EAS | EAS | EAS | EAS |
+| `MOCK_USERS` | **LANZA** | **LANZA** | SIMULADO | **LANZA** |
+| `FULL` | **LANZA** | **LANZA** | SIMULADO | **LANZA** |
+
+**En local** (`NODE_ENV` distinto de `production`), `APP_ENV` es irrelevante:
+
+| `ENABLE_DEV_TOOLS` | Cualquier `APP_ENV` |
+| --- | --- |
+| ausente, `OFF`, o invalido | EAS |
+| `MOCK_USERS` o `FULL` | SIMULADO |
+
+Lo que la tabla garantiza, y conviene leerlo como propiedades y no como casillas:
+
+1. **Solo una casilla de un despliegue da SIMULADO por cada modo simulado**, y exige que las **dos**
+   variables esten puestas a proposito. Ninguna omision llega ahi.
+2. **`ENABLE_DEV_TOOLS=OFF` es EAS en toda la fila**, sin importar `APP_ENV`. Declarar el entorno
+   como pruebas no enciende nada por si solo.
+3. **Un valor invalido de `ENABLE_DEV_TOOLS` es EAS, no LANZA.** Cae del lado seguro con un aviso en
+   el registro. Ojo con la consecuencia practica: `ENABLE_DEV_TOOLS=ON` **no habilita nada** —los
+   tres valores son `OFF`, `MOCK_USERS` y `FULL`— y el sintoma sera que la aplicacion intenta
+   consultar EAS de verdad.
+4. **Un valor invalido de `APP_ENV` es LANZA, no SIMULADO.** `production` en ingles es el error
+   probable y cae del lado seguro.
+5. **La impersonacion es un subconjunto estricto de SIMULADO**: solo el modo `FULL`, y solo donde ese
+   modo no lanza. `MOCK_USERS` nunca lee la cookie.
+
+En las cinco filas de un despliegue, **la unica forma de tener autorizacion simulada es escribir dos
+valores correctos**. No hay ninguna casilla donde una variable ausente, vacia o mal escrita conceda
+mas de lo que concede `OFF`.
 
 ### 4.2 Adaptador real
 

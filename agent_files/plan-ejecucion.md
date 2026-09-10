@@ -170,7 +170,9 @@ datos de negocio aun.
 - [x] `src/lib/auth/eas.ts` — adaptador conmutable (real / simulado) segun `ENABLE_DEV_TOOLS`
 - [x] `src/lib/auth/easAdapter.ts` — consulta real con timeout; **sin fallback silencioso**:
       si EAS falla, error explicito (regla 15)
-- [x] `src/lib/auth/devMode.ts` — `ENABLE_DEV_TOOLS`, lanza error si no es `OFF` en produccion
+- [x] `src/lib/auth/devMode.ts` — `ENABLE_DEV_TOOLS` y `APP_ENV`, lanza si el modo no es `OFF` en
+      un despliegue que no se declare de pruebas (D-18; matriz en
+      `identidad-autorizacion.md` 4.1.2, verificada por `modoYEntorno.test.ts`)
 - [x] `src/lib/auth/permisos.ts` — `puedeEjecutar({ accion, permisos, contexto })` puro, sin I/O,
       derivado linea por linea de `permission-matrix.md`
 - [x] `src/types/identidad.ts` — catalogo de permisos, tipos de convocatoria accesibles y sesion

@@ -392,7 +392,8 @@ que cubra "elegir con quien navego", y crearlo seria pedirle a EAS que configure
 de desarrollo (regla 17). Su compuerta son tres condiciones que se exigen **las tres**:
 
 1. `ENABLE_DEV_TOOLS=FULL`.
-2. `NODE_ENV` distinto de `production` — lo exige `exigirModoSeguro()`.
+2. O `NODE_ENV` distinto de `production`, o un despliegue con `APP_ENV=pruebas` — lo exige
+   `exigirModoSeguro()`. La matriz completa esta en `identidad-autorizacion.md` 4.1.2.
 3. Una sesion real de Okta: la impersonacion sustituye permisos e identidad, nunca la
    autenticacion.
 

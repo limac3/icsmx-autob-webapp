@@ -99,11 +99,23 @@ describe("leerPersonaSimulada", () => {
     expect(cookiesMock).not.toHaveBeenCalled();
   });
 
-  it("lanza si alguien pone FULL en produccion, antes de conceder identidad", async () => {
+  it("lanza si alguien pone FULL en un despliegue sin habilitar, antes de conceder identidad", async () => {
     vi.stubEnv("ENABLE_DEV_TOOLS", "FULL");
     vi.stubEnv("NODE_ENV", "production");
     conAlmacen(alguien.id);
-    await expect(leerPersonaSimulada()).rejects.toThrow(/no esta permitido/);
+    await expect(leerPersonaSimulada()).rejects.toThrow(/APP_ENV/);
+  });
+
+  it("en un ambiente de pruebas habilitado si concede la identidad", async () => {
+    // El caso que motiva la habilitacion: Amplify Hosting sirve toda rama con
+    // `NODE_ENV=production`, asi que sin esto no habria forma de recorrer el
+    // flujo con dos identidades en un despliegue de prueba.
+    vi.stubEnv("ENABLE_DEV_TOOLS", "FULL");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("APP_ENV", "pruebas");
+    conAlmacen(alguien.id);
+
+    expect(await leerPersonaSimulada()).toEqual(alguien);
   });
 });
 
@@ -157,15 +169,29 @@ describe("fijarPersonaSimulada", () => {
     );
   });
 
-  it("lanza en produccion aunque el modo sea FULL, y no borra ni escribe", async () => {
+  it("lanza en un despliegue sin habilitar aunque el modo sea FULL, y no borra ni escribe", async () => {
     vi.stubEnv("ENABLE_DEV_TOOLS", "FULL");
     vi.stubEnv("NODE_ENV", "production");
     conAlmacen();
 
-    await expect(fijarPersonaSimulada(alguien.id)).rejects.toThrow(
-      /no esta permitido/,
-    );
+    await expect(fijarPersonaSimulada(alguien.id)).rejects.toThrow(/APP_ENV/);
     expect(almacen.set).not.toHaveBeenCalled();
     expect(almacen.delete).not.toHaveBeenCalled();
+  });
+
+  it("en un ambiente de pruebas habilitado escribe la cookie con `secure`", async () => {
+    // El despliegue va por HTTPS, y ahi `secure` si aplica — a diferencia del
+    // `npm run dev` de una maquina, que sirve por HTTP.
+    vi.stubEnv("ENABLE_DEV_TOOLS", "FULL");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("APP_ENV", "pruebas");
+    conAlmacen();
+
+    expect(await fijarPersonaSimulada(alguien.id)).toEqual(alguien);
+    expect(almacen.set).toHaveBeenCalledWith(
+      COOKIE_PERSONA_SIMULADA,
+      alguien.id,
+      expect.objectContaining({ secure: true }),
+    );
   });
 });
