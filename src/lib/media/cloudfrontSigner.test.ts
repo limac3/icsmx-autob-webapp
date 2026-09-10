@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   configuracionDeFirma,
+  desfasesConElSandbox,
   firmarFotografia,
   normalizarLlave,
   rutaPublica,
@@ -188,5 +189,58 @@ describe("configuracionDeFirma", () => {
       keyPairId: "K1",
       llavePrivada,
     });
+  });
+});
+
+// El desfase entre `.env.local` y el sandbox desplegado. Es la unica falla de
+// configuracion de este modulo que **no produce ningun error**: la URL se firma
+// bien, contra un host que ya no existe, y la pantalla queda sin fotografias
+// con la consola limpia. Paso de verdad al recrear el sandbox en la Etapa 11.2.
+describe("desfasesConElSandbox", () => {
+  const entorno = { dominio: "d1.cloudfront.net", keyPairId: "K1" };
+
+  it("no reporta nada cuando el entorno coincide", () => {
+    expect(
+      desfasesConElSandbox(entorno, {
+        distribucion: "d1.cloudfront.net",
+        llavePublicaCloudFront: "K1",
+      }),
+    ).toEqual([]);
+  });
+
+  it("no reporta nada sin salidas: quien no tiene sandbox no ve un error", () => {
+    expect(desfasesConElSandbox(entorno, undefined)).toEqual([]);
+  });
+
+  it("nombra la variable, el valor local y el desplegado", () => {
+    // Los tres datos importan: sin el valor desplegado, el mensaje obliga a ir
+    // a buscarlo, que es justo el paso que nadie da cuando cree que el defecto
+    // esta en el codigo.
+    const [mensaje, ...resto] = desfasesConElSandbox(entorno, {
+      distribucion: "d2.cloudfront.net",
+      llavePublicaCloudFront: "K1",
+    });
+
+    expect(resto).toEqual([]);
+    expect(mensaje).toContain("CLOUDFRONT_DOMAIN");
+    expect(mensaje).toContain("d1.cloudfront.net");
+    expect(mensaje).toContain("d2.cloudfront.net");
+  });
+
+  it("reporta los dos desfases a la vez", () => {
+    expect(
+      desfasesConElSandbox(entorno, {
+        distribucion: "d2.cloudfront.net",
+        llavePublicaCloudFront: "K2",
+      }),
+    ).toHaveLength(2);
+  });
+
+  it("ignora un valor que el sandbox no publica", () => {
+    // Una salida incompleta es un despliegue a medias, no una contradiccion:
+    // tratarla como desfase apagaria la aplicacion por un dato ausente.
+    expect(desfasesConElSandbox(entorno, { distribucion: undefined })).toEqual(
+      [],
+    );
   });
 });

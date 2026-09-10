@@ -15,6 +15,9 @@ import "server-only";
 //     entre peticiones y entre usuarios: una URL firmada cacheada se sirve ya
 //     vencida a unos y todavia valida a otros que no deberian tenerla.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { getSignedUrl } from "@aws-sdk/cloudfront-signer";
 
 /**
@@ -34,12 +37,87 @@ type ConfiguracionDeFirma = {
   llavePrivada: string;
 };
 
+/** Lo que `npx ampx sandbox` publica y de aqui interesa comparar. */
+export type SalidasDeSandbox = {
+  distribucion?: string;
+  llavePublicaCloudFront?: string;
+};
+
+/**
+ * Compara el entorno con lo que el sandbox publico, y describe cada desfase.
+ *
+ * Existe porque el sintoma de este desfase **no es un error**: son URLs
+ * firmadas contra un host que ya no existe, o sea fotografias que no cargan con
+ * la consola limpia, sin nada en el servidor y sin nada en la red que apunte al
+ * codigo. Costo medido: `ampx sandbox delete` y su redespliegue crearon una
+ * distribucion nueva, `.env.local` se quedo con el dominio de la anterior, y la
+ * galeria de vehiculos quedo muda hasta que alguien la reporto como "las ligas
+ * estan rotas" — que es exactamente lo que parece.
+ *
+ * Es pura y recibe las salidas ya parseadas para poder probarla sin tocar el
+ * disco ni el entorno.
+ */
+export const desfasesConElSandbox = (
+  entorno: { dominio: string; keyPairId: string },
+  publicado: SalidasDeSandbox | undefined,
+): string[] => {
+  if (!publicado) return [];
+
+  const comparar = (
+    variable: string,
+    enEntorno: string,
+    enSandbox: string | undefined,
+  ): string | undefined =>
+    enSandbox && enSandbox !== enEntorno
+      ? `${variable}=${enEntorno} pero el sandbox desplegado dice ${enSandbox}`
+      : undefined;
+
+  return [
+    comparar("CLOUDFRONT_DOMAIN", entorno.dominio, publicado.distribucion),
+    comparar(
+      "CLOUDFRONT_KEY_PAIR_ID",
+      entorno.keyPairId,
+      publicado.llavePublicaCloudFront,
+    ),
+  ].filter((mensaje) => mensaje !== undefined);
+};
+
+/**
+ * Las salidas del sandbox, leidas una sola vez.
+ *
+ * `undefined` si el archivo no esta o no se puede leer: quien trabaja sin
+ * sandbox propio no tiene por que ver un error. Se memoriza porque
+ * `configuracionDeFirma` corre una vez por fotografia y por peticion.
+ */
+let salidasLeidas: SalidasDeSandbox | undefined | "sin-leer" = "sin-leer";
+
+const salidasDelSandbox = (): SalidasDeSandbox | undefined => {
+  if (salidasLeidas !== "sin-leer") return salidasLeidas;
+  try {
+    const crudo = readFileSync(
+      join(process.cwd(), "amplify_outputs.json"),
+      "utf8",
+    );
+    salidasLeidas = (
+      JSON.parse(crudo) as { custom?: { autob?: SalidasDeSandbox } }
+    ).custom?.autob;
+  } catch {
+    salidasLeidas = undefined;
+  }
+  return salidasLeidas;
+};
+
 /**
  * Lee la configuracion del entorno.
  *
  * Falla con un mensaje que dice **que** falta y **de donde** sale, en vez de
  * dejar que el SDK lance un error de criptografia diez lineas mas abajo. Es la
  * regla 15: sin fallback silencioso.
+ *
+ * En desarrollo falla tambien cuando el entorno **no coincide** con el sandbox
+ * desplegado. No se corrige el valor sobre la marcha: eso seria el fallback
+ * silencioso que la regla 15 prohibe, y ademas dejaria `.env.local` mintiendo
+ * para siempre.
  */
 export const configuracionDeFirma = (): ConfiguracionDeFirma => {
   const dominio = process.env.CLOUDFRONT_DOMAIN;
@@ -59,6 +137,23 @@ export const configuracionDeFirma = (): ConfiguracionDeFirma => {
         " en amplify_outputs.json (custom.autob); la llave privada es un secreto." +
         " Ver .env.local.example.",
     );
+  }
+
+  // Solo en desarrollo: desplegada, las variables las inyecta Amplify y
+  // `amplify_outputs.json` no es la fuente de verdad de nada.
+  if (process.env.NODE_ENV === "development") {
+    const desfases = desfasesConElSandbox(
+      { dominio, keyPairId },
+      salidasDelSandbox(),
+    );
+    if (desfases.length > 0) {
+      throw new Error(
+        `.env.local no coincide con el sandbox desplegado: ${desfases.join("; ")}.` +
+          " Recrear el sandbox cambia la distribucion de CloudFront, y una URL" +
+          " firmada contra la anterior no falla: simplemente no carga ninguna" +
+          " fotografia. Copia los valores de amplify_outputs.json (custom.autob).",
+      );
+    }
   }
 
   return { dominio, keyPairId, llavePrivada: normalizarLlave(crudo) };
