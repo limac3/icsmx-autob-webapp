@@ -26,9 +26,37 @@ export type ResultadoDeEnvio =
    */
   | { ok: false; error: string; reintentable: boolean };
 
+/**
+ * Las cuatro variables sin las que no se puede enviar nada.
+ *
+ * Se declaran como dato y no solo dentro de `enviarCorreo` para que quien
+ * despacha el outbox pueda **preguntar antes** de adquirir un mensaje y llamar
+ * a CES. Sin eso, la unica forma de enterarse era el `throw` de `requerido`, y
+ * ese throw subia hasta el `handler` del barrido: la corrida entera moria en el
+ * primer mensaje, dejandolo `ENVIANDO` con su plazo de 15 minutos.
+ */
+export const VARIABLES_DE_CES = [
+  "CES_URL",
+  "CES_USER",
+  "CES_PASSWORD",
+  "CES_FROM_ADDRESS",
+] as const;
+
+/**
+ * Las que faltan, en el orden de arriba. Vacio significa que se puede enviar.
+ *
+ * Devuelve los **nombres** y no un booleano: el nombre es lo que hace
+ * accionable la linea del registro y el motivo del evento — "falta CES_URL" se
+ * arregla, "falta configuracion" se investiga.
+ */
+export const configuracionDeCesFaltante = (): readonly string[] =>
+  VARIABLES_DE_CES.filter((nombre) => !process.env[nombre]);
+
 const requerido = (valor: string | undefined, nombre: string): string => {
   // Sin fallback silencioso (regla 15): si el procesador del outbox corre sin
   // estas variables, el error debe ser explicito y no un envio que desaparece.
+  // Se conserva aunque `configuracionDeCesFaltante` permita comprobarlo antes:
+  // es la red para cualquier otro invocador de `enviarCorreo`.
   if (!valor) {
     throw new Error(`Falta configuracion de CES: ${nombre}`);
   }

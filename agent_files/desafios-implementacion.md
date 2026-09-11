@@ -3505,3 +3505,56 @@ el dato. Comprobar en `~/.claude.json` si el servidor es `stdio`: si lo es, el a
 Y **toda carga masiva se cierra verificandola en la direccion contraria**. Subir y comparar cuesta
 una llamada mas; sin ella, la unica prueba de que el espejo esta bien es que la subida no dio error,
 que es justo lo que un truncamiento silencioso tambien parece.
+
+## 64) El barrido volvio a caerse por `server-only`, y ahora hay una prueba que lo impide
+
+### Problema
+Que el Lambda del barrido arranque. Es la seccion 53 otra vez, reintroducida por la Etapa 13.
+
+### Sintoma
+Ninguno visible desde el repositorio: la compuerta en verde con 2 200 pruebas. Lo encontro un
+recorrido del grafo de importaciones hecho a mano mientras se preparaba otro cambio —
+`src/lib/fila/cerrarFilaDelLote.ts` lleva `import "server-only"` y el handler lo alcanza:
+
+```
+amplify/barrido/handler.ts
+  -> src/lib/fila/barridoDeVencimientos.ts
+    -> src/lib/fila/cerrarFilaDelLote.ts
+```
+
+Como el `throw` de ese paquete ocurre **al importar el modulo** y no al llamarlo, la funcion falla
+en el arranque: el 100% de las invocaciones, igual que la primera vez.
+
+### Causa raiz
+La Etapa 13 agrego `reconciliarLotesPublicados` al barrido, y ese reconciliador **llama a
+`cerrarFilaDelLote`**. La arista de importacion es nueva; el archivo, viejo. La correccion de la
+seccion 53 habia quitado la guarda de los 17 archivos que el handler alcanzaba **en ese momento**,
+y nada impedia que la lista creciera.
+
+Es una clase de defecto que ninguna prueba del repositorio podia ver, y por dos razones a la vez:
+Vitest no pasa por el empaquetado `esbuild` de `defineFunction`, y **todo el repositorio hace
+`vi.mock("server-only", () => ({}))`**, que es justo lo que neutraliza el sintoma.
+
+### Solucion aplicada
+Quitar la guarda de `cerrarFilaDelLote.ts`, y **`amplify/barrido/alcance.test.ts`**: recorre el
+cierre transitivo de importaciones desde el handler —resolviendo el alias `@/` y las rutas
+relativas— y falla si algun archivo alcanzado lleva la guarda, **nombrando la cadena completa** que
+llevo hasta el. No ejecuta nada: lee archivos como texto, que es la unica forma de verlo sin AWS.
+
+Lleva dos afirmaciones mas que la principal, y las dos importan: que el recorrido encuentra decenas
+de archivos —si el resolutor se rompiera, la comprobacion pasaria sobre una lista vacia— y que los
+archivos de `src/lib` **fuera** del alcance del barrido si conservan la guarda, para que quitarla
+"por consistencia" no pase inadvertido.
+
+Verificada por mutacion: devolviendo la guarda a `cerrarFilaDelLote.ts`, la prueba falla e imprime
+la cadena `handler -> barridoDeVencimientos -> cerrarFilaDelLote`.
+
+### Regla para futuro
+**Una restriccion sobre un conjunto que puede crecer necesita una prueba que recorra el conjunto, no
+una lista escrita a mano.** "Estos 17 archivos no llevan la guarda" es un hecho con fecha de
+caducidad: caduca la primera vez que alguien agrega una llamada. Lo que no caduca es "ninguno de los
+que el handler alcance".
+
+Y **si un `vi.mock` global neutraliza un sintoma, ninguna prueba unitaria va a encontrar ese
+defecto.** El mock de `server-only` es necesario —sin el no se puede probar nada de `src/lib` en
+Node— asi que la comprobacion tiene que vivir fuera de la ejecucion: analisis estatico del grafo.

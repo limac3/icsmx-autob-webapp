@@ -102,6 +102,44 @@ escribe `ENVIADO`, el reintento lo reenvia. CES no ofrece clave de idempotencia,
 no se cierra desde la aplicacion. El contenido es un aviso —monto, plazo y enlace a la pagina del
 lote—, sin token ni enlace de pago: molesto, no peligroso. Ver `desafios-implementacion.md` 57.
 
+### Mensajes en `CANCELADO` — un ambiente de pruebas sin CES
+
+**`CANCELADO` es "nunca se intento y no se va a intentar"**, distinto de `FALLIDO` ("se intento y
+CES lo rechazo o estaba caido"). Hoy tiene una sola causa: el entorno no tiene configuracion de CES,
+y **solo ocurre con `APP_ENV=pruebas`** (D-18). En produccion, faltar la configuracion lanza y hay
+que arreglar el despliegue — no se descarta correo con datos reales.
+
+No hay nada que sanear: el mensaje sale de GSI4 porque no hay trabajo pendiente, y reintentarlo cada
+cinco minutos contra un entorno sin CES no cambia nada. Volver a notificar es **R-3**, que encola un
+mensaje nuevo.
+
+**La linea del registro es el sustituto del correo**, y con ella se verifica que la notificacion se
+habria generado bien cuando no hay bandeja donde mirar:
+
+```
+fields @timestamp, message.mensajeId, message.asunto, message.loteId, message.solicitudId,
+       message.vehiculoId, message.precio, message.venceEn, message.faltan
+| filter message.operacion = "procesarOutbox" and message.desenlace = "cancelado"
+| sort @timestamp desc
+```
+
+`message.faltan` nombra las variables ausentes, que es lo que se arregla. **`message.destinatario`
+sale como `[redactado]` a proposito**: el registro operativo no acumula identidad de personas
+(D-13). A quien le tocaba el correo esta en la **bitacora** —evento `CORREO_FALLIDO` anclado al
+lote, con el `solicitudId`—, que es donde la identidad si pertenece.
+
+Y el contador de la corrida, para ver que se drena la mora:
+
+```
+fields @timestamp, message.cancelados, message.enviados, message.antiguedadMaximaMin
+| filter message.operacion = "procesarOutbox"
+| sort @timestamp desc
+```
+
+**Los cancelados no cuentan como `fallidosPermanentes`**, asi que la alarma `correos-fallidos` no se
+dispara con ellos. Es deliberado: en un ambiente sin CES aprobado los dispararia en cada corrida, y
+una alarma que suena siempre es una alarma que nadie cree.
+
 > **Si el correo estuvo caido durante una ventana de venta, evalua ampliar el plazo de los
 > adjudicados afectados (R-5).** No es justo vencer a alguien que nunca fue notificado. La
 > decision es de negocio, no de operacion — escalala.
@@ -550,10 +588,14 @@ de `ENABLE_DEV_TOOLS`.
 
 Los cuatro de **CES** —`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`— van por
 `ampx ... secret set` y no como variables de la app: los consume la **Lambda del barrido**, que los
-recibe por `secret()` en `amplify/backend.ts`. El backend despliega igual sin sus valores —declarar
-la referencia no exige que el valor exista— y CES aun no esta aprobado (riesgo R17): hasta que lo
-este, cada envio falla explicito y los mensajes se acumulan `PENDIENTE`, sin afectar la fila ni la
-adjudicacion (D-6).
+recibe por `secret()` en `amplify/backend.ts`. El backend despliega igual sin sus valores: declarar
+la referencia no exige que el valor exista.
+
+**Y mientras CES siga sin aprobar (R17) no hay que ponerlos.** Con `APP_ENV=pruebas`, el barrido
+descarta cada mensaje como `CANCELADO` y deja en el registro la notificacion que habria enviado —
+asunto, lote, solicitud, vehiculo, precio y plazo—, que es con lo que se verifica el flujo cuando no
+hay bandeja de correo. Las consultas estan en **R-2**, seccion "Mensajes en `CANCELADO`". La fila y
+la adjudicacion no se ven afectadas (D-6).
 
 ### Paso 6 — Los dos pasos de consola que no son de codigo · **[OPERADOR]**
 

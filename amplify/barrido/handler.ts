@@ -10,18 +10,23 @@
 // casualidad si algun dia coincide la resolucion; las rutas relativas no
 // dependen de esa coincidencia.
 //
-// **Ninguno de los 17 archivos que este handler alcanza lleva `import
-// "server-only"`.** Ese paquete decide entre un no-op y un `throw` segun la
+// **Ningun archivo que este handler alcanza lleva `import "server-only"`, y lo
+// comprueba `alcance.test.ts`.** Ese paquete decide entre un no-op y un `throw` segun la
 // condicion de exportacion con la que se resuelva; Next activa
 // `"react-server"` en su build y aqui el empaquetado es `esbuild` puro via
 // `NodejsFunction`, que no la activa y cae siempre en el `throw` — el barrido
 // fallaba en el 100% de sus invocaciones desde que Etapa 10 empezo a llamar
 // codigo marcado asi, sin que ninguna prueba lo viera (Vitest no pasa por
 // este mismo empaquetado). `defineFunction` no expone forma de pasarle
-// `--conditions` a su esbuild, así que la guarda se quito de estos 17 —
-// motor de fila, capa de datos y observabilidad— y se dejo en los otros 63
-// archivos de `src/lib` que la llevan. Ver `desafios-implementacion.md`
-// seccion 53.
+// `--conditions` a su esbuild, así que la guarda se quito de los archivos
+// alcanzables —motor de fila, capa de datos y observabilidad— y se dejo en el
+// resto de `src/lib`.
+//
+// **Volvio a pasar, y por eso ahora hay una prueba.** La Etapa 13 hizo que
+// `barridoDeVencimientos` importara `cerrarFilaDelLote`, que si la llevaba, y
+// el barrido volvio a fallar en el 100% de sus invocaciones — una arista nueva
+// en el grafo de importaciones basta. `alcance.test.ts` recorre ese grafo como
+// texto y falla nombrando la cadena. Ver `desafios-implementacion.md` 53 y 64.
 import { barridoDeVencimientos } from "../../src/lib/fila/barridoDeVencimientos.ts";
 import { procesarOutbox } from "../../src/lib/correo/procesarOutbox.ts";
 

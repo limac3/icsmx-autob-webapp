@@ -147,8 +147,37 @@ Ventana **aceptada y documentada**: si el proceso muere entre que CES acepta y q
 envio, o la causa del error—, y el `id` que devuelve se guarda como `idExterno` pero solo sirve para
 rastrear. Es aceptable porque el correo es un aviso informativo (monto, plazo y enlace a la pagina del
 lote), sin token ni enlace de pago (`desafios-implementacion.md` 57).
+**Ampliacion de la preparacion del despliegue — sin configuracion de CES, el mensaje se cancela y
+la notificacion queda en el registro.** Con `APP_ENV=pruebas` (D-18) y alguna de las cuatro
+variables de CES ausente, el despacho marca el mensaje `CANCELADO` —fuera de GSI4, con
+`CORREO_FALLIDO` y el motivo nombrando lo que falta— y escribe una linea `warn` con lo que el correo
+habria dicho: asunto, lote, solicitud, vehiculo, precio y plazo.
+Razon: es la unica forma de verificar el flujo de notificacion mientras CES siga sin aprobar (R17),
+porque no hay bandeja donde mirar. Y arregla un defecto latente: `enviarCorreo` **lanzaba** al
+faltar una variable, el throw subia hasta el `handler` del barrido y la corrida entera moria en el
+primer mensaje — que quedaba `ENVIANDO` con su plazo de 15 minutos, invisible para las siguientes
+tres corridas. Ahora la configuracion se comprueba **una vez por corrida y antes de adquirir nada**.
+En produccion se conserva el fallo explicito, pero lanzado antes de tocar ningun mensaje.
+Descartado:
+- Un tipo de evento `CORREO_CANCELADO`. El hecho de negocio es el mismo que `CORREO_FALLIDO` —nadie
+  va a recibir ese correo, y el adjudicado no se entera de que gano mientras su plazo corre (R-13)—
+  y el `motivo` ya distingue la causa. Un tipo nuevo obligaria a tocar el catalogo de
+  `trazabilidad-auditoria.md`, los filtros y las etiquetas de la pantalla de auditoria sin responder
+  nada mas.
+- Sumar los cancelados a `fallidosPermanentes`. La alarma `correos-fallidos` filtra por ese campo
+  (`amplify/alarmas.ts`), asi que en un ambiente sin CES sonaria en cada corrida: ruido que nadie
+  cree. Contador propio, mismo criterio que `filasCerradas` frente a los `errores` del barrido.
+- Cancelar tambien en produccion. Descartaria notificaciones reales sin que ninguna alarma lo
+  delatara; ahi faltar la configuracion es un defecto de despliegue que tiene que verse.
+- Dejarlos acumulandose `PENDIENTE`, que es lo que este ADR describia antes. Con CES sin aprobar la
+  mora crece sin techo y la alarma `outbox-retrasado` queda disparada de forma permanente, ademas de
+  no dejar ninguna evidencia de que la notificacion se genero bien.
+- Escribir el destinatario en la linea del registro. Es identidad de una persona y el registro
+  operativo no la acumula (D-13); `destinatario` ya esta en `CAMPOS_REDACTADOS`. Quien la necesite la
+  tiene en la bitacora, anclada al mismo lote.
 Anclas: `src/lib/correo/outbox.ts::itemsDeEncoladoAdjudicacion`,
-`src/lib/correo/procesarOutbox.ts::procesarOutbox`, `src/types/correo.ts::EstatusMensaje`.
+`src/lib/correo/procesarOutbox.ts::procesarOutbox`, `src/types/correo.ts::EstatusMensaje`,
+`src/lib/correo/clienteCes.ts::configuracionDeCesFaltante`.
 
 ### D-7 — Barrido mas verificacion perezosa
 Descartado: solo el barrido programado.

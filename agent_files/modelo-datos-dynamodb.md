@@ -703,12 +703,14 @@ El envio real —el `POST` a CES— sigue sin participar nunca: ocurre aparte, e
 `src/lib/correo/procesarOutbox.ts`, que el barrido invoca despues de resolver los vencimientos
 (`arquitectura-tecnica-aws.md` 4.5).
 
-**El despacho adquiere el mensaje antes de llamar a CES** (Etapa 13). El estatus del item recorre
-cuatro valores, y `ENVIANDO` es una adquisicion con plazo y no un estado de negocio:
+**El despacho adquiere el mensaje antes de llamar a CES** (Etapa 13). `ENVIANDO` es una adquisicion
+con plazo y no un estado de negocio:
 
 ```
 PENDIENTE --[Update condicional: estatus = PENDIENTE
              OR (estatus = ENVIANDO AND leaseHasta <= ahora)]--> ENVIANDO  (+ leaseHasta)
+                 -> sin configuracion de CES y APP_ENV=pruebas
+                                       -> CANCELADO (+ CORREO_FALLIDO, REMOVE GSI4)
                  -> CES ok            -> ENVIADO    (+ CORREO_ENVIADO, REMOVE GSI4 y leaseHasta)
                  -> fallo reintentable -> PENDIENTE  (+ intentos+1, REMOVE leaseHasta)
                  -> no reintentable o intentos agotados -> FALLIDO (+ CORREO_FALLIDO, REMOVE GSI4)
@@ -716,7 +718,16 @@ PENDIENTE --[Update condicional: estatus = PENDIENTE
 
 `PENDIENTE` y `ENVIANDO` son los **dos** estatus presentes en GSI4: el item se queda en el indice
 mientras esta adquirido, que es lo que permite retomarlo si la corrida que lo tenia murio. Las claves
-se retiran al llegar a `ENVIADO` o `FALLIDO`, igual que antes.
+se retiran al llegar a `ENVIADO`, `FALLIDO` o `CANCELADO`.
+
+**`CANCELADO` es "nunca se intento y no se va a intentar"**, y solo tiene una causa: el entorno no
+tiene configuracion de CES. Se distingue de `FALLIDO` porque la pregunta operativa es distinta —
+aquel puede ser del mensaje o del servicio; este solo dice que el despliegue no podia enviar correo.
+Comparte el evento `CORREO_FALLIDO`, con el motivo nombrando las variables ausentes: el hecho de
+negocio es el mismo —nadie va a recibir ese correo— y agregar un tipo de evento no responderia
+ninguna pregunta que el motivo no responda. **Solo ocurre con `APP_ENV=pruebas`** (D-18); en
+produccion faltar la configuracion lanza, y lanza **antes** de adquirir, asi que no deja mensajes
+atascados.
 
 El orden importa y es el arreglo de un defecto: llamar a CES **antes** del `Update` hacia que dos
 corridas solapadas del barrido —cada 5 min, con limite de ejecucion de 300 s— mandaran dos correos,

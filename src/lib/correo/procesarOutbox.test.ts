@@ -9,13 +9,26 @@ import {
   crearClienteFalso,
   type ComandoEnviado,
 } from "@/utils/clienteDynamoFalso";
-import { enviarCorreo } from "./clienteCes";
-import { MAXIMO_INTENTOS_CORREO, procesarOutbox } from "./procesarOutbox";
+import {
+  CAMPOS_REDACTADOS,
+  MARCA_DE_REDACCION,
+  redactar,
+} from "@/lib/observabilidad/registro";
+import { configuracionDeCesFaltante, enviarCorreo } from "./clienteCes";
+import {
+  __test__,
+  MAXIMO_INTENTOS_CORREO,
+  procesarOutbox,
+} from "./procesarOutbox";
 
 vi.mock("server-only", () => ({}));
-vi.mock("./clienteCes", () => ({ enviarCorreo: vi.fn() }));
+vi.mock("./clienteCes", () => ({
+  enviarCorreo: vi.fn(),
+  configuracionDeCesFaltante: vi.fn(() => []),
+}));
 
 const enviar = vi.mocked(enviarCorreo);
+const faltaConfiguracion = vi.mocked(configuracionDeCesFaltante);
 
 const AHORA = new Date("2026-10-08T15:00:00.000Z");
 
@@ -76,6 +89,7 @@ describe("procesarOutbox — exito", () => {
     expect(resultado).toEqual({
       enviados: 1,
       fallidosPermanentes: 0,
+      cancelados: 0,
       reintentaraDespues: 0,
       enVuelo: 0,
       sinPresupuesto: 0,
@@ -122,6 +136,7 @@ describe("procesarOutbox — fallo transitorio", () => {
     expect(resultado).toEqual({
       enviados: 0,
       fallidosPermanentes: 0,
+      cancelados: 0,
       reintentaraDespues: 1,
       enVuelo: 0,
       sinPresupuesto: 0,
@@ -267,6 +282,7 @@ describe("procesarOutbox — varios mensajes", () => {
     expect(resultado).toEqual({
       enviados: 1,
       fallidosPermanentes: 0,
+      cancelados: 0,
       reintentaraDespues: 1,
       enVuelo: 0,
       sinPresupuesto: 0,
@@ -470,5 +486,191 @@ describe("procesarOutbox — antiguedad del pendiente mas viejo", () => {
     });
 
     expect(resultado.antiguedadMaximaMin).toBe(0);
+  });
+});
+
+describe("procesarOutbox — sin configuracion de CES", () => {
+  // Mientras CES siga sin aprobar (R17) un ambiente de pruebas no puede enviar
+  // nada. Antes de esto `enviarCorreo` **lanzaba**, el throw subia hasta el
+  // handler del barrido y la corrida entera moria en el primer mensaje, que
+  // quedaba `ENVIANDO` con su plazo de 15 minutos.
+  const sinConfiguracion = () => {
+    faltaConfiguracion.mockReturnValue(["CES_URL", "CES_USER"]);
+  };
+
+  describe("en un ambiente de pruebas", () => {
+    beforeEach(() => {
+      sinConfiguracion();
+      vi.stubEnv("APP_ENV", "pruebas");
+    });
+
+    it("marca CANCELADO, retira GSI4 y no llama a CES", async () => {
+      const falso = crearClienteFalso({
+        responder: conPendientes([mensajeItem("M1")]),
+      });
+
+      const resultado = await procesarOutbox({
+        cliente: falso.cliente,
+        ahora: () => AHORA,
+      });
+
+      expect(resultado.cancelados).toBe(1);
+      expect(enviar).not.toHaveBeenCalled();
+
+      const transaccion = itemsDe(falso, "TransactWriteCommand")[0];
+      const actualizacion = (
+        transaccion?.input as {
+          TransactItems: { Update?: { UpdateExpression?: string } }[];
+        }
+      ).TransactItems[0]?.Update;
+      expect(actualizacion?.UpdateExpression).toContain(":cancelado");
+      expect(actualizacion?.UpdateExpression).toContain(
+        "REMOVE GSI4PK, GSI4SK, leaseHasta",
+      );
+    });
+
+    it("escribe CORREO_FALLIDO con el motivo, nombrando las variables que faltan", async () => {
+      // Se reusa el evento en vez de agregar `CORREO_CANCELADO`: el hecho de
+      // negocio es el mismo —nadie va a recibir ese correo— y el motivo es lo
+      // que distingue la causa.
+      const falso = crearClienteFalso({
+        responder: conPendientes([mensajeItem("M1")]),
+      });
+
+      await procesarOutbox({ cliente: falso.cliente, ahora: () => AHORA });
+
+      const transaccion = itemsDe(falso, "TransactWriteCommand")[0];
+      const evento = (
+        transaccion?.input as {
+          TransactItems: { Put?: { Item?: Record<string, unknown> } }[];
+        }
+      ).TransactItems[1]?.Put?.Item;
+      expect(evento?.tipo).toBe("CORREO_FALLIDO");
+      expect(String(evento?.motivo)).toContain("CES_URL, CES_USER");
+    });
+
+    it("no cuenta como fallo permanente: la alarma no debe dispararse", async () => {
+      // `amplify/alarmas.ts` filtra `correos-fallidos` por
+      // `fallidosPermanentes > 0`. Sumarlos ahi dejaria la alarma disparada en
+      // cada corrida de un ambiente sin CES, que es el peor estado de una
+      // alarma: ruido que nadie cree.
+      const falso = crearClienteFalso({
+        responder: conPendientes([mensajeItem("M1"), mensajeItem("M2")]),
+      });
+
+      const resultado = await procesarOutbox({
+        cliente: falso.cliente,
+        ahora: () => AHORA,
+      });
+
+      expect(resultado.cancelados).toBe(2);
+      expect(resultado.fallidosPermanentes).toBe(0);
+      expect(resultado.reintentaraDespues).toBe(0);
+    });
+
+    it("adquiere antes de cancelar, para que dos corridas no escriban dos eventos", async () => {
+      const falso = crearClienteFalso({
+        responder: conPendientes([mensajeItem("M1")]),
+      });
+
+      await procesarOutbox({ cliente: falso.cliente, ahora: () => AHORA });
+
+      const adquisicion = itemsDe(falso, "UpdateCommand")[0]?.input as {
+        ConditionExpression?: string;
+      };
+      expect(adquisicion?.ConditionExpression).toContain("#estatus");
+      const transaccion = itemsDe(falso, "TransactWriteCommand")[0]?.input as {
+        TransactItems: { Update?: { ConditionExpression?: string } }[];
+      };
+      expect(transaccion.TransactItems[0]?.Update?.ConditionExpression).toBe(
+        "estatus = :enviando",
+      );
+    });
+  });
+
+  describe("en produccion", () => {
+    it("lanza sin adquirir ningun mensaje", async () => {
+      // Faltar la configuracion en produccion es un defecto de despliegue, no
+      // un correo que se descarte. Y lanza **antes** de adquirir: ninguno queda
+      // atascado en `ENVIANDO`, que es como fallaba antes.
+      sinConfiguracion();
+      vi.stubEnv("APP_ENV", "produccion");
+      const falso = crearClienteFalso({
+        responder: conPendientes([mensajeItem("M1")]),
+      });
+
+      await expect(
+        procesarOutbox({ cliente: falso.cliente, ahora: () => AHORA }),
+      ).rejects.toThrow(/CES_URL, CES_USER/);
+
+      expect(itemsDe(falso, "UpdateCommand")).toHaveLength(0);
+      expect(itemsDe(falso, "TransactWriteCommand")).toHaveLength(0);
+      expect(enviar).not.toHaveBeenCalled();
+    });
+
+    it("sin APP_ENV tambien lanza: la omision no descarta correo", async () => {
+      sinConfiguracion();
+      vi.stubEnv("APP_ENV", "");
+      const falso = crearClienteFalso({
+        responder: conPendientes([mensajeItem("M1")]),
+      });
+
+      await expect(
+        procesarOutbox({ cliente: falso.cliente, ahora: () => AHORA }),
+      ).rejects.toThrow(/Falta configuracion de CES/);
+    });
+  });
+
+  describe("la linea del registro con la que se verifica", () => {
+    // Es el sustituto del correo: si no hay bandeja donde mirar, el log es la
+    // unica evidencia de que la notificacion se habria generado bien.
+    const campos = () =>
+      __test__.camposDeCorreoNoEnviado(
+        {
+          mensajeId: "M1",
+          tipo: "ADJUDICACION",
+          destinatario: "p1@example.org",
+          creadoEn: "2026-10-08T14:00:00.000Z",
+          estatus: "ENVIANDO",
+          intentos: 0,
+          datos: {
+            solicitudId: "L1-2",
+            loteId: "L1",
+            convocatoriaId: "C1",
+            vehiculoId: "V1",
+            precio: 180_000,
+            venceEn: "2026-10-10T15:00:00.000Z",
+          },
+        },
+        "Ganaste la adjudicacion",
+        ["CES_URL"],
+      );
+
+    it("dice que no fue posible enviar el correo, y por que", () => {
+      expect(campos().detalle).toContain("no fue posible enviar el correo");
+      expect(campos().faltan).toBe("CES_URL");
+    });
+
+    it("lleva el detalle del mensaje: asunto, lote, solicitud, precio y plazo", () => {
+      expect(campos()).toMatchObject({
+        mensajeId: "M1",
+        asunto: "Ganaste la adjudicacion",
+        loteId: "L1",
+        solicitudId: "L1-2",
+        vehiculoId: "V1",
+        convocatoriaId: "C1",
+        precio: 180_000,
+        venceEn: "2026-10-10T15:00:00.000Z",
+      });
+    });
+
+    it("el destinatario NUNCA llega al registro: lo redacta", () => {
+      // El registro operativo no acumula identidad de personas (D-13). Se pasa
+      // el campo a proposito para que la marca diga "aqui habia algo"; quien
+      // necesite el correo lo tiene en la bitacora, anclada al mismo lote.
+      expect(CAMPOS_REDACTADOS.has("destinatario")).toBe(true);
+      expect(redactar(campos()).destinatario).toBe(MARCA_DE_REDACCION);
+      expect(JSON.stringify(redactar(campos()))).not.toContain("example.org");
+    });
   });
 });

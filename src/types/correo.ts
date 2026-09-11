@@ -23,7 +23,21 @@
  * muerta deje el mensaje atascado para siempre: vencido, otra corrida lo
  * retoma.
  */
-export type EstatusMensaje = "PENDIENTE" | "ENVIANDO" | "ENVIADO" | "FALLIDO";
+/**
+ * `CANCELADO` es "nunca se intento y no se va a intentar", distinto de
+ * `FALLIDO` —"se intento y CES lo rechazo o estaba caido"—. Hoy tiene una sola
+ * causa: el entorno no tiene configuracion de CES (riesgo R17, mientras el
+ * servicio siga sin aprobar). Se distingue de `FALLIDO` porque la pregunta
+ * operativa es distinta: un `FALLIDO` puede indicar un problema del mensaje o
+ * del servicio, y un `CANCELADO` solo dice que el despliegue no podia enviar
+ * correo. Reencolar uno u otro es R-3 en los dos casos.
+ *
+ * **Solo se cancela en un entorno declarado de pruebas** (`APP_ENV`, D-18): en
+ * produccion, faltar la configuracion de CES es un defecto de despliegue que
+ * tiene que verse, no un correo que se descarta.
+ */
+export type EstatusMensaje =
+  "PENDIENTE" | "ENVIANDO" | "ENVIADO" | "FALLIDO" | "CANCELADO";
 
 export type TipoDeCorreo = "ADJUDICACION";
 

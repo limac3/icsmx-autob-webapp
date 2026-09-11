@@ -44,9 +44,11 @@ import {
   esConflictoDeTransaccion,
   esFalloDeCondicion,
 } from "@/lib/data/transacciones";
+import { esEntornoDePruebas } from "@/lib/entorno";
+import { registrar } from "@/lib/observabilidad/registro";
 import { conTraza } from "@/lib/observabilidad/traza";
 import type { MensajeDeCorreo } from "@/types/correo";
-import { enviarCorreo } from "./clienteCes";
+import { configuracionDeCesFaltante, enviarCorreo } from "./clienteCes";
 import { correoDeAdjudicacion } from "./plantillas";
 
 /**
@@ -97,6 +99,17 @@ export const PRESUPUESTO_DE_ENVIO_MS = 120 * 1000;
 export type ResultadoDeProcesarOutbox = {
   enviados: number;
   fallidosPermanentes: number;
+  /**
+   * Descartados por falta de configuracion de CES en un entorno de pruebas.
+   *
+   * **Contador propio y no sumado a `fallidosPermanentes`**, por la misma razon
+   * que `filasCerradas` no entra en los `errores` del barrido: la alarma
+   * `correos-fallidos` filtra por `fallidosPermanentes > 0`
+   * (`amplify/alarmas.ts`), y en un ambiente sin CES aprobado eso la dejaria
+   * disparada en cada corrida. Lo que queda es ruido que nadie cree, que es el
+   * peor estado posible de una alarma.
+   */
+  cancelados: number;
   reintentaraDespues: number;
   /**
    * Mensajes que otra corrida tenia adquiridos. No es un fallo: es el
@@ -149,11 +162,30 @@ const ejecutarOutbox = async (
   const resultado: ResultadoDeProcesarOutbox = {
     enviados: 0,
     fallidosPermanentes: 0,
+    cancelados: 0,
     reintentaraDespues: 0,
     enVuelo: 0,
     sinPresupuesto: 0,
     antiguedadMaximaMin: antiguedadEnMinutos(pendientes[0]?.creadoEn, ahora),
   };
+
+  // **Se pregunta una vez por corrida y antes de tocar nada.** La configuracion
+  // no cambia a mitad de la corrida, y comprobarla aqui es lo que evita el
+  // defecto que esto viene a arreglar: `enviarCorreo` **lanzaba** al faltar una
+  // variable, el throw subia hasta el `handler` del barrido y la corrida entera
+  // moria en el primer mensaje — que quedaba `ENVIANDO` con su plazo de 15
+  // minutos, invisible para las siguientes cuatro corridas.
+  const faltantes = configuracionDeCesFaltante();
+  if (faltantes.length > 0 && !esEntornoDePruebas()) {
+    // En produccion no se descarta correo: faltar la configuracion es un
+    // defecto de despliegue y tiene que verse. Se lanza **antes** de adquirir
+    // ningun mensaje, asi que ninguno queda atascado — a diferencia de como
+    // fallaba antes.
+    throw new Error(
+      `Falta configuracion de CES: ${faltantes.join(", ")}. ` +
+        `El outbox tiene ${String(pendientes.length)} mensaje(s) sin enviar.`,
+    );
+  }
 
   const inicio = performance.now();
 
@@ -172,7 +204,7 @@ const ejecutarOutbox = async (
       continue;
     }
 
-    await procesarUno(mensaje, resultado, deps);
+    await procesarUno(mensaje, resultado, faltantes, deps);
   }
 
   return resultado;
@@ -285,6 +317,7 @@ const aMensaje = (
 const procesarUno = async (
   mensaje: MensajeDeCorreo,
   resultado: ResultadoDeProcesarOutbox,
+  faltantes: readonly string[],
   deps: DepsDeServicio,
 ): Promise<void> => {
   if (!(await adquirir(mensaje, deps))) {
@@ -295,6 +328,17 @@ const procesarUno = async (
   }
 
   const { asunto, cuerpoHtml } = correoDeAdjudicacion(mensaje.datos);
+
+  // Se adquiere igual antes de cancelar, y no es ceremonia: la condicion
+  // `estatus = :enviando` de la transaccion es lo que garantiza **un solo**
+  // `CORREO_FALLIDO` por mensaje si dos corridas se solapan.
+  if (faltantes.length > 0) {
+    await marcarCancelado(mensaje, faltantes, deps);
+    registrarCorreoNoEnviado(mensaje, asunto, faltantes);
+    resultado.cancelados += 1;
+    return;
+  }
+
   const envio = await enviarCorreo({
     destinatario: mensaje.destinatario,
     asunto,
@@ -424,6 +468,128 @@ const marcarEnviado = async (
   );
 };
 
+/**
+ * La linea con la que se verifica el correo que no se pudo enviar.
+ *
+ * **Es el sustituto del correo, no un aviso de que algo fallo**, asi que lleva
+ * todo lo que el mensaje habria dicho: el asunto ya compuesto, el lote, la
+ * solicitud, el vehiculo, el precio y el plazo. Con eso se comprueba que la
+ * notificacion se habria generado bien y a quien le tocaba, sin que exista
+ * bandeja de correo.
+ *
+ * **Lo que no lleva es el destinatario**, y no es un descuido: `destinatario`
+ * esta en `CAMPOS_REDACTADOS` de `registro.ts`, porque es la direccion de
+ * correo del adjudicado. El registro operativo no acumula identidad de personas
+ * (D-13); quien necesite saber a quien le tocaba lo encuentra en la bitacora,
+ * que es donde la identidad **si** pertenece — el evento `CORREO_FALLIDO` que
+ * acompana a esta linea se ancla al lote y comparte el `solicitudId`. Se pasa
+ * igual y `redactar` lo sustituye por `[redactado]`: dejarlo fuera daria una
+ * linea que parece completa, y la marca dice "aqui habia algo y se quito".
+ *
+ * Nivel `warn` y no `error`: en un ambiente de pruebas sin CES aprobado esto es
+ * lo esperado, no una anomalia. `error` esta reservado para lo que exige que
+ * alguien actue.
+ */
+const camposDeCorreoNoEnviado = (
+  mensaje: MensajeDeCorreo,
+  asunto: string,
+  faltantes: readonly string[],
+) => ({
+  desenlace: "cancelado",
+  detalle: "no fue posible enviar el correo: falta configuracion de CES",
+  faltan: faltantes.join(", "),
+  mensajeId: mensaje.mensajeId,
+  tipo: mensaje.tipo,
+  destinatario: mensaje.destinatario,
+  asunto,
+  creadoEn: mensaje.creadoEn,
+  loteId: mensaje.datos.loteId,
+  solicitudId: mensaje.datos.solicitudId,
+  vehiculoId: mensaje.datos.vehiculoId,
+  convocatoriaId: mensaje.datos.convocatoriaId,
+  precio: mensaje.datos.precio,
+  venceEn: mensaje.datos.venceEn,
+});
+
+const registrarCorreoNoEnviado = (
+  mensaje: MensajeDeCorreo,
+  asunto: string,
+  faltantes: readonly string[],
+): void => {
+  registrar(
+    "warn",
+    "procesarOutbox",
+    camposDeCorreoNoEnviado(mensaje, asunto, faltantes),
+  );
+};
+
+/**
+ * Cancelado por falta de configuracion: `CANCELADO`, fuera de GSI4, y el mismo
+ * evento `CORREO_FALLIDO` que un fallo permanente.
+ *
+ * **Reusa el evento en vez de agregar `CORREO_CANCELADO`** porque el hecho de
+ * negocio es identico y es el que la bitacora tiene que registrar: nadie va a
+ * recibir ese correo, el adjudicado no se entera de que gano y su plazo corre
+ * igual (R-13). El `motivo` del evento es lo que distingue una causa de la
+ * otra, y para eso existe. Un tipo de evento nuevo obligaria a tocar el
+ * catalogo de `trazabilidad-auditoria.md`, los filtros y las etiquetas de la
+ * pantalla de auditoria, sin responder ninguna pregunta que el motivo no
+ * responda.
+ *
+ * Sale de GSI4 —el indice de trabajo pendiente— porque no hay trabajo
+ * pendiente: reintentarlo cada cinco minutos contra un entorno sin CES no
+ * cambia nada. Volver a notificar es R-3, que encola un mensaje **nuevo**.
+ */
+const marcarCancelado = async (
+  mensaje: MensajeDeCorreo,
+  faltantes: readonly string[],
+  deps: DepsDeServicio,
+): Promise<void> => {
+  const { ahora } = resolver(deps);
+  const motivo = `No se pudo enviar el correo: falta configuracion de CES (${faltantes.join(", ")})`;
+
+  await ejecutarTransaccion(
+    [
+      {
+        item: {
+          Update: {
+            TableName: nombreDeTabla(),
+            Key: clave.mensaje(mensaje.mensajeId),
+            UpdateExpression:
+              "SET estatus = :cancelado, ultimoIntentoEn = :ahora," +
+              " ultimoError = :error" +
+              " REMOVE GSI4PK, GSI4SK, leaseHasta",
+            ConditionExpression: "estatus = :enviando",
+            ExpressionAttributeValues: {
+              ":cancelado": "CANCELADO",
+              ":enviando": "ENVIANDO",
+              ":ahora": ahora.toISOString(),
+              ":error": motivo,
+            },
+          },
+        },
+        siFalla: "conflicto_concurrencia",
+        descripcion: `mensaje ${mensaje.mensajeId} sigue adquirido por esta corrida`,
+      },
+      eventoParaTransaccion({
+        tipo: "CORREO_FALLIDO",
+        agregado: "LOTE",
+        agregadoId: mensaje.datos.loteId,
+        actor: { tipo: "SISTEMA" },
+        ocurridoEn: ahora,
+        correlacionId: nuevaCorrelacion(ahora),
+        convocatoriaId: mensaje.datos.convocatoriaId,
+        loteId: mensaje.datos.loteId,
+        solicitudId: mensaje.datos.solicitudId,
+        vehiculoId: mensaje.datos.vehiculoId,
+        motivo,
+        datos: { mensajeId: mensaje.mensajeId, intentos: mensaje.intentos },
+      }),
+    ],
+    deps,
+  );
+};
+
 /** Fallo permanente: CORREO_FALLIDO, con motivo obligatorio (R-16-like: el porque). */
 const marcarFallido = async (
   mensaje: MensajeDeCorreo,
@@ -535,4 +701,4 @@ const devolverAPendiente = async (
   }
 };
 
-export const __test__ = { aMensaje };
+export const __test__ = { aMensaje, camposDeCorreoNoEnviado };

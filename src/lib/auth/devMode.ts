@@ -1,4 +1,5 @@
 import "server-only";
+import { obtenerEntornoApp } from "@/lib/entorno";
 
 export const MODOS_DEV_TOOLS = ["OFF", "MOCK_USERS", "FULL"] as const;
 export type ModoDevTools = (typeof MODOS_DEV_TOOLS)[number];
@@ -19,33 +20,10 @@ export const obtenerModoDevTools = (): ModoDevTools => {
   return crudo;
 };
 
-export const ENTORNOS_APP = ["produccion", "pruebas"] as const;
-export type EntornoApp = (typeof ENTORNOS_APP)[number];
-
-/**
- * Entorno declarado del despliegue.
- *
- * **Ausente o desconocido es `produccion`**, y eso es lo que hace que la guarda
- * de abajo falle cerrada: olvidar la variable nunca concede nada. Un valor
- * invalido avisa en el registro en vez de lanzar, igual que
- * `ENABLE_DEV_TOOLS` — es la misma clase de error de configuracion y merece el
- * mismo trato.
- *
- * Solo tiene sentido en un despliegue compilado. En local no hace falta:
- * `NODE_ENV` ya no es produccion.
- */
-export const obtenerEntornoApp = (): EntornoApp => {
-  const crudo = process.env.APP_ENV;
-  if (!crudo) return "produccion";
-  if (!(ENTORNOS_APP as readonly string[]).includes(crudo)) {
-    console.warn(
-      `[devMode] APP_ENV="${crudo}" no es un valor valido ` +
-        `(${ENTORNOS_APP.join(", ")}). Se asume produccion.`,
-    );
-    return "produccion";
-  }
-  return crudo as EntornoApp;
-};
+// El entorno lo resuelve `src/lib/entorno.ts`, y vive alli y no aqui porque el
+// Lambda del barrido tambien lo necesita: este archivo lleva `server-only` y
+// aquel no puede (`desafios-implementacion.md` 53).
+export { obtenerEntornoApp } from "@/lib/entorno";
 
 /**
  * Salvaguarda de la regla 15 de CLAUDE.md: el modo simulado nunca debe

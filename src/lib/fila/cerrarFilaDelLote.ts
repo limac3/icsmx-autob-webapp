@@ -1,4 +1,10 @@
-import "server-only";
+// **Sin `import "server-only"`, y es obligatorio que no lo lleve.** El Lambda
+// del barrido alcanza este archivo desde `barridoDeVencimientos.ts`, cuyo
+// reconciliador de lotes publicados lo llama (Etapa 13). Ese paquete resuelve a
+// su rama de `throw` bajo el empaquetado `esbuild` de `defineFunction`, asi que
+// la guarda aqui tumba la funcion entera en el arranque
+// (`desafios-implementacion.md` 53 y 64). Lo comprueba
+// `amplify/barrido/alcance.test.ts`.
 
 // R-18 — concluir cierra las filas.
 //
