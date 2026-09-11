@@ -3909,3 +3909,45 @@ en 70 segundos.
 **Y una prueba que afirma "sin X pasa Y" tiene que borrar X, no suponer que falta.** Suponerlo la
 vuelve una prueba sobre la maquina de quien la escribio. El sintoma es el peor posible: verde donde
 no importa y rojo donde si, o —peor— verde en los dos sitios por razones distintas.
+
+## 71) `APP_BASE_URL` con barra final rompe el callback de Okta, y vacia no caia al respaldo
+
+### Problema
+Apuntar la aplicacion desplegada a su propio dominio.
+
+### Sintoma
+Ninguno todavia: se encontro revisando la variable recien puesta en la consola, antes de probar el
+login. El valor pegado del navegador llevaba **barra final**:
+`https://main.d2i0gloex3vqjp.amplifyapp.com/`.
+
+### Causa raiz
+Los dos consumidores de `APP_BASE_URL` concatenan una ruta que **ya empieza con `/`**:
+
+- `plantillas.ts` arma `${base}/convocatorias/<id>/lotes/<id>` para el enlace del correo.
+- `auth0.ts` la pasa como `appBaseUrl`, y el SDK arma `${appBaseUrl}/auth/callback`.
+
+Con barra final salen `https://host//convocatorias/...` y `https://host//auth/callback`. El primero
+es cosmetico; **el segundo no coincide con la URL de callback registrada en Okta** y el login falla
+con un error de redirect que no menciona la barra en ningun sitio.
+
+Y al escribir la prueba del respaldo aparecio un segundo defecto, **preexistente**:
+`process.env.APP_BASE_URL ?? "http://localhost:3000"` usa `??`, que solo atrapa `undefined`. Una
+variable **borrada** en la consola queda como cadena vacia, pasa el `??` y deja `base = ""`: de ahi
+salen rutas sin host. Es el caso mas probable de los dos, porque vaciar un campo es justo lo que se
+hace al corregir un valor.
+
+### Solucion aplicada
+`urlBaseDeLaApp()` en `src/lib/entorno.ts` —sin `server-only`, porque el Lambda del barrido la
+alcanza por la plantilla del correo—, usada por los dos consumidores. Recorta espacios, trata la
+cadena vacia como ausente y quita las barras finales. Normalizar no oculta nada: las dos formas
+designan la misma URL. Lo que si seria ocultar es inventar un dominio, y por eso el respaldo sigue
+siendo `localhost`, que en un despliegue se ve de inmediato.
+
+### Regla para futuro
+**Una variable de configuracion que se concatena necesita normalizarse en el codigo, no en la
+consola.** El valor lo pega una persona desde un navegador, que agrega la barra; confiar en que no
+lo haga es confiar en que nadie use copiar y pegar.
+
+**Y en configuracion, vacio no es lo mismo que ausente para `??`.** Donde el respaldo importe, la
+comprobacion es de valor cierto (`valor ? valor : respaldo`) y no de nulidad. `requerido()` de
+`auth0.ts` ya lo hacia bien con `if (!valor)`; esta linea no.

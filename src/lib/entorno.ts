@@ -43,3 +43,32 @@ export const obtenerEntornoApp = (): EntornoApp => {
 /** Atajo legible para las guardas que solo distinguen los dos casos. */
 export const esEntornoDePruebas = (): boolean =>
   obtenerEntornoApp() === "pruebas";
+
+/**
+ * URL base de la aplicacion, **sin barra final**.
+ *
+ * Se normaliza porque los dos consumidores concatenan una ruta que ya empieza
+ * con `/`: la plantilla del correo arma
+ * `${base}/convocatorias/<id>/lotes/<id>` y el SDK de Auth0 arma
+ * `${appBaseUrl}/auth/callback`. Con una barra final —que es como se pega una
+ * URL desde el navegador, y como quedo puesta en la consola de Amplify— sale
+ * `https://host//convocatorias/...` y `https://host//auth/callback`; el
+ * segundo **no coincide** con la URL de callback registrada en Okta y el login
+ * falla con un error que no menciona la barra.
+ *
+ * Normalizar no oculta una configuracion mala: las dos formas designan la misma
+ * URL, y aceptarlas las dos evita un fallo cuya causa no se adivina. Lo que si
+ * seria ocultar es inventar un valor: sin la variable se cae al `localhost` del
+ * desarrollo, que es visible de inmediato en cualquier despliegue.
+ */
+export const urlBaseDeLaApp = (): string => {
+  // **Vacia cuenta como ausente, y `??` no lo haria.** `??` solo atrapa
+  // `undefined`, asi que una variable borrada en la consola —que queda como
+  // cadena vacia— daba `""`, y de ahi salian rutas sin host: `/auth/callback`
+  // en vez de `https://host/auth/callback`. Lo encontro la prueba escrita para
+  // documentar el respaldo, no una revision. Se recorta tambien el espacio, que
+  // es lo que sobra al pegar un valor.
+  const crudo = process.env.APP_BASE_URL?.trim();
+  const base = crudo ? crudo : "http://localhost:3000";
+  return base.replace(/\/+$/, "");
+};

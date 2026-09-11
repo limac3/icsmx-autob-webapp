@@ -11,13 +11,16 @@
 // llega a crecer, es el primer candidato a moverse alli.
 
 import { formatearFechaHora } from "@/lib/domain/fechas";
+import { urlBaseDeLaApp } from "@/lib/entorno";
 import { formatearPrecio } from "@/lib/domain/dinero";
 import type { DatosCorreoAdjudicacion } from "@/types/correo";
 
 export type CorreoRenderizado = { asunto: string; cuerpoHtml: string };
 
 const enlaceDelLote = (datos: DatosCorreoAdjudicacion): string => {
-  const base = process.env.APP_BASE_URL ?? "http://localhost:3000";
+  // `urlBaseDeLaApp` quita la barra final: sin eso, una `APP_BASE_URL` pegada
+  // del navegador produce `https://host//convocatorias/...`.
+  const base = urlBaseDeLaApp();
   return datos.convocatoriaId
     ? `${base}/convocatorias/${datos.convocatoriaId}/lotes/${datos.loteId}`
     : base;

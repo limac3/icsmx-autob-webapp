@@ -1,4 +1,5 @@
 import { Auth0Client } from "@auth0/nextjs-auth0/server";
+import { urlBaseDeLaApp } from "@/lib/entorno";
 
 // @auth0/nextjs-auth0 funciona con cualquier proveedor OIDC; aqui apunta a
 // Okta (agent_files/identidad-autorizacion.md seccion 2).
@@ -27,7 +28,7 @@ export const auth = new Auth0Client({
     "AUTH0_CLIENT_SECRET",
   ),
   secret: requerido(process.env.AUTH_SECRET, "AUTH_SECRET"),
-  appBaseUrl: process.env.APP_BASE_URL ?? "http://localhost:3000",
+  appBaseUrl: urlBaseDeLaApp(),
   authorizationParameters: {
     scope: "openid profile email offline_access",
   },
