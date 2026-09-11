@@ -3661,3 +3661,63 @@ va a descubrir minutos despues de empujar, no antes.
 DEP0190 rompe el script con `spawnSync npm.cmd EINVAL`. Desde el endurecimiento de CVE-2024-27980,
 Node **se niega** a lanzar un `.cmd` sin shell. Con npm en Windows el shell no es una comodidad: es
 obligatorio, y el aviso de deprecacion es ruido que hay que aceptar.
+
+## 67) Artifactory bloquea versiones de dependencias transitivas, y `npm ci` aborta en la primera
+
+### Problema
+Que el `npm ci` del despliegue termine de descargar.
+
+### Sintoma
+Con el lock ya sincronizado (seccion 66), el build siguiente corrio 100 s y fallo distinto:
+
+```
+npm error code E403
+npm error 403 Forbidden - GET .../npm-ics/immutable/-/immutable-3.7.6.tgz
+npm error 403 ... a package version that is forbidden by your security policy
+```
+
+**Y localmente funcionaba**, porque `node_modules` ya tenia `immutable@3.7.6` de antes de la
+politica. El `npm ci --dry-run` del guardian tampoco lo veia: resuelve metadatos y **no descarga
+tarballs**.
+
+### Causa raiz
+El Artifactory de la organizacion rechaza versiones por politica de seguridad, y no solo la que
+fallo. Probando el tarball con el token —el mismo que funciona— se ve el patron:
+
+| Paquete | 403 | Permitido |
+| --- | --- | --- |
+| `immutable` | 3.7.6, 3.8.2, 4.3.7 | **5.1.9** |
+| `lodash` | 4.17.21, 4.17.23 | **4.18.1** |
+
+O sea: **bloquea todo por debajo de un umbral**, no una version puntual. Las dos llegan por el
+**codegen de GraphQL de Amplify** —`@ardatan/relay-compiler`, `@graphql-codegen/plugin-helpers`—,
+que entra como dependencia **de desarrollo** de `@aws-amplify/backend-cli` y que en este proyecto
+**nunca se ejecuta**: no hay recurso de datos GraphQL, `defineBackend({ barrido })` a secas.
+
+Y `npm ci` **aborta en el primer 403**, asi que cada paquete bloqueado cuesta un ciclo de build
+completo si se descubren de uno en uno.
+
+### Solucion aplicada
+`overrides` en `package.json` con la version mas baja que la politica admite: `immutable@^5.1.9` y
+`lodash@^4.18.1`. Forzar un rango que el consumidor no pide es admisible aqui porque el consumidor
+es codigo muerto en este proyecto, y en los dos casos es el mismo major.
+
+**Y en vez de descubrirlos de a uno, se escanean todos.** Un script recorre los ~1 300 tarballs
+distintos del lock con `HEAD` y el token, con concurrencia, y lista los que no responden 200. Tarda
+unos segundos y sustituye N ciclos de build de ~3 min. Tras los dos overrides: ninguno bloqueado.
+
+**Detalle que costo un paso extra:** `npm install` y `npm install --package-lock-only` **no producen
+el mismo lock**. El primero reconcilia contra `node_modules` y descarto otra vez las entradas
+exactas de `@opentelemetry/core@2.0.0` que `npm ci` exige — lo atrapo el guardian de la seccion 66
+en la misma sesion en que se escribio. Despues de cualquier `npm install` hay que normalizar con
+`--package-lock-only`.
+
+### Regla para futuro
+**Una dependencia que instala no es una dependencia que se pueda descargar en otra red.** Lo que
+valida el token es el acceso; lo que valida la politica es cada tarball, y las dos preguntas son
+distintas. Antes de un despliegue nuevo, escanear el lock completo: es barato y convierte N fallos
+en serie en una sola respuesta.
+
+**Y `node_modules` local es un cache que miente.** Un paquete instalado antes de que la politica
+existiera sigue funcionando en la maquina para siempre. La unica comprobacion honesta es contra el
+registro, no contra el disco.
