@@ -123,6 +123,18 @@ backend.barrido.addEnvironment(
   process.env.APP_BASE_URL ?? "http://localhost:3000",
 );
 
+// **El entorno tambien viaja al Lambda, y sin esto el barrido se cae.** El
+// despachador del outbox lee `APP_ENV` en ejecucion para decidir que hacer
+// cuando falta configuracion de CES: con `pruebas` cancela el mensaje y lo
+// registra; sin ella —o con `produccion`— lanza, porque no se descarta correo
+// con datos reales (D-18). Las variables de la consola de Amplify llegan al
+// build y al computo SSR de Next, **no** a una funcion de `defineFunction`: hay
+// que pasarsela aqui explicitamente.
+//
+// Se resuelve en sintesis desde el entorno del build. El respaldo es
+// `produccion` y no `pruebas`: la omision tiene que cerrar, no abrir.
+backend.barrido.addEnvironment("APP_ENV", process.env.APP_ENV ?? "produccion");
+
 // Alarmas de la Etapa 12 — `arquitectura-tecnica-aws.md` 7. Se crean tambien en
 // un sandbox y no solo en las ramas compartidas: seis alarmas cuestan centavos
 // al mes, y el paso "cada runbook ejecutado al menos una vez" de la Etapa 12

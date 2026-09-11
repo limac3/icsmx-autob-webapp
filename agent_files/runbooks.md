@@ -523,19 +523,38 @@ cosas que conviene conocer:
 - `frontend` corre **`typecheck`, `test` y `build`** antes de publicar. Una rama que no compila o
   cuyas pruebas fallan no llega a produccion; el fallo se ve en el registro de build.
 
-### Paso 4 — Variables de construccion · **[OPERADOR]**
+### Paso 4 — Donde va cada variable · **[OPERADOR]**
 
-En *App settings > Environment variables*:
+**`.env.local` no participa en el despliegue.** Esta en `.gitignore`, asi que no llega al
+repositorio ni al contenedor de build: solo lo usa `npm run dev` en la maquina de quien desarrolla.
+Es la plantilla documentada de todas las variables ([`.env.local.example`](../.env.local.example)),
+no el sitio donde se configuran.
+
+En un despliegue hay **tres destinos distintos, y no son intercambiables**. Lo que decide cual es
+**quien lee la variable**:
+
+| Destino | Quien la lee | Cuando |
+| --- | --- | --- |
+| **A.** Consola de Amplify — *App settings > Environment variables* | El contenedor de build, y el computo SSR de Next | Build y ejecucion de la aplicacion web |
+| **B.** Secretos de Amplify — `ampx ... secret set` | El **Lambda del barrido**, por `secret()` en `amplify/backend.ts` | Ejecucion del barrido |
+| **C.** `amplify/backend.ts`, con `addEnvironment` | El **Lambda del barrido** | Ejecucion del barrido |
+
+> **Las variables de la consola NO llegan al Lambda.** Llegan al build y al computo SSR; una funcion
+> creada con `defineFunction` solo recibe lo que `backend.ts` le pasa explicitamente. Es la trampa
+> mas cara de esta lista: poner `APP_ENV=pruebas` en la consola configura la aplicacion web y **deja
+> el barrido leyendo `produccion`** — que con CES sin configurar lanza, y tumba la funcion en cada
+> invocacion. Por eso `APP_ENV` y `APP_BASE_URL` estan en el destino **C**, no solo en el **A**.
+>
+> El sentido inverso tambien vale: un secreto del destino **B** no lo ve la aplicacion web.
+
+**Destino A — variables de la consola.** Dos son de **construccion** y no existen en ejecucion:
 
 | Variable | Por que |
 | --- | --- |
 | `NODE_AUTH_TOKEN` | Token de Artifactory. Sin el `npm ci` falla con 401 en los paquetes `@churchofjesuschrist/*` (riesgo R10) |
-| `ALARMAS_CORREO` | Destinatario de las seis alarmas. **Lo unico que no se puede poner despues sin redesplegar**: sin ella el tema de SNS se crea vacio |
+| `ALARMAS_CORREO` | Destinatario de las seis alarmas. La lee `amplify/backend.ts` **al sintetizar**, no en ejecucion, y por eso es **lo unico que no se puede poner despues sin redesplegar**: sin ella el tema de SNS se crea vacio |
 
-### Paso 5 — Variables y secretos de tiempo de ejecucion · **[OPERADOR]**
-
-La lista completa esta en [`.env.local.example`](../.env.local.example), que documenta cada una. Lo
-que importa para un despliegue:
+Y estas las lee la aplicacion web en cada peticion:
 
 | Grupo | Variables | De donde sale el valor |
 | --- | --- | --- |
@@ -544,6 +563,20 @@ que importa para un despliegue:
 | Datos | `AUTOB_TABLE_NAME`, `AUTOB_MEDIA_BUCKET` | `amplify_outputs.json`, bajo `custom.autob` |
 | CloudFront | `CLOUDFRONT_DOMAIN`, `CLOUDFRONT_KEY_PAIR_ID`, `CLOUDFRONT_PRIVATE_KEY` | Los dos primeros de `custom.autob`. **`llavePublicaCloudFront`, no `grupoDeLlavesCloudFront`**: confundirlos da un 403 que no dice cual de los dos esta mal (desafios 50) |
 | Herramientas | `ENABLE_DEV_TOOLS`, `APP_ENV` | `OFF` + `produccion` en produccion. En un ambiente de pruebas, `FULL` + `pruebas` — ver abajo |
+
+**Destino B — secretos.** `CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`. Ver el detalle
+mas abajo: mientras CES siga sin aprobar, **no hay que ponerlos**.
+
+**Destino C — lo que ya esta en el codigo y solo hay que saber que existe.** `AUTOB_TABLE_NAME`
+(sale de la pila), `APP_BASE_URL` y `APP_ENV` (se resuelven en sintesis desde el entorno del build,
+o sea desde el destino **A**, con respaldo cerrado). No se configuran en ninguna consola: se leen de
+`amplify/backend.ts`. Si el barrido necesitara una variable nueva, se agrega ahi — y
+`amplify/backend.test.ts` afirma que llegan.
+
+### Paso 5 — Cargar los valores · **[OPERADOR]**
+
+Con la tabla de arriba decidida, los valores en si. La lista completa y comentada esta en
+[`.env.local.example`](../.env.local.example).
 
 #### Un ambiente de pruebas con el conmutador de identidades
 
@@ -581,15 +614,24 @@ Si se quiere estrechar sin perder el conmutador, las dos palancas son gratis y n
 restringir la aplicacion en Okta a un grupo de prueba, y poner `DEV_TOOLS_MOCK_ROLES` con el rol
 minimo en vez del `ADMINISTRADOR` por omision.
 
+**`APP_ENV` hay que ponerla en la consola aunque el barrido la reciba por `backend.ts`**, y las dos
+cosas no se contradicen: la aplicacion web la lee del destino **A**, y el Lambda recibe una copia que
+`backend.ts` resuelve **en sintesis** desde ese mismo entorno de build. O sea que se escribe una vez,
+en la consola, y de ahi salen las dos. Si se cambia, hay que **redesplegar** para que el Lambda vea
+el valor nuevo — no basta con guardar la variable, porque la suya se fija al sintetizar.
+
 Al pasar ese mismo ambiente a produccion: `ENABLE_DEV_TOOLS=OFF` y `APP_ENV=produccion`. Poner las
 dos y no solo la primera: `APP_ENV` no enciende nada por si sola —la fila de `OFF` es EAS en las
 cuatro columnas de la matriz— pero dejarla en `pruebas` deja armada la trampa para el proximo cambio
 de `ENABLE_DEV_TOOLS`.
 
-Los cuatro de **CES** —`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`— van por
-`ampx ... secret set` y no como variables de la app: los consume la **Lambda del barrido**, que los
-recibe por `secret()` en `amplify/backend.ts`. El backend despliega igual sin sus valores: declarar
-la referencia no exige que el valor exista.
+#### CES — destino B, y hoy vacio a proposito
+
+Los cuatro —`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`— van por `ampx ... secret set`
+y **no** como variables de la consola: los consume el Lambda del barrido, que los recibe por
+`secret()` en `amplify/backend.ts`. Ponerlos en la consola no haria nada — el Lambda no las ve — y la
+aplicacion web no los usa para nada. El backend despliega igual sin sus valores: declarar la
+referencia no exige que el valor exista.
 
 **Y mientras CES siga sin aprobar (R17) no hay que ponerlos.** Con `APP_ENV=pruebas`, el barrido
 descarta cada mensaje como `CANCELADO` y deja en el registro la notificacion que habria enviado —

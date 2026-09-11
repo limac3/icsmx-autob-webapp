@@ -3558,3 +3558,50 @@ que el handler alcance".
 Y **si un `vi.mock` global neutraliza un sintoma, ninguna prueba unitaria va a encontrar ese
 defecto.** El mock de `server-only` es necesario —sin el no se puede probar nada de `src/lib` en
 Node— asi que la comprobacion tiene que vivir fuera de la ejecucion: analisis estatico del grafo.
+
+## 65) Las variables de la consola de Amplify no llegan al Lambda del barrido
+
+### Problema
+Declarar `APP_ENV=pruebas` en un despliegue para que el barrido descarte los correos cuando no hay
+configuracion de CES (seccion 63 de este documento y D-18).
+
+### Sintoma
+Ninguno todavia: se encontro leyendo `amplify/backend.ts` al responder **donde** se configura cada
+variable, antes de desplegar. De haber llegado al ambiente de pruebas, el sintoma habria sido el
+barrido fallando en el 100% de sus invocaciones — el mismo que la seccion 53 y la 64, por tercera vez
+y por una causa distinta.
+
+### Causa raiz
+**Las variables de entorno de la consola de Amplify (*App settings > Environment variables*) llegan
+al contenedor de build y al computo SSR de Next, pero no a una funcion creada con
+`defineFunction`.** Esa funcion es un recurso de CDK en su propia pila: solo recibe lo que
+`backend.ts` le pasa con `addEnvironment`.
+
+`backend.ts` le pasaba `AUTOB_TABLE_NAME`, los cuatro `CES_*` y `APP_BASE_URL`. **`APP_ENV` no**,
+porque se agrego para la aplicacion web y nadie miro el otro consumidor. El resultado habria sido:
+la aplicacion web en `pruebas` y el barrido leyendo `undefined` -> `produccion` -> `throw` al faltar
+CES, que es exactamente lo que el descarte de correos venia a evitar.
+
+Lo que lo hace facil de pasar por alto es que **las dos mitades del sistema leen la misma variable
+por caminos distintos**, y solo una es visible desde la consola.
+
+### Solucion aplicada
+`backend.barrido.addEnvironment("APP_ENV", process.env.APP_ENV ?? "produccion")`. Se resuelve en
+sintesis desde el entorno del build, asi que el valor se sigue escribiendo **una sola vez** en la
+consola; lo que cambia es que ahora tambien viaja al Lambda.
+
+El respaldo es `produccion` y no `pruebas`: la omision tiene que cerrar. Y la prueba de sintesis
+afirma el **valor** literal y no `Match.anyValue()`, porque un `anyValue()` dejaria pasar justo el
+error que importa — que el respaldo fuera `pruebas`.
+
+Consecuencia operativa, anotada en R-14: cambiar `APP_ENV` en la consola exige **redesplegar** para
+que el Lambda vea el valor nuevo. El suyo se fija al sintetizar.
+
+### Regla para futuro
+**Al agregar una variable de entorno, preguntar quien mas la lee.** Este sistema tiene dos
+ejecutores —el computo SSR de Next y el Lambda del barrido— y comparten `src/lib`, asi que un modulo
+nuevo que lea `process.env` puede acabar en los dos. La consola solo configura uno.
+
+La comprobacion es barata: buscar el modulo en el grafo de importaciones del handler
+(`amplify/barrido/alcance.test.ts` ya lo recorre) y, si esta, agregar el `addEnvironment` **y su
+afirmacion** en `amplify/backend.test.ts`.

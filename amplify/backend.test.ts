@@ -132,6 +132,30 @@ describe("backend.ts", () => {
       }),
     );
   });
+
+  it("el barrido recibe APP_ENV, y por omision es produccion", () => {
+    // Las variables de la consola de Amplify llegan al build y al computo SSR,
+    // **no** a una funcion de `defineFunction`. Sin pasarsela aqui, el
+    // despachador del outbox leeria `undefined` -> `produccion` y **lanzaria**
+    // al faltar configuracion de CES: el barrido de un ambiente de pruebas
+    // volveria a caerse en cada invocacion, que es justo lo que el descarte de
+    // correos viene a evitar.
+    const plantilla = Template.fromStack(
+      Stack.of(sandbox.backend.barrido.resources.lambda),
+    );
+
+    plantilla.hasResourceProperties(
+      "AWS::Lambda::Function",
+      Match.objectLike({
+        Environment: Match.objectLike({
+          // La sintesis de esta prueba corre sin `APP_ENV`, asi que el valor
+          // tiene que ser el respaldo cerrado. Un `Match.anyValue()` aqui
+          // dejaria pasar que el respaldo fuera `pruebas`.
+          Variables: Match.objectLike({ APP_ENV: "produccion" }),
+        }),
+      }),
+    );
+  });
 });
 
 describe("alarmas (Etapa 12)", () => {
