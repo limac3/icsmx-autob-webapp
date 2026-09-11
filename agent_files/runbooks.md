@@ -574,17 +574,26 @@ En un despliegue hay **tres destinos distintos, y no son intercambiables**. Lo q
 
 | Destino | Quien la lee | Cuando |
 | --- | --- | --- |
-| **A.** Consola de Amplify — *App settings > Environment variables* | El contenedor de build, y el computo SSR de Next | Build y ejecucion de la aplicacion web |
+| **A.** Consola de Amplify — *App settings > Environment variables* | **Solo el contenedor de build** | Build |
 | **B.** Secretos de Amplify — parametros de **SSM Parameter Store** | El **Lambda del barrido**, por `secret()` en `amplify/backend.ts` | Ejecucion del barrido |
 | **C.** `amplify/backend.ts`, con `addEnvironment` | El **Lambda del barrido** | Ejecucion del barrido |
+| **D.** Bloque `env` de `next.config.ts` | El **servidor de Next** (paginas, actions y middleware) | Ejecucion de la aplicacion web |
 
-> **Las variables de la consola NO llegan al Lambda.** Llegan al build y al computo SSR; una funcion
-> creada con `defineFunction` solo recibe lo que `backend.ts` le pasa explicitamente. Es la trampa
-> mas cara de esta lista: poner `APP_ENV=pruebas` en la consola configura la aplicacion web y **deja
-> el barrido leyendo `produccion`** — que con CES sin configurar lanza, y tumba la funcion en cada
-> invocacion. Por eso `APP_ENV` y `APP_BASE_URL` estan en el destino **C**, no solo en el **A**.
+> **La consola configura el build y nada mas.** Ningun proceso fuera del contenedor ve esas
+> variables: ni el Lambda —una funcion de `defineFunction` solo recibe lo que `backend.ts` le pasa—
+> ni el computo SSR de Next, que **no** las hereda. Cada consumidor necesita su propio camino, y por
+> eso los destinos **C** y **D** existen: son puentes desde el build hacia cada tiempo de ejecucion.
+>
+> Las dos veces que se aprendio costaron un despliegue cada una. Con el Lambda: `APP_ENV=pruebas` en
+> la consola configuraba la aplicacion y dejaba el barrido leyendo `produccion`, que con CES sin
+> configurar lanza en cada invocacion (`desafios-implementacion.md` 65). Con el servidor: la
+> aplicacion respondia **500 en cada peticion** —"Falta configuracion de autenticacion requerida:
+> AUTH0_DOMAIN"— aunque la variable estuviera puesta (seccion 72).
 >
 > El sentido inverso tambien vale: un secreto del destino **B** no lo ve la aplicacion web.
+>
+> **Y todo lo de C y D se fija al compilar**, asi que cambiar cualquiera de esas variables en la
+> consola exige **redesplegar**. Guardar el valor no basta.
 
 **Destino A — variables de la consola.** Dos son de **construccion** y no existen en ejecucion:
 
@@ -593,11 +602,12 @@ En un despliegue hay **tres destinos distintos, y no son intercambiables**. Lo q
 | `NODE_AUTH_TOKEN` | Token de Artifactory. Sin el `npm ci` falla con 401 en los paquetes `@churchofjesuschrist/*` (riesgo R10) |
 | `ALARMAS_CORREO` | Destinatario de las seis alarmas. La lee `amplify/backend.ts` **al sintetizar**, no en ejecucion, y por eso es **lo unico que no se puede poner despues sin redesplegar**: sin ella el tema de SNS se crea vacio |
 
-Y estas las lee la aplicacion web en cada peticion:
+Y estas se ponen **aqui tambien**, porque es de donde el build las toma para incrustarlas (destino
+**D**). Las lee la aplicacion web:
 
 | Grupo | Variables | De donde sale el valor |
 | --- | --- | --- |
-| Okta | `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH_SECRET`, `APP_BASE_URL` | Del tenant. `APP_BASE_URL` **debe** coincidir con la URL de callback registrada en Okta |
+| Okta | `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`, `AUTH_SECRET`, `APP_BASE_URL` | Del tenant. `APP_BASE_URL` **debe** coincidir con la URL de callback registrada en Okta. La barra final sobra y el codigo la quita (desafios 71) |
 | EAS | `EAS_PROFILE_URL`, `EAS_API_KEY` | Del equipo de EAS (contrato aun sin confirmar: riesgo R19) |
 | Datos | `AUTOB_TABLE_NAME`, `AUTOB_MEDIA_BUCKET` | `amplify_outputs.json`, bajo `custom.autob` |
 | CloudFront | `CLOUDFRONT_DOMAIN`, `CLOUDFRONT_KEY_PAIR_ID`, `CLOUDFRONT_PRIVATE_KEY` | Los dos primeros de `custom.autob`. **`llavePublicaCloudFront`, no `grupoDeLlavesCloudFront`**: confundirlos da un 403 que no dice cual de los dos esta mal (desafios 50) |
@@ -605,6 +615,16 @@ Y estas las lee la aplicacion web en cada peticion:
 
 **Destino B — secretos en SSM.** `CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`. Ver el
 detalle mas abajo: mientras CES siga sin aprobar, **no hay que ponerlos**.
+
+**Destino D — lo que el servidor de Next necesita, incrustado al compilar.** No se configura en
+ninguna consola: la lista vive en `VARIABLES_DEL_SERVIDOR` de `next.config.ts`, que las toma del
+entorno del build —o sea del destino **A**— y Next las sustituye en los chunks del servidor. Si el
+servidor necesita una variable nueva, se agrega **ahi**; ponerla solo en la consola no la hace
+llegar, y el sintoma es un 500 en cada peticion.
+
+La lista es explicita a proposito: un barrido del entorno arrastraria `NODE_AUTH_TOKEN` y las
+credenciales de AWS del contenedor al artefacto desplegado. Una prueba de `next.config.test.ts`
+afirma que ninguna de esas entra.
 
 **Destino C — lo que ya esta en el codigo y solo hay que saber que existe.** `AUTOB_TABLE_NAME`
 (sale de la pila), `APP_BASE_URL` y `APP_ENV` (se resuelven en sintesis desde el entorno del build,
