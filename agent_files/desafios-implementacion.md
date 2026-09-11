@@ -3782,3 +3782,60 @@ despliegue, no en la compuerta.
 cuenta, no en la plantilla.** El atajo que lo resolvio en dos comandos: volcar la plantilla y pasarla
 por `validate-template` —si pasa, el codigo no es el problema— y luego buscar en la cuenta los
 nombres fisicos que esa pila quiere crear.
+
+## 69) La imagen de Amplify trae Node 22 y la compuerta exige el LTS activo
+
+### Problema
+Que la fase `frontend` del despliegue ejecute la compuerta de calidad.
+
+### Sintoma
+El despliegue **completo** del backend salio bien —tabla, bucket, CloudFront, Lambda, horario,
+alarmas— y despues `npm run test` fallo en **155 milisegundos**:
+
+```
+> festack-scripts test
+Error: the active LTS version of node is required (currently 24).
+```
+
+`npm run typecheck` habia pasado justo antes, lo que despista: `tsc` no comprueba la version de Node
+y `festack-scripts` si.
+
+### Causa raiz
+La imagen `amplify:al2023` trae **Node v22.18.0** y el proyecto declara `engines.node: "24"`.
+`festack-scripts` compara contra el LTS activo y aborta antes de ejecutar una sola prueba.
+
+El mismo desfase ya venia avisando durante `npm ci`, y se habia pasado por alto: decenas de
+`npm warn EBADENGINE current: { node: 'v22.18.0' }`. Un aviso que se repite tantas veces deja de
+leerse, que es exactamente como se pierde.
+
+### Solucion aplicada
+`nvm install` al principio de **las dos** fases de `amplify.yml`, con la version tomada de
+`engines.node`:
+
+```yaml
+- nvm install $(node -p "require('./package.json').engines.node")
+```
+
+Tres decisiones dentro de eso:
+
+- **Se deriva de `package.json` y no se escribe `24`.** Duplicar la version la dejaria derivando en
+  silencio el dia que el proyecto suba de major, que es precisamente el fallo que acaba de ocurrir
+  pero al reves.
+- **Va antes del primer `npm ci` de cada fase**, no solo antes de las pruebas. Instalar con una
+  version y ejecutar con otra es lo que producen los `EBADENGINE`.
+- **En las dos fases**, porque cada una es un shell propio: la de `backend` tambien instala y
+  sintetiza.
+
+Se agrega `node -v` al inicio de la fase de build: una linea en el registro que dice con que version
+corrio, para no volver a deducirlo de los avisos.
+
+### Regla para futuro
+**La version de Node del contenedor de build no es la del desarrollador, y nadie avisa.** Cualquier
+proyecto con `engines` estricto tiene que fijarla en el `amplify.yml`; si no, funciona hasta que una
+herramienta comprueba la version — y la que lo comprobo aqui fue la compuerta, o sea lo ultimo antes
+de publicar.
+
+**Y un aviso repetido cientos de veces es un aviso invisible.** Los `EBADENGINE` estaban en los
+registros de los builds #2 a #5 y nadie —yo incluido— los leyo, porque venian entre cientos de lineas
+de `npm warn`. Cuando un build falla, conviene buscar `EBADENGINE` explicitamente en el log antes de
+descartar el entorno.

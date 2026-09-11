@@ -17,22 +17,34 @@
 # CLOUDFRONT_PRIVATE_KEY) van en las variables de la app, nunca en este archivo — que se
 # versiona. Y los cuatro de CES no van ni aqui ni ahi: son secretos en SSM Parameter Store
 # que consume el Lambda del barrido. Donde va cada cosa, en `runbooks.md` R-14 paso 4.
+#
+# **La version de Node se fija en las dos fases, y no es opcional.** La imagen de Amplify
+# (`amplify:al2023`) trae Node 22, y `festack-scripts test` exige el LTS activo — aborta con
+# "the active LTS version of node is required (currently 24)" antes de ejecutar una sola
+# prueba. Se toma de `engines.node` de `package.json` para que la version viva en **un solo
+# sitio**: duplicarla aqui la dejaria derivando en silencio el dia que el proyecto suba de
+# major. Y va antes del primer `npm ci` de cada fase, no solo antes de las pruebas: instalar
+# con una version y ejecutar con otra es justo la diferencia que producen los avisos
+# `EBADENGINE` de la imagen.
 version: 1
 backend:
   phases:
     build:
       commands:
+        - nvm install $(node -p "require('./package.json').engines.node")
         - npm ci --cache .npm --prefer-offline
         - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
 frontend:
   phases:
     preBuild:
       commands:
+        - nvm install $(node -p "require('./package.json').engines.node")
         - npm ci --cache .npm --prefer-offline
     build:
       commands:
         # La compuerta de calidad corre tambien en el despliegue: una rama que no
         # typechequea o cuyas pruebas fallan no llega a produccion.
+        - node -v
         - npm run typecheck
         - npm run test
         - npm run build
