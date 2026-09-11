@@ -1,9 +1,74 @@
 import type { NextConfig } from "next";
 
+/**
+ * Variables que el **servidor** necesita en ejecucion y que hay que incrustar
+ * en compilacion.
+ *
+ * **Las variables de la consola de Amplify no llegan al computo SSR.** Llegan
+ * al contenedor de build; el runtime de Next no las ve, y Next **no incrusta**
+ * `process.env.X` por su cuenta —comprobado compilando con un marcador y
+ * buscandolo en `.next/server`: no aparece—. El resultado fue un 500 en cada
+ * peticion de la aplicacion desplegada, lanzado al evaluar el modulo de
+ * middleware: "Falta configuracion de autenticacion requerida: AUTH0_DOMAIN".
+ *
+ * En local nunca se ve porque `next start` **si** carga `.env.local`, que esta
+ * en `.gitignore` y por tanto no existe en el build. Esa es la razon de fondo
+ * de que todo funcionara en la maquina y nada en el despliegue
+ * (`desafios-implementacion.md` 72).
+ *
+ * El bloque `env` de Next las sustituye en tiempo de compilacion. Comprobado
+ * igual, con marcador: quedan en los chunks de `.next/server` y **no** aparecen
+ * en `.next/static`, o sea que no viajan al navegador. Lo que las mantiene
+ * fuera del cliente no es este bloque sino que solo se lean desde modulos con
+ * `import "server-only"`; este bloque no relaja esa frontera, la respeta.
+ *
+ * **La lista es explicita, no un `env | grep`.** Un barrido arrastraria
+ * `NODE_AUTH_TOKEN` —credencial de Artifactory que no pinta nada en el
+ * artefacto— y las credenciales de AWS del contenedor. Aqui solo entra lo que
+ * el servidor lee de verdad. Los cuatro de CES **no** estan: los consume el
+ * Lambda del barrido por `secret()`, no la aplicacion.
+ *
+ * Consecuencia operativa: cambiar una de estas en la consola exige
+ * **redesplegar**, porque el valor se fija al compilar. Es la misma regla que
+ * ya aplica a `APP_ENV` y `APP_BASE_URL` del Lambda (`runbooks.md` R-14).
+ */
+const VARIABLES_DEL_SERVIDOR = [
+  "AUTH0_DOMAIN",
+  "AUTH0_CLIENT_ID",
+  "AUTH0_CLIENT_SECRET",
+  "AUTH_SECRET",
+  "APP_BASE_URL",
+  "EAS_PROFILE_URL",
+  "EAS_API_KEY",
+  "AUTOB_TABLE_NAME",
+  "AUTOB_MEDIA_BUCKET",
+  "CLOUDFRONT_DOMAIN",
+  "CLOUDFRONT_KEY_PAIR_ID",
+  "CLOUDFRONT_PRIVATE_KEY",
+  "APP_ENV",
+  "ENABLE_DEV_TOOLS",
+  "DEV_TOOLS_MOCK_ROLES",
+  "DEV_TOOLS_MOCK_PERMISOS",
+] as const;
+
+/**
+ * Solo las que existen. Una clave con `undefined` la incrustaria Next como la
+ * cadena `"undefined"`, que pasaria las guardas de "esta puesta" y fallaria mas
+ * tarde con un valor absurdo; omitirla deja la lectura en tiempo de ejecucion y
+ * el error explicito de `requerido()`, que nombra la variable.
+ */
+const entornoDelServidor = Object.fromEntries(
+  VARIABLES_DEL_SERVIDOR.flatMap((nombre) => {
+    const valor = process.env[nombre];
+    return valor === undefined || valor === "" ? [] : [[nombre, valor]];
+  }),
+);
+
 // turbopack.root evita que Next infiera mal la raiz del proyecto: hay un
 // lockfile en el directorio padre c:/Apps/node/ (riesgo R13 del plan de
 // ejecucion). La CSP con nonce por peticion vive en src/proxy.ts (Etapa 2).
 const nextConfig: NextConfig = {
+  env: entornoDelServidor,
   poweredByHeader: false,
   turbopack: {
     root: __dirname,

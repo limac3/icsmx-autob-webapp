@@ -146,3 +146,52 @@ describe("tope del cuerpo de las Server Actions", () => {
     expect(topeDeServerActions()).toBeGreaterThan(mayor + SOBRECOSTO_MULTIPART);
   });
 });
+
+describe("variables incrustadas para el servidor", () => {
+  // Las variables de la consola de Amplify **no llegan al computo SSR**, y Next
+  // no incrusta `process.env.X` por su cuenta: la aplicacion desplegada
+  // respondia 500 en cada peticion con "Falta configuracion de autenticacion
+  // requerida: AUTH0_DOMAIN". El bloque `env` las sustituye en compilacion
+  // (`desafios-implementacion.md` 72).
+
+  it("incrusta las que el servidor lee, y solo si tienen valor", async () => {
+    vi.stubEnv("AUTH0_DOMAIN", "ejemplo.okta.com");
+    vi.stubEnv("AUTH0_CLIENT_SECRET", "secreto");
+    vi.stubEnv("EAS_API_KEY", "");
+
+    // El bloque `env` se calcula al evaluar el modulo, asi que hay que
+    // reevaluarlo con el entorno ya preparado. Mismo modismo que
+    // `amplify/backend.test.ts`.
+    vi.resetModules();
+    const recargado = (await import("./next.config")).default as {
+      env?: Record<string, string>;
+    };
+
+    expect(recargado.env?.AUTH0_DOMAIN).toBe("ejemplo.okta.com");
+    // Vacia se omite: incrustarla como `""` pasaria una guarda de "esta
+    // puesta" y fallaria mas tarde con un valor absurdo. Omitida, la lectura
+    // queda en ejecucion y `requerido()` la nombra.
+    expect(recargado.env && "EAS_API_KEY" in recargado.env).toBe(false);
+  });
+
+  it("nunca incrusta credenciales que son solo del build o del Lambda", () => {
+    // Un `env | grep` habria arrastrado el token de Artifactory y las
+    // credenciales de AWS del contenedor al artefacto desplegado. La lista es
+    // explicita justamente para que esto se pueda afirmar.
+    const env = (config as { env?: Record<string, string> }).env ?? {};
+    const prohibidas = [
+      "NODE_AUTH_TOKEN",
+      "CES_URL",
+      "CES_USER",
+      "CES_PASSWORD",
+      "CES_FROM_ADDRESS",
+      "ALARMAS_CORREO",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+    ];
+
+    for (const prohibida of prohibidas) {
+      expect(Object.keys(env), prohibida).not.toContain(prohibida);
+    }
+  });
+});

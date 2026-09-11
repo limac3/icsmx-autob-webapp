@@ -3951,3 +3951,62 @@ lo haga es confiar en que nadie use copiar y pegar.
 **Y en configuracion, vacio no es lo mismo que ausente para `??`.** Donde el respaldo importe, la
 comprobacion es de valor cierto (`valor ? valor : respaldo`) y no de nulidad. `requerido()` de
 `auth0.ts` ya lo hacia bien con `if (!valor)`; esta linea no.
+
+## 72) 500 en cada peticion: las variables de la consola no llegan al computo SSR
+
+### Problema
+Que la aplicacion desplegada responda.
+
+### Sintoma
+Build en `SUCCEED`, backend desplegado, y **500 en cada peticion**. En
+`/aws/amplify/<appId>`:
+
+```
+⨯ Error: Falta configuracion de autenticacion requerida: AUTH0_DOMAIN
+    at Object.<anonymous> (../../var/task/.next/server/middleware.js:7:3)
+```
+
+`AUTH0_DOMAIN` **si estaba** en la consola de Amplify —comprobado, 22 caracteres— y el Lambda del
+barrido **si** habia recibido las suyas. La contradiccion aparente es lo que despista.
+
+### Causa raiz
+Dos hechos que juntos explican todo, y los dos se comprobaron en vez de suponerse:
+
+1. **Las variables de la consola de Amplify llegan al contenedor de build, no al computo SSR.** Es
+   la misma frontera de la seccion 65 (el Lambda), con el agravante de que aqui no hay un
+   `addEnvironment` donde arreglarlo.
+2. **Next no incrusta `process.env.X` por su cuenta.** Comprobado: compilando con
+   `AUTH0_DOMAIN=MARCADOR-UNICO` y buscando el marcador en `.next/server`, **no aparece en ningun
+   archivo**. Queda como lectura en ejecucion, y en ejecucion no esta.
+
+Y la razon de que **nada de esto se vea en local**: `next start` carga `.env.local`, que esta en
+`.gitignore` y por tanto no existe en el build. La maquina de quien desarrolla tiene las variables
+por un camino que el despliegue no tiene — el mismo patron de la seccion 70, ahora en produccion en
+vez de en las pruebas.
+
+### Solucion aplicada
+El bloque `env` de `next.config.ts` con una **lista explicita** de las variables que el servidor lee.
+Next las sustituye en compilacion. Comprobado con marcador: quedan en cuatro chunks de
+`.next/server` y en **cero** archivos de `.next/static`, o sea que no viajan al navegador.
+
+Lo que las mantiene fuera del cliente no es este bloque sino que solo se lean desde modulos con
+`import "server-only"`; el bloque respeta esa frontera, no la relaja.
+
+**La lista es explicita y no un `env | grep`**, que era la receta mas corta: un barrido arrastraria
+`NODE_AUTH_TOKEN` —credencial de Artifactory que no pinta nada en el artefacto desplegado— y las
+credenciales de AWS del contenedor. Una prueba afirma que ninguna de esas ocho entra.
+
+Una variable **vacia se omite** en vez de incrustarse como `""`: incrustada pasaria una guarda de
+"esta puesta" y fallaria mas tarde con un valor absurdo; omitida, la lectura queda en ejecucion y
+`requerido()` la nombra.
+
+### Regla para futuro
+**`.env.local` es la razon por la que "en mi maquina si funciona", y es invisible.** Esta en
+`.gitignore` —correctamente— asi que el despliegue nunca la ve, y `next start` **si** la carga en
+local: el mismo comando da resultados distintos en los dos sitios sin que nada lo diga. Al preparar
+un despliegue, la pregunta es *que hay en `.env.local` que el entorno desplegado no tenga*.
+
+**Y el sintoma "la variable esta puesta pero el proceso no la ve" ya salio dos veces** en este
+proyecto, con dos causas distintas: el Lambda (65) y el computo SSR (esta). La generalizacion:
+**la consola de Amplify configura el build, y cada consumidor fuera del build necesita su propio
+camino** — `addEnvironment` para una funcion de CDK, el bloque `env` para el servidor de Next.
