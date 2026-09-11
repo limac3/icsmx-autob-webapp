@@ -3721,3 +3721,64 @@ en serie en una sola respuesta.
 **Y `node_modules` local es un cache que miente.** Un paquete instalado antes de que la politica
 existiera sigue funcionando en la maquina para siempre. La unica comprobacion honesta es contra el
 registro, no contra el disco.
+
+## 68) Los nombres de alarma son unicos por cuenta: el segundo entorno no podia desplegarse
+
+### Problema
+Desplegar la pila del ambiente de pruebas en una cuenta donde ya existia un sandbox personal.
+
+### Sintoma
+`npm ci` y toda la creacion de recursos pasaron —tabla, bucket, CloudFront, Lambda, su horario— y al
+llegar a la pila de alarmas:
+
+```
+amplify-...-AutobAlarmasE9514B0F-... | CREATE_FAILED | AWS::CloudFormation::Stack |
+  Validation failed with 6 error(s). Call DescribeEvents to retrieve the full list of issues
+```
+
+Rollback de la pila entera. **Seis errores y seis alarmas**, y en los eventos de la pila anidada no
+habia **ni un evento de recurso**: solo `DetailedStatus: VALIDATION_FAILED` sobre la pila. O sea que
+CloudFormation rechazo antes de intentar crear nada.
+
+### Causa raiz
+**Los nombres de alarma de CloudWatch son unicos por cuenta y region**, no por pila. El prefijo era
+`this.node.id` —la constante `"Alarmas"`—, asi que los seis nombres eran identicos en todo
+despliegue. El sandbox personal los habia creado primero:
+
+```
+aws cloudwatch describe-alarms --alarm-name-prefix "Alarmas-"
+  -> Alarmas-barrido-sin-ejecutar, -barrido-con-errores, -vencimientos-sin-resolver,
+     -outbox-retrasado, -correos-fallidos, -contencion-de-transacciones
+```
+
+**Ninguna sintesis podia anticiparlo**, y esto es lo que hace al caso distinto de las secciones 53,
+64, 65 y 66: alli faltaba ejercitar un camino; aqui la plantilla es **correcta**. Se confirmo
+volcando la plantilla de la rama y pasandola por `aws cloudformation validate-template`, que no
+reporta nada. Lo que colisiona no es el codigo: es el **estado de la cuenta**, que por definicion no
+esta en el repositorio.
+
+### Solucion aplicada
+`prefijoDeNombres` como opcion **obligatoria** de `AlarmasAutob` —no opcional con respaldo, para que
+no se pueda volver a una constante sin darse cuenta—, y `backend.ts` la deriva del contexto que
+inyecta `ampx`: `<namespace>-<nombre>-<tipo>`, o sea `d2i0gloex3vqjp-main-branch` para una rama y
+`icsmxautobwebapp-CesarLima-sandbox` para un sandbox.
+
+**Deterministas y no aleatorios** a proposito: un nombre con parte aleatoria cambiaria en cada
+recreacion de la pila y dejaria los runbooks apuntando a alarmas que ya no existen. Los runbooks ya
+citaban las alarmas como `...-barrido-sin-ejecutar`, con prefijo variable, asi que no hubo que
+tocarlos.
+
+La prueba de sintesis afirma que los seis nombres empiezan por la identidad del backend **y que
+siguen siendo seis distintos**. Verificada por mutacion: devolviendo el prefijo a `"Alarmas"`, falla.
+
+### Regla para futuro
+**Un nombre fisico que AWS exige unico por cuenta no puede salir de una constante del codigo.** La
+lista es conocida y corta: alarmas de CloudWatch, buckets de S3, roles y politicas de IAM, tablas,
+temas de SNS, grupos de logs. Si el nombre no lleva la identidad del entorno, el codigo funciona
+hasta el dia en que alguien despliega un segundo entorno en la misma cuenta — y entonces falla en el
+despliegue, no en la compuerta.
+
+**Y el diagnostico de una pila anidada que "falla la validacion" sin eventos de recurso empieza en la
+cuenta, no en la plantilla.** El atajo que lo resolvio en dos comandos: volcar la plantilla y pasarla
+por `validate-template` —si pasa, el codigo no es el problema— y luego buscar en la cuenta los
+nombres fisicos que esa pila quiere crear.

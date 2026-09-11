@@ -31,6 +31,21 @@ export const ESPACIO_DE_NOMBRES = "autob";
 
 export type OpcionesDeAlarmas = {
   readonly tabla: TableV2;
+  /**
+   * Prefijo de los nombres de alarma, y **tiene que identificar al entorno**.
+   *
+   * **Los nombres de alarma de CloudWatch son unicos por cuenta y region**, no
+   * por pila. Antes el prefijo era `this.node.id` —la constante `"Alarmas"`—,
+   * asi que los seis nombres eran los mismos en todo despliegue: el sandbox los
+   * creo primero y la pila de la rama fallo con "Validation failed with 6
+   * error(s)", uno por alarma, antes de crear un solo recurso. La sintesis no
+   * podia verlo: la plantilla es valida, lo que colisiona es el estado de la
+   * cuenta (`desafios-implementacion.md` 68).
+   *
+   * Es obligatorio y no opcional con respaldo justamente para que no se pueda
+   * volver a un valor constante sin darse cuenta.
+   */
+  readonly prefijoDeNombres: string;
   /** Grupo de logs de la funcion de barrido, donde caen sus trazas. */
   readonly logsDelBarrido: ILogGroup;
   /** Metricas nativas de la funcion: invocaciones y errores. */
@@ -146,7 +161,7 @@ export class AlarmasAutob extends Construct {
    */
   private barridoSinEjecutar(opciones: OpcionesDeAlarmas): Alarm {
     return new Alarm(this, "BarridoSinEjecutar", {
-      alarmName: `${this.node.id}-barrido-sin-ejecutar`,
+      alarmName: `${opciones.prefijoDeNombres}-barrido-sin-ejecutar`,
       alarmDescription:
         "El barrido de vencimientos no se ejecuto en la ultima ventana. Runbook R-1.",
       metric: opciones.invocacionesDelBarrido,
@@ -162,7 +177,7 @@ export class AlarmasAutob extends Construct {
   /** El barrido corre pero lanza. Distinto del anterior: aqui si hay datos. */
   private barridoConErrores(opciones: OpcionesDeAlarmas): Alarm {
     return new Alarm(this, "BarridoConErrores", {
-      alarmName: `${this.node.id}-barrido-con-errores`,
+      alarmName: `${opciones.prefijoDeNombres}-barrido-con-errores`,
       alarmDescription:
         "La funcion de barrido termino con excepcion. Runbook R-1.",
       metric: opciones.erroresDelBarrido,
@@ -199,7 +214,7 @@ export class AlarmasAutob extends Construct {
     });
 
     return new Alarm(this, "AlarmaVencimientosSinResolver", {
-      alarmName: `${this.node.id}-vencimientos-sin-resolver`,
+      alarmName: `${opciones.prefijoDeNombres}-vencimientos-sin-resolver`,
       alarmDescription:
         "El barrido encontro adjudicaciones vencidas y no pudo resolverlas." +
         " Los dos caminos de D-7 fallaron. Runbook R-4.",
@@ -229,7 +244,7 @@ export class AlarmasAutob extends Construct {
     });
 
     return new Alarm(this, "AlarmaOutboxRetrasado", {
-      alarmName: `${this.node.id}-outbox-retrasado`,
+      alarmName: `${opciones.prefijoDeNombres}-outbox-retrasado`,
       alarmDescription:
         `Hay correos sin enviar con mas de ${String(UMBRAL_OUTBOX_MIN)}` +
         " minutos de antiguedad. Runbook R-2.",
@@ -257,7 +272,7 @@ export class AlarmasAutob extends Construct {
     });
 
     return new Alarm(this, "AlarmaCorreosFallidos", {
-      alarmName: `${this.node.id}-correos-fallidos`,
+      alarmName: `${opciones.prefijoDeNombres}-correos-fallidos`,
       alarmDescription:
         "Uno o mas correos agotaron sus reintentos y no se entregaran." +
         " Runbook R-2 y R-3.",
@@ -288,7 +303,7 @@ export class AlarmasAutob extends Construct {
    */
   private contencionDeTransacciones(opciones: OpcionesDeAlarmas): Alarm {
     return new Alarm(this, "ContencionDeTransacciones", {
-      alarmName: `${this.node.id}-contencion-de-transacciones`,
+      alarmName: `${opciones.prefijoDeNombres}-contencion-de-transacciones`,
       alarmDescription:
         "Conflictos de transaccion por encima de lo previsto." +
         " Contencion inesperada sobre la tabla. Runbook R-4.",

@@ -172,8 +172,35 @@ backend.barrido.addEnvironment("APP_ENV", process.env.APP_ENV ?? "produccion");
 //   function     -> AutobRecursos (nombre de la tabla)
 export const pilaDeAlarmas = backend.createStack("AutobAlarmas");
 
+/**
+ * Prefijo de los nombres de alarma, derivado de la identidad del backend.
+ *
+ * **Los nombres de alarma de CloudWatch son unicos por cuenta y region.** Con
+ * un prefijo constante, el segundo entorno que se despliegue en la misma cuenta
+ * falla al crear la pila de alarmas —"Validation failed with 6 error(s)", una
+ * por alarma— y ninguna sintesis puede anticiparlo, porque lo que colisiona no
+ * es la plantilla sino el estado de la cuenta.
+ *
+ * Los tres valores vienen del contexto que inyecta `ampx` y son deterministas:
+ * `<namespace>-<nombre>-<tipo>` da `d2i0gloex3vqjp-main-branch` para una rama y
+ * `icsmxautobwebapp-CesarLima-sandbox` para un sandbox personal. Deterministas
+ * importa: un nombre con parte aleatoria cambiaria en cada recreacion y dejaria
+ * los runbooks apuntando a alarmas que ya no existen.
+ *
+ * El respaldo `autob` solo aplica fuera de `ampx` —una sintesis suelta— y no
+ * relaja nada: cualquier despliegue real trae los tres valores.
+ */
+const identidadDelBackend = [
+  pila.node.tryGetContext(CDKContextKey.BACKEND_NAMESPACE),
+  pila.node.tryGetContext(CDKContextKey.BACKEND_NAME),
+  pila.node.tryGetContext(CDKContextKey.DEPLOYMENT_TYPE),
+]
+  .filter((parte): parte is string => typeof parte === "string" && parte !== "")
+  .join("-");
+
 const alarmas = new AlarmasAutob(pilaDeAlarmas, "Alarmas", {
   tabla: tabla.tabla,
+  prefijoDeNombres: identidadDelBackend || "autob",
   logsDelBarrido: grupoDeLogsDelBarrido(),
   invocacionesDelBarrido: funcionBarrido.metricInvocations({
     period: Duration.minutes(15),

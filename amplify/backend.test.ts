@@ -133,6 +133,32 @@ describe("backend.ts", () => {
     );
   });
 
+  it("los nombres de alarma llevan la identidad del backend, no una constante", () => {
+    // Los nombres de alarma de CloudWatch son **unicos por cuenta y region**.
+    // Con un prefijo constante, el segundo entorno que se despliegue en la
+    // misma cuenta falla al crear la pila —una validacion por alarma— y ninguna
+    // sintesis lo anticipa, porque lo que colisiona es el estado de la cuenta y
+    // no la plantilla. Paso de verdad: el sandbox tenia las seis con el prefijo
+    // `Alarmas-` y la rama no pudo crear ninguna
+    // (`desafios-implementacion.md` 68).
+    const plantilla = Template.fromStack(sandbox.pilaDeAlarmas);
+    const alarmas = plantilla.findResources("AWS::CloudWatch::Alarm");
+    const nombres = Object.values(alarmas).map(
+      (a) => (a as { Properties: { AlarmName: string } }).Properties.AlarmName,
+    );
+
+    expect(nombres).toHaveLength(6);
+    for (const nombre of nombres) {
+      // El arnes sintetiza con namespace `autob`, nombre `prueba` y tipo
+      // `sandbox`: los tres tienen que aparecer.
+      expect(nombre).toMatch(/^autob-prueba-sandbox-/);
+    }
+
+    // Y que sigan siendo seis distintos: un prefijo compartido no debe tapar
+    // que dos alarmas acaben con el mismo nombre.
+    expect(new Set(nombres).size).toBe(6);
+  });
+
   it("el barrido recibe APP_ENV, y por omision es produccion", () => {
     // Las variables de la consola de Amplify llegan al build y al computo SSR,
     // **no** a una funcion de `defineFunction`. Sin pasarsela aqui, el
