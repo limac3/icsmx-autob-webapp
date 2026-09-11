@@ -651,9 +651,49 @@ Como se pone el valor, y **no es igual en los dos casos**:
 | Destino | Como |
 | --- | --- |
 | Sandbox personal | `npx ampx sandbox secret set CES_URL` — pide el valor por consola. Tambien `list`, `get` y `remove` |
-| Rama de Amplify Hosting | **Desde la consola de Amplify**, o escribiendo el parametro `SecureString` en SSM. **No existe un `ampx secret set` para ramas**: el CLI solo expone `ampx sandbox secret`, y `ampx --help` no ofrece otro |
+| Rama de Amplify Hosting | **Desde la consola de Amplify**, o escribiendo el parametro `SecureString` en SSM (receta abajo). **No existe un `ampx secret set` para ramas**: el CLI solo expone `ampx sandbox secret`, y `ampx --help` no ofrece otro |
 
 El backend despliega igual sin sus valores: declarar la referencia no exige que el valor exista.
+
+##### Escribir el secreto de una rama a mano
+
+```bash
+aws ssm put-parameter \
+  --name "/amplify/<appId>/<rama>-branch-<hash>/CES_URL" \
+  --value "https://ces.example.org/api/send" \
+  --type SecureString \
+  --overwrite
+```
+
+- **`SecureString`** y no `String`: lo cifra con KMS. Con `String`, `CES_PASSWORD` queda en claro.
+- **`--overwrite`**: sin el, falla si el parametro ya existe. Es lo que hace falta para actualizar.
+
+**El hash no se adivina, se calcula.** Sale de `BackendIdentifierConversions`, y para una rama es
+`sha512(appId + rama)` truncado a 10 caracteres hexadecimales, con los caracteres no alfanumericos
+quitados de las dos partes. Asi que la ruta se puede saber **antes** de desplegar, teniendo el
+`appId`:
+
+```bash
+node -e "const{createHash}=require('node:crypto');const l=s=>s.replace(/[^A-Za-z0-9]/g,'');const[a,r]=process.argv.slice(1);const h=createHash('sha512').update(l(a)).update(l(r)).digest('hex').slice(0,10);console.log('/amplify/'+l(a)+'/'+l(r)+'-branch-'+h+'/')" <appId> main
+```
+
+Verificado contra un parametro real de la cuenta: para la app `d2fp4jlzinrqk4` y la rama `main`, la
+formula da `a5e6fafe45`, que es el hash que AWS tiene escrito.
+
+Y si ya hubo un despliegue, se puede leer en vez de calcular:
+
+```bash
+aws ssm get-parameters-by-path --path "/amplify" --recursive --query 'Parameters[].Name'
+```
+
+**Dos trampas al ejecutarlo:**
+
+1. **En Git Bash la ruta se corrompe.** Todo argumento que empiece con `/` se convierte a una ruta
+   de Windows. Hay que prefijar `MSYS_NO_PATHCONV=1`, igual que con las demas llamadas de AWS CLI de
+   estos runbooks. En `cmd.exe` y PowerShell no pasa.
+2. **`--value` queda en el historial del shell**, que para `CES_PASSWORD` es justo lo que no se
+   quiere. Usar `--value file:///ruta/al/archivo` y borrar el archivo despues, o ponerlo desde la
+   consola de AWS.
 
 **Y mientras CES siga sin aprobar (R17) no hay que ponerlos.** Con `APP_ENV=pruebas`, el barrido
 descarta cada mensaje como `CANCELADO` y deja en el registro la notificacion que habria enviado —
