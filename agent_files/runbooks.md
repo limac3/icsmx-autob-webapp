@@ -487,35 +487,72 @@ quien la desarrolla hasta que existe una app de **Amplify Hosting**.
 
 ### Estado de partida, y como comprobarlo
 
-Antes de seguir, verificar en que punto se esta. Los tres son comandos de lectura:
+Antes de seguir, verificar en que punto se esta. Todos son comandos de lectura:
 
 ```bash
 aws amplify list-apps --query 'apps[].{nombre:name,appId:appId,repo:repository}'
-git remote -v
-node -e "console.log(require('./amplify_outputs.json').custom.autob)"
+aws amplify list-jobs --app-id <appId> --branch-name main --max-results 3 \
+  --query 'jobSummaries[].{id:jobId,estado:status,commit:commitId}'
+aws amplify list-branches --app-id <appId> \
+  --query 'branches[].{rama:branchName,stack:backendEnvironmentArn}'
+git remote -v && git status -sb
 ```
 
-Al 2026-09-10 el resultado era: **ninguna app de Amplify Hosting de este proyecto**, **ningun
-remoto de Git**, y un sandbox personal desplegado
-(`amplify-icsmxautobwebapp-CesarLima-sandbox-cbbf835390`). O sea, el paso 1 de abajo es el que
-falta.
+**`backendEnvironmentArn` en `null` significa que el backend nunca se desplego**, aunque la app y la
+rama existan. Es el dato que distingue "hay una app creada" de "hay un entorno funcionando", y no se
+ve en la lista de apps.
 
-### Paso 1 — Un remoto que Amplify pueda leer · **[OPERADOR]**
+Al **2026-09-11**: app `icsmx-autob-webapp` (`d2i0gloex3vqjp`, plataforma `WEB_COMPUTE`) conectada a
+`limac3/icsmx-autob-webapp` rama `main`; **build #1 en `FAILED`** por el 401 de `npm ci` —el paso 4
+sin hacer— y por tanto **nada desplegado**: ni frontend ni backend. Mas un sandbox personal aparte
+(`amplify-icsmxautobwebapp-CesarLima-sandbox-cbbf835390`), que no tiene relacion con la app.
+
+### Paso 1 — Un remoto que Amplify pueda leer · **[OPERADOR]** — hecho
 
 **Es el bloqueo primero y no tiene rodeo:** Amplify Hosting construye desde un repositorio Git
 conectado, no desde un directorio local. Sin remoto no hay despliegue.
 
-### Paso 2 — Rotar los secretos expuestos · **[OPERADOR]**
+> **Y construye desde el remoto, no desde el disco.** Un commit sin empujar no entra al build,
+> asi que `git status -sb` es parte de la comprobacion previa a cada despliegue: si dice
+> `ahead N`, lo que se va a desplegar es codigo viejo.
 
-**Antes de cargar un solo valor en Amplify.** En una sesion de desarrollo, una edicion de
-`.env.local` hizo que la herramienta devolviera el archivo completo, asi que quedaron expuestos en
-un transcripto `AUTH0_CLIENT_SECRET`, `AUTH_SECRET` y la llave privada de CloudFront. Desplegar con
-esos valores es desplegar con secretos comprometidos.
+### Paso 2 — Rotar los secretos expuestos · **[OPERADOR]** — hecho en lo critico
 
-Rotar la llave de CloudFront **invalida todas las URLs firmadas vigentes** (R-11 paso 1), asi que
-conviene hacerlo antes de que existan usuarios y no despues.
+**Que paso.** En una sesion de desarrollo, una edicion de `.env.local` hizo que la herramienta
+devolviera el archivo completo, asi que quedaron expuestos en un transcripto
+`AUTH0_CLIENT_SECRET`, `AUTH_SECRET` y la **llave privada de CloudFront**.
 
-### Paso 3 — Crear la app y conectar la rama · **[OPERADOR]**
+| Secreto | Estado |
+| --- | --- |
+| `AUTH0_CLIENT_SECRET` | **Rotado** (2026-09-11) |
+| `AUTH_SECRET` | **Rotado** (2026-09-11) |
+| Llave privada de CloudFront | **No rotada, riesgo aceptado** — ver abajo |
+
+**La llave de CloudFront no se rota por ahora, y es una decision con razon.** Lo que firma son las
+fotografias de vehiculos de un entorno con **datos desechables**, y aprovecharla exigiria ademas
+conocer el dominio de la distribucion. Los dos secretos de Okta son de otra categoria: son
+credenciales de **identidad**, y por eso se rotaron primero.
+
+Verificable en cualquier momento, sin exponer material de llave —comparando el DER normalizado de la
+publica que CloudFront tiene desplegada contra `amplify/claves/cloudfront-publica.pem`—: al
+2026-09-11 son la misma, o sea que sigue siendo el par original del commit `f0f0826`.
+
+**La condicion que cambia la decision:** en cuanto el entorno deje de tener datos desechables —o
+antes de un entorno de produccion— hay que rotarla. Y **rotarla son cuatro pasos encadenados**, no
+uno:
+
+1. Generar el par nuevo (R-11 paso 1).
+2. Reemplazar `amplify/claves/cloudfront-publica.pem`, **que se versiona**.
+3. **Redesplegar el backend**, para que CloudFront confie en la publica nueva. Cambia el
+   `CLOUDFRONT_KEY_PAIR_ID`.
+4. Actualizar `CLOUDFRONT_PRIVATE_KEY` y `CLOUDFRONT_KEY_PAIR_ID` donde corresponda.
+
+Hacerlo a medias tiene el peor modo de fallo posible: firmar con una privada que no corresponde a la
+publica desplegada **no da error de firma ni 403** — da una galeria vacia con la consola limpia
+(desafios 50). Y rotarla **invalida todas las URLs firmadas vigentes**, asi que conviene hacerlo
+antes de que existan usuarios.
+
+### Paso 3 — Crear la app y conectar la rama · **[OPERADOR]** — hecho
 
 Amplify detecta [`amplify.yml`](../amplify.yml), que ya esta escrito y no hay que tocar. Hace dos
 cosas que conviene conocer:
