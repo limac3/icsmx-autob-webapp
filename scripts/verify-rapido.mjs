@@ -18,7 +18,20 @@
 // que las dos variantes no puedan separarse: cualquier cambio en el script
 // `verify` aplica aqui automaticamente.
 
+// Antes de todo lo demas se comprueba el lock (`verificar-lock.mjs`, ~10 s):
+// el despliegue corre `npm ci` y la compuerta no, asi que un desfase entre
+// `package.json` y `package-lock.json` pasa en verde aqui y falla alla. Va
+// primero porque es lo mas barato y lo que invalida el resto.
+
 import { spawnSync } from "node:child_process";
+
+// `node` si es un ejecutable directo: no necesita shell.
+const lock = spawnSync(process.execPath, ["scripts/verificar-lock.mjs"], {
+  stdio: "inherit",
+});
+if ((lock.status ?? 1) !== 0) {
+  process.exit(lock.status ?? 1);
+}
 
 const resultado = spawnSync("npm", ["run", "verify"], {
   stdio: "inherit",

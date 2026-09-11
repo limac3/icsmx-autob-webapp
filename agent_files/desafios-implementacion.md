@@ -3605,3 +3605,59 @@ nuevo que lea `process.env` puede acabar en los dos. La consola solo configura u
 La comprobacion es barata: buscar el modulo en el grafo de importaciones del handler
 (`amplify/barrido/alcance.test.ts` ya lo recorre) y, si esta, agregar el `addEnvironment` **y su
 afirmacion** en `amplify/backend.test.ts`.
+
+## 66) El lock estaba desincronizado y solo lo delato el build: la compuerta no corre `npm ci`
+
+### Problema
+Que el build de Amplify instale dependencias.
+
+### Sintoma
+El build #3 del primer despliegue fallo con:
+
+```
+npm error code EUSAGE
+npm error `npm ci` can only install packages when your package.json and package-lock.json
+          or npm-shrinkwrap.json are in sync.
+npm error Missing: @opentelemetry/core@2.0.0 from lock file   (x4)
+```
+
+Todo verde en local: compuerta completa, 2 219 pruebas, `build` de Next. El desfase llevaba en el
+repositorio **desde el 2026-09-08** —comprobado reponiendo el `package-lock.json` de commits
+anteriores y corriendo `npm ci --dry-run` sobre cada uno— sin que nada lo delatara.
+
+### Causa raiz
+**`npm install` y `npm ci` no tienen el mismo contrato, y la compuerta solo ejercitaba el primero.**
+`npm install` reconcilia `package.json` con el lock sobre la marcha y no se queja; `npm ci` exige que
+coincidan **exactamente** y aborta si no. El desarrollo diario usa `install`; el despliegue usa `ci`.
+
+Lo que faltaba eran cuatro entradas anidadas de `@opentelemetry/core@2.0.0`: varios paquetes de
+Amplify —`@opentelemetry/resources` y `sdk-trace-base` dentro de `data-construct` y de
+`graphql-api-construct`— lo piden con **version exacta**, y el lock solo tenia 2.8.0 y 2.11.0. Un
+`npm install` resuelve eso sin escribir las entradas exactas; `npm ci` no lo perdona.
+
+Es el mismo patron que las secciones 53, 64 y 65 de este documento: **un defecto que la compuerta
+local no puede ver porque no ejercita el mismo camino que el despliegue.** Cuarta vez en el proyecto.
+
+### Solucion aplicada
+`npm install --package-lock-only`, que recalcula el lock sin tocar `node_modules`. El arreglo fue
+quirurgico —**110 inserciones y 0 eliminaciones**: solo agrego las entradas que faltaban, sin subir
+ni quitar ninguna version—, asi que no hay riesgo de arrastrar una actualizacion no querida.
+
+Y para que no vuelva: **`scripts/verificar-lock.mjs`**, que corre `npm ci --dry-run` y falla
+reproduciendo la salida de npm con los paquetes que faltan. Cuesta ~10 s sobre una compuerta de ~90 s
+y va **primero** en `verify:rapido`, porque es lo mas barato y lo que invalida el resto. Tambien
+disponible solo, como `npm run verify:lock`.
+
+Verificado en las dos direcciones: exit 0 con el lock arreglado, exit 1 nombrando los cuatro
+paquetes con el lock anterior repuesto.
+
+### Regla para futuro
+**Si el despliegue ejecuta un comando que la compuerta no ejecuta, ese comando es un hueco.** Aqui
+era `npm ci`. La pregunta que lo encuentra —y que conviene hacerse al escribir cualquier
+`amplify.yml` o pipeline— es: *que corre alla que no corra aca*. Cada respuesta es un fallo que se
+va a descubrir minutos despues de empujar, no antes.
+
+**Y una nota sobre `shell: true` en Windows**, que costo un intento: quitarlo para evitar el aviso
+DEP0190 rompe el script con `spawnSync npm.cmd EINVAL`. Desde el endurecimiento de CVE-2024-27980,
+Node **se niega** a lanzar un `.cmd` sin shell. Con npm en Windows el shell no es una comodidad: es
+obligatorio, y el aviso de deprecacion es ruido que hay que aceptar.
