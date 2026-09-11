@@ -15,6 +15,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { clave, PREFIJO, turnoDesdeClave } from "@/lib/data/claves";
+import { puedeUsarBackendReal } from "@/utils/backendUtilizable";
 import {
   adjudicar,
   registrarSolicitud,
@@ -89,7 +90,7 @@ const leerSalidas = (): SalidasAutob | null => {
 };
 
 const salidas = leerSalidas();
-const hayBackend = Boolean(salidas?.tabla && salidas?.rolComputoSsr);
+const hayBackend = puedeUsarBackendReal(salidas);
 const seSolicito = process.env.PROTOTIPO_R18 === "1";
 
 const REPETICIONES = Number(process.env.PROTOTIPO_REPETICIONES ?? "3");

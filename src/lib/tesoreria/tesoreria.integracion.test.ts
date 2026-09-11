@@ -23,6 +23,7 @@ import type { Lote } from "@/types/lote";
 import { avalarPago } from "./avalarPago";
 import { listarPendientesVerificacion } from "./listarPendientesVerificacion";
 import { rechazarPago } from "./rechazarPago";
+import { puedeUsarBackendReal } from "@/utils/backendUtilizable";
 import {
   subirComprobante,
   type DepsSubirComprobante,
@@ -68,9 +69,7 @@ const leerSalidas = (): SalidasAutob | null => {
 };
 
 const salidas = leerSalidas();
-const hayBackend = Boolean(
-  salidas?.tabla && salidas?.bucket && salidas?.rolComputoSsr,
-);
+const hayBackend = puedeUsarBackendReal(salidas) && Boolean(salidas?.bucket);
 
 const HORAS_LIQUIDACION = 48;
 const CORRIDA = randomUUID().slice(0, 8);

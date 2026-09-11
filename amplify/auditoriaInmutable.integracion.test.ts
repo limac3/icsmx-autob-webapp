@@ -10,6 +10,7 @@ import {
 } from "@aws-sdk/client-dynamodb";
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { puedeUsarBackendReal } from "@/utils/backendUtilizable";
 
 /**
  * Prueba de integracion contra AWS real (Etapa 3).
@@ -48,7 +49,7 @@ const leerSalidas = (): SalidasAutob | null => {
 };
 
 const salidas = leerSalidas();
-const hayBackend = Boolean(salidas?.tabla && salidas?.rolComputoSsr);
+const hayBackend = puedeUsarBackendReal(salidas);
 
 // `describe.skipIf` mantiene visible en el reporte que la prueba existe y por que no corrio.
 describe.skipIf(!hayBackend)(

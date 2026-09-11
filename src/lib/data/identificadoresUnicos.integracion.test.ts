@@ -21,6 +21,7 @@ import type { DepsDeServicio } from "@/lib/data/deps";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { Convocatoria, DatosConvocatoria } from "@/types/convocatoria";
 import type { DatosVehiculo } from "@/types/vehiculo";
+import { puedeUsarBackendReal } from "@/utils/backendUtilizable";
 
 vi.mock("server-only", () => ({}));
 
@@ -57,7 +58,7 @@ const leerSalidas = (): SalidasAutob | null => {
 };
 
 const salidas = leerSalidas();
-const hayBackend = Boolean(salidas?.tabla && salidas?.rolComputoSsr);
+const hayBackend = puedeUsarBackendReal(salidas);
 
 /** Sufijo por corrida: la tabla del sandbox conserva lo de las anteriores. */
 const CORRIDA =

@@ -18,6 +18,7 @@ import type { DepsDeServicio } from "@/lib/data/deps";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { Lote } from "@/types/lote";
 import { solicitarCompra } from "./solicitarCompra";
+import { puedeUsarBackendReal } from "@/utils/backendUtilizable";
 
 vi.mock("server-only", () => ({}));
 
@@ -74,7 +75,7 @@ const leerSalidas = (): SalidasAutob | null => {
 };
 
 const salidas = leerSalidas();
-const hayBackend = Boolean(salidas?.tabla && salidas?.rolComputoSsr);
+const hayBackend = puedeUsarBackendReal(salidas);
 const seSolicito = process.env.CARGA_APERTURA === "1";
 
 const LOTES = Number(process.env.CARGA_LOTES ?? "10");

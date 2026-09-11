@@ -3839,3 +3839,73 @@ de publicar.
 registros de los builds #2 a #5 y nadie —yo incluido— los leyo, porque venian entre cientos de lineas
 de `npm warn`. Cuando un build falla, conviene buscar `EBADENGINE` explicitamente en el log antes de
 descartar el entorno.
+
+## 70) La suite pasaba en local y fallaba en el build: dependia del entorno
+
+### Problema
+Que la compuerta de calidad de la fase `frontend` refleje lo que dice la compuerta local.
+
+### Sintoma
+Con Node ya en 24, las pruebas **ejecutaron** y fallaron **doce** veces, en dos grupos que parecian
+uno:
+
+```
+× el barrido recibe APP_ENV, y por omision es produccion
+× nombra todas las variables que faltan        (x3, cloudfrontSigner)
+× lanza si alguien pone FULL en un despliegue sin habilitar
+× con ENABLE_DEV_TOOLS ausente usa EAS real
+FAIL amplify/auditoriaInmutable.integracion.test.ts
+FAIL src/lib/fila/fila.integracion.test.ts
+FAIL src/lib/data/identificadoresUnicos.integracion.test.ts
+  AccessDenied: ... not authorized to perform: sts:AssumeRole
+```
+
+### Causa raiz
+
+**Grupo 1 — nueve pruebas dependian de que una variable NO estuviera.** Afirman cosas como "sin
+`APP_ENV` la guarda lanza" o "sin las tres variables de CloudFront se nombra la que falta", y no
+declaraban la ausencia: la heredaban del shell. En local funcionaba porque esas variables viven en
+`.env.local`, que Vitest no carga. En el build **si estan**, porque son variables de la app de
+Amplify: `APP_ENV=pruebas`, `ENABLE_DEV_TOOLS=FULL`, las de CloudFront.
+
+Lo grave no era el build rojo. Era que **las guardas de seguridad pasaban en local por la razon
+equivocada**: la mitad de las casillas de la matriz de `identidad-autorizacion.md` 4.1.2 era
+inalcanzable con esas variables puestas. Una prueba que depende del entorno no prueba lo que dice.
+
+**Grupo 2 — las pruebas de integracion se activaron en el build.** Su condicion era
+`existsSync(amplify_outputs.json)`, y **la fase `backend` genera ese archivo**: `ampx
+pipeline-deploy` lo escribe en el espacio de trabajo. Asi que en la fase siguiente la condicion se
+cumplia, tres suites se activaban y fallaban al asumir el rol de computo SSR con `AccessDenied` —
+correctamente: el rol del contenedor de build **no debe** poder asumir el rol de la aplicacion.
+
+### Solucion aplicada
+
+**Grupo 1 — un `setupFile` que borra las variables que deciden**
+(`src/utils/entornoHermetico.ts`), sumado a los tres de festack. Se borran y no se fijan: la
+ausencia es el estado por omision que las guardas tienen que tratar bien (regla 18), y cada prueba
+que necesita un valor lo declara con `vi.stubEnv`. La lista es explicita y acotada — las de
+autorizacion, las de firma de CloudFront y `ALARMAS_CORREO`—, no "todas las del proyecto".
+
+**Grupo 2 — la condicion pasa a ser `puedeUsarBackendReal`** (`src/utils/backendUtilizable.ts`),
+que exige las salidas **y** no estar en el contenedor de Amplify (`AWS_APP_ID`, que ese contenedor
+define y ninguna maquina de desarrollo tiene). Reemplaza siete copias de la misma condicion.
+
+Se descarto gatear por `CI`: `verify:rapido` la define para omitir el chequeo de desactualizados,
+asi que apagaria estas pruebas en la compuerta local — y la regresion de concurrencia de la regla 16
+vive precisamente ahi. Lo que hay que detectar no es "hay automatizacion", es "este proceso no puede
+asumir el rol".
+
+**Verificado corriendo la suite completa con el entorno del build**:
+`AWS_APP_ID=... APP_ENV=pruebas ENABLE_DEV_TOOLS=FULL CLOUDFRONT_...=... npx vitest run`
+-> 2 181 pruebas en verde, 7 suites de integracion omitidas. Y sin esas variables, las de
+integracion siguen corriendo: 27 en verde contra DynamoDB real.
+
+### Regla para futuro
+**La compuerta local no prueba lo que el despliegue prueba si el entorno difiere, y difiere
+siempre.** La forma barata de cerrarlo es correr la suite una vez con las variables del despliegue
+puestas — literalmente el comando de arriba. Doce fallos que costaron dos ciclos de build se veian
+en 70 segundos.
+
+**Y una prueba que afirma "sin X pasa Y" tiene que borrar X, no suponer que falta.** Suponerlo la
+vuelve una prueba sobre la maquina de quien la escribio. El sintoma es el peor posible: verde donde
+no importa y rojo donde si, o —peor— verde en los dos sitios por razones distintas.

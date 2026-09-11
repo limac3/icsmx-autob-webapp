@@ -20,6 +20,7 @@ import type { Lote } from "@/types/lote";
 import { adjudicarLote } from "./adjudicarLote";
 import { solicitarCompra } from "./solicitarCompra";
 import { vencerYReasignar } from "./vencerYReasignar";
+import { puedeUsarBackendReal } from "@/utils/backendUtilizable";
 
 vi.mock("server-only", () => ({}));
 
@@ -51,7 +52,7 @@ const leerSalidas = (): SalidasAutob | null => {
 };
 
 const salidas = leerSalidas();
-const hayBackend = Boolean(salidas?.tabla && salidas?.rolComputoSsr);
+const hayBackend = puedeUsarBackendReal(salidas);
 
 const REPETICIONES = Number(process.env.FILA_REPETICIONES ?? "2");
 const HORAS_LIQUIDACION = 1;
