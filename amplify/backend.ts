@@ -107,13 +107,25 @@ function grupoDeLogsDelBarrido(): ILogGroup {
 }
 
 // CES (Church Email Service) — el procesador del outbox de la Etapa 10.
-// `secret()` referencia un parametro de Secrets Manager por nombre; su
-// **valor** lo pone el operador con `ampx sandbox secret set` (o el equivalente
-// de una rama compartida), no este archivo. Declarar la referencia aqui no
-// exige que el valor ya exista: CES sigue sin aprobar (riesgo R17,
-// `plan-ejecucion.md`) y el backend despliega igual, como documenta
-// `runbooks.md` R-11 — lo que cambia es que ahora el procesador **si** intenta
-// leerlas al ejecutarse, y sin ellas falla de forma explicita (regla 15).
+//
+// **`secret()` referencia un parametro de SSM Parameter Store, no de Secrets
+// Manager.** Lo implementa `@aws-amplify/backend-secret`, cuyos modulos son
+// literalmente `ssm_secret.js`; la ruta la arma `ParameterPathConversions` como
+// `/amplify/<parte-del-backend>/<NOMBRE>` — con `<appId>/<rama>-branch-<hash>`
+// para una rama y `<proyecto>/<usuario>-sandbox-<hash>` para un sandbox. Aqui
+// solo va el nombre corto; el prefijo lo pone Amplify segun a que backend se
+// despliega.
+//
+// El **valor** no lo pone este archivo:
+//   - sandbox: `npx ampx sandbox secret set CES_URL` (tambien `list`/`get`/`remove`)
+//   - rama de Amplify Hosting: desde la consola, o escribiendo el `SecureString`
+//     en SSM. **No hay un `ampx secret set` para ramas**: el CLI solo expone
+//     `ampx sandbox secret`.
+//
+// Declarar la referencia aqui no exige que el valor ya exista: CES sigue sin
+// aprobar (riesgo R17, `plan-ejecucion.md`) y el backend despliega igual. Con
+// `APP_ENV=pruebas` el procesador **cancela** el mensaje y deja la notificacion
+// en el registro; en produccion falla de forma explicita (regla 15, D-6).
 backend.barrido.addEnvironment("CES_URL", secret("CES_URL"));
 backend.barrido.addEnvironment("CES_USER", secret("CES_USER"));
 backend.barrido.addEnvironment("CES_PASSWORD", secret("CES_PASSWORD"));

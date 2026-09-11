@@ -335,8 +335,10 @@ autoriza.
 
 El correo transaccional sale por **CES** (Church Email Service), un servicio REST corporativo,
 no por SES. No hay nada que preparar en AWS: son `CES_URL`, `CES_USER`, `CES_PASSWORD` y
-`CES_FROM_ADDRESS`, en `.env.local` para el sandbox local o como secretos de Amplify
-(`ampx sandbox secret set <nombre>`) para un sandbox personal desplegado o una rama compartida.
+`CES_FROM_ADDRESS`, en `.env.local` para trabajar en local, y como **secretos** para un backend
+desplegado — `npx ampx sandbox secret set <nombre>` en un sandbox personal; desde la consola de
+Amplify o en SSM para una rama, porque no hay comando de CLI para ramas. El detalle, con el formato
+de la ruta en SSM, esta en **R-14**, seccion "CES — destino B".
 
 **CES aun no esta aprobado para este proyecto** (riesgo R17). El backend ya declara las
 **referencias** a estos cuatro secretos desde la Etapa 10 (`amplify/backend.ts`) y despliega
@@ -536,7 +538,7 @@ En un despliegue hay **tres destinos distintos, y no son intercambiables**. Lo q
 | Destino | Quien la lee | Cuando |
 | --- | --- | --- |
 | **A.** Consola de Amplify — *App settings > Environment variables* | El contenedor de build, y el computo SSR de Next | Build y ejecucion de la aplicacion web |
-| **B.** Secretos de Amplify — `ampx ... secret set` | El **Lambda del barrido**, por `secret()` en `amplify/backend.ts` | Ejecucion del barrido |
+| **B.** Secretos de Amplify — parametros de **SSM Parameter Store** | El **Lambda del barrido**, por `secret()` en `amplify/backend.ts` | Ejecucion del barrido |
 | **C.** `amplify/backend.ts`, con `addEnvironment` | El **Lambda del barrido** | Ejecucion del barrido |
 
 > **Las variables de la consola NO llegan al Lambda.** Llegan al build y al computo SSR; una funcion
@@ -564,8 +566,8 @@ Y estas las lee la aplicacion web en cada peticion:
 | CloudFront | `CLOUDFRONT_DOMAIN`, `CLOUDFRONT_KEY_PAIR_ID`, `CLOUDFRONT_PRIVATE_KEY` | Los dos primeros de `custom.autob`. **`llavePublicaCloudFront`, no `grupoDeLlavesCloudFront`**: confundirlos da un 403 que no dice cual de los dos esta mal (desafios 50) |
 | Herramientas | `ENABLE_DEV_TOOLS`, `APP_ENV` | `OFF` + `produccion` en produccion. En un ambiente de pruebas, `FULL` + `pruebas` — ver abajo |
 
-**Destino B — secretos.** `CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`. Ver el detalle
-mas abajo: mientras CES siga sin aprobar, **no hay que ponerlos**.
+**Destino B — secretos en SSM.** `CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`. Ver el
+detalle mas abajo: mientras CES siga sin aprobar, **no hay que ponerlos**.
 
 **Destino C — lo que ya esta en el codigo y solo hay que saber que existe.** `AUTOB_TABLE_NAME`
 (sale de la pila), `APP_BASE_URL` y `APP_ENV` (se resuelven en sintesis desde el entorno del build,
@@ -627,11 +629,31 @@ de `ENABLE_DEV_TOOLS`.
 
 #### CES — destino B, y hoy vacio a proposito
 
-Los cuatro —`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`— van por `ampx ... secret set`
-y **no** como variables de la consola: los consume el Lambda del barrido, que los recibe por
-`secret()` en `amplify/backend.ts`. Ponerlos en la consola no haria nada — el Lambda no las ve — y la
-aplicacion web no los usa para nada. El backend despliega igual sin sus valores: declarar la
-referencia no exige que el valor exista.
+Los cuatro —`CES_URL`, `CES_USER`, `CES_PASSWORD`, `CES_FROM_ADDRESS`— son **secretos**, no variables
+de la consola: los consume el Lambda del barrido, que los recibe por `secret()` en
+`amplify/backend.ts`. Ponerlos en *Environment variables* no haria nada —el Lambda no las ve— y la
+aplicacion web no los usa para nada.
+
+**Son parametros de SSM Parameter Store, no de Secrets Manager.** Lo implementa
+`@aws-amplify/backend-secret` (sus modulos son `ssm_secret.js`), y la ruta la arma
+`ParameterPathConversions`:
+
+```
+/amplify/<appId>/<rama>-branch-<hash>/<NOMBRE>          una rama de Amplify Hosting
+/amplify/<proyecto>/<usuario>-sandbox-<hash>/<NOMBRE>   un sandbox personal
+```
+
+En `backend.ts` solo va el **nombre corto** (`CES_URL`); el prefijo lo pone Amplify segun a que
+backend se despliega. No hay que inventar ningun nombre ni crear nada a mano.
+
+Como se pone el valor, y **no es igual en los dos casos**:
+
+| Destino | Como |
+| --- | --- |
+| Sandbox personal | `npx ampx sandbox secret set CES_URL` — pide el valor por consola. Tambien `list`, `get` y `remove` |
+| Rama de Amplify Hosting | **Desde la consola de Amplify**, o escribiendo el parametro `SecureString` en SSM. **No existe un `ampx secret set` para ramas**: el CLI solo expone `ampx sandbox secret`, y `ampx --help` no ofrece otro |
+
+El backend despliega igual sin sus valores: declarar la referencia no exige que el valor exista.
 
 **Y mientras CES siga sin aprobar (R17) no hay que ponerlos.** Con `APP_ENV=pruebas`, el barrido
 descarta cada mensaje como `CANCELADO` y deja en el registro la notificacion que habria enviado —

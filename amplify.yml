@@ -13,8 +13,10 @@
 #                     SNS se crea sin suscriptores (`amplify/alarmas.ts`). Se omite a proposito en
 #                     un entorno que nadie vigila.
 #
-# Los secretos de la aplicacion (AUTH0_CLIENT_SECRET, AUTH_SECRET, EAS_API_KEY,
-# CLOUDFRONT_PRIVATE_KEY) van en el gestor de secretos, nunca aqui.
+# Los valores sensibles de la aplicacion (AUTH0_CLIENT_SECRET, AUTH_SECRET, EAS_API_KEY,
+# CLOUDFRONT_PRIVATE_KEY) van en las variables de la app, nunca en este archivo — que se
+# versiona. Y los cuatro de CES no van ni aqui ni ahi: son secretos en SSM Parameter Store
+# que consume el Lambda del barrido. Donde va cada cosa, en `runbooks.md` R-14 paso 4.
 version: 1
 backend:
   phases:
