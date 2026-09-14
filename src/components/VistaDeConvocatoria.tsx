@@ -38,6 +38,12 @@ const EXPLICACION_POR_FASE = {
 >;
 
 export type VistaDeConvocatoriaProps = {
+  /**
+   * Ruta de esta misma pantalla. Los vehiculos cuelgan de ella, para que la
+   * vista previa enlace dentro de la vista previa y la pantalla publica dentro
+   * de la publica.
+   */
+  rutaBase: string;
   convocatoria: Convocatoria;
   lotes: readonly LoteEnCatalogo[];
   estadoDeVenta: EstadoDeVentaUi;
@@ -48,6 +54,7 @@ export type VistaDeConvocatoriaProps = {
 };
 
 const VistaDeConvocatoria = ({
+  rutaBase,
   convocatoria,
   lotes,
   estadoDeVenta,
@@ -146,7 +153,7 @@ const VistaDeConvocatoria = ({
       <section>
         <H2>{etiquetas.seccionLotes}</H2>
         <RejillaDeLotes
-          convocatoriaId={convocatoria.convocatoriaId}
+          rutaBase={rutaBase}
           lotes={lotes}
           diccionario={diccionario}
           idioma={idioma}

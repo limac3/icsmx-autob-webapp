@@ -1,0 +1,36 @@
+/* Detalle del vehiculo de un lote. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10).
+
+   Vive junto al componente y no en la pagina porque el marcado tambien: lo
+   pintan las dos pantallas que usan `VistaDeLote` —la del participante y la
+   vista previa administrativa— y una hoja por pagina se separaria de la otra
+   sin que nada falle. El encuadre de la pagina (relleno y separacion entre
+   bloques) sigue siendo de la pagina: `.catalogo` en `app/convocatorias`. */
+
+.vista-lote {
+  display: grid;
+  gap: 1.5rem;
+}
+
+/* Misma razon que en `.catalogo`: un elemento de rejilla aporta su ancho de
+   min-content como minimo de la columna, y la tira de miniaturas pide 464 px.
+   Hace falta en los dos niveles porque hay dos rejillas anidadas. */
+.vista-lote > * {
+  min-inline-size: 0;
+}
+
+.vista-lote__identificacion {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.vista-lote__precio {
+  font-weight: bold;
+}
+
+/* La insignia es hija directa de la rejilla, y un elemento de rejilla se estira
+   a todo el ancho de la columna: sin esto "En oferta" queda como una franja de
+   color de borde a borde en vez de una etiqueta. */
+.vista-lote__insignia {
+  justify-self: start;
+}

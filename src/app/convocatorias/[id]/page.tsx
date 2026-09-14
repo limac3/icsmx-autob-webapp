@@ -79,6 +79,7 @@ const DetalleDeConvocatoria = async ({
   return (
     <main className="catalogo">
       <VistaDeConvocatoria
+        rutaBase={`/convocatorias/${id}`}
         convocatoria={convocatoria}
         lotes={lotes}
         estadoDeVenta={estadoDeVenta}

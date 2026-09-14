@@ -63,6 +63,17 @@ export type BloqueDeAccionDeLoteProps = {
   venceEnFormateado?: string;
   /** Segundos que faltan para el vencimiento, calculados por el servidor. */
   segundosParaVencer?: number;
+  /**
+   * Vista previa administrativa: se ve todo, no se puede pulsar nada.
+   *
+   * Deshabilitar y **no ocultar** es la misma decision que ya toma la fase
+   * `SIN_ABRIR`: un boton que existe y no responde explica de quien es la
+   * accion, y esconderlo dejaria la vista previa mostrando una pantalla que
+   * nadie va a ver. **No sustituye a ninguna guarda**: quien administra
+   * normalmente no tiene el permiso de venta, y si lo tuviera,
+   * `solicitarCompra` vuelve a comprobar el gating triple en el servidor.
+   */
+  soloLectura?: boolean;
   diccionario: Diccionario;
   idioma: string;
 };
@@ -78,6 +89,7 @@ const BloqueDeAccionDeLote = ({
   venta,
   venceEnFormateado,
   segundosParaVencer,
+  soloLectura = false,
   diccionario,
   idioma,
 }: BloqueDeAccionDeLoteProps) => {
@@ -141,7 +153,7 @@ const BloqueDeAccionDeLote = ({
   const botonCancelar = (
     <Secondary
       type="button"
-      disabled={enProceso}
+      disabled={enProceso || soloLectura}
       onClick={() => {
         setConfirmando(true);
       }}
@@ -154,6 +166,12 @@ const BloqueDeAccionDeLote = ({
     <Card renderAs="section" className="bloque-lote">
       <H4 renderAs="h2">{etiquetas.titulo}</H4>
 
+      {soloLectura ? (
+        <Info>
+          <Text2 renderAs="p">{etiquetas.vistaPreviaSinAccion}</Text2>
+        </Info>
+      ) : null}
+
       {error ? (
         <AlertaError>
           <Text2 renderAs="p">{diccionario.errores[error]}</Text2>
@@ -165,6 +183,7 @@ const BloqueDeAccionDeLote = ({
           venta={venta}
           estatusLote={estatusLote}
           enProceso={enProceso}
+          soloLectura={soloLectura}
           etiquetas={etiquetas}
           idioma={idioma}
           onSolicitar={solicitar}
@@ -209,7 +228,7 @@ const BloqueDeAccionDeLote = ({
           )}
           <Primary
             type="button"
-            disabled={enProceso}
+            disabled={enProceso || soloLectura}
             onClick={() => {
               setSubiendoComprobante(true);
             }}
@@ -343,6 +362,7 @@ const SinSolicitud = ({
   venta,
   estatusLote,
   enProceso,
+  soloLectura,
   etiquetas,
   idioma,
   onSolicitar,
@@ -350,6 +370,7 @@ const SinSolicitud = ({
   venta: FaseDeVentaEnLote;
   estatusLote: EstatusLote;
   enProceso: boolean;
+  soloLectura: boolean;
   etiquetas: Diccionario["fila"];
   idioma: string;
   onSolicitar: () => void;
@@ -392,7 +413,11 @@ const SinSolicitud = ({
   }
 
   return (
-    <Primary type="button" disabled={enProceso} onClick={onSolicitar}>
+    <Primary
+      type="button"
+      disabled={enProceso || soloLectura}
+      onClick={onSolicitar}
+    >
       {enProceso ? etiquetas.solicitando : etiquetas.solicitar}
     </Primary>
   );

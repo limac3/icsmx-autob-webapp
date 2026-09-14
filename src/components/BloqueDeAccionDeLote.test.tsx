@@ -306,3 +306,35 @@ describe("privacidad — R-12", () => {
     expect(contenedor.textContent).not.toMatch(/@|participanteId/i);
   });
 });
+
+describe("vista previa administrativa — soloLectura", () => {
+  // La propiedad es una sola y vale para toda la tabla de estados: **se ve
+  // todo, no se pulsa nada**. Se fija sobre los dos estados con boton porque
+  // son puertas distintas —una crea una solicitud, la otra la cancela— y basta
+  // que una se quede viva para que una pantalla de revision actue sobre la
+  // fila.
+
+  it("lo dice, y deja el boton de solicitar deshabilitado", async () => {
+    const contenedor = await pintar({ soloLectura: true });
+
+    expect(contenedor.textContent).toContain(
+      diccionario.fila.vistaPreviaSinAccion,
+    );
+    expect(boton("Solicitar compra")?.disabled).toBe(true);
+  });
+
+  it("tampoco deja cancelar una solicitud viva", async () => {
+    await pintar({ miLugar: lugar("EN_FILA"), soloLectura: true });
+
+    expect(boton("Cancelar mi solicitud")?.disabled).toBe(true);
+  });
+
+  it("sin el, nada cambia para el participante", async () => {
+    const contenedor = await pintar({});
+
+    expect(contenedor.textContent).not.toContain(
+      diccionario.fila.vistaPreviaSinAccion,
+    );
+    expect(boton("Solicitar compra")?.disabled).toBe(false);
+  });
+});

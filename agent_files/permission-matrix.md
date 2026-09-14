@@ -132,18 +132,31 @@ Quien no tenga el permiso del tipo recibe **404**, no 403 (R-01): un 403 confirm
 > lo que hace la regla auditable.
 >
 > **Y por eso la vista previa administrativa es una ruta propia, no una excepcion.**
-> `/admin/convocatorias/[id]/vista-publica` muestra la convocatoria como la vera un
-> participante, y se abre con `convocatoria:ver-administracion` — la puerta que ya le
-> corresponde a quien administra. No toca el gating de la ruta publica: aquella sigue exigiendo
-> sus tres condiciones y sigue devolviendo 404.
+> `/admin/convocatorias/[id]/vista-publica` y
+> `/admin/convocatorias/[id]/vista-publica/lotes/[loteId]` muestran la convocatoria y cada
+> vehiculo como los vera un participante, y se abren con `convocatoria:ver-administracion` — la
+> puerta que ya le corresponde a quien administra. No tocan el gating de las rutas publicas:
+> aquellas siguen exigiendo sus tres condiciones y siguen devolviendo 404.
 >
 > La alternativa —un enlace a la pantalla publica— no sirve por dos razones, y la segunda es la
 > que importa: quien administra normalmente no tiene permiso de venta, asi que recibiria 404; y
 > lo util es revisar **antes** de publicar, que es justo cuando esa ruta no abre para nadie.
 >
-> Las dos pantallas renderizan el **mismo componente** con los **mismos datos**
-> (`VistaDeConvocatoria` y `lotesParaCatalogo`). Eso no es economia de codigo: es lo que hace que
-> la vista previa siga siendo una vista previa cuando la pantalla publica cambie.
+> **Son dos rutas y no una porque la vista previa de la convocatoria sin la del vehiculo revisa
+> la mitad.** Sus tarjetas enlazaban al detalle publico del vehiculo y ahi quien administra
+> recibia 404 — por las mismas dos razones. Por eso la rejilla recibe la **ruta desde la que se
+> mira** (`rutaBase`) y no el identificador de la convocatoria: cada pantalla enlaza dentro de si
+> misma.
+>
+> Las pantallas renderizan los **mismos componentes** con los **mismos datos**
+> (`VistaDeConvocatoria` con `lotesParaCatalogo`, `VistaDeLote` con `loteParaVista`). Eso no es
+> economia de codigo: es lo que hace que la vista previa siga siendo una vista previa cuando la
+> pantalla publica cambie.
+>
+> **El bloque de participacion se ve y no se puede pulsar** (`soloLectura`). Ocultarlo dejaria
+> fuera la mitad de la pantalla que se quiere revisar; dejarlo vivo invitaria a formarse en una
+> fila desde una pantalla de revision. **No es una guarda**: `solicitud:crear` exige permiso de
+> venta y gating triple en el servidor, y eso no cambia.
 
 ---
 

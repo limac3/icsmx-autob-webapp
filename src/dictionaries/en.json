@@ -272,8 +272,8 @@
     "vistaPreviaTitulo": "Preview",
     "vistaPreviaVisible": "This is how participants with access to this sale type see this announcement.",
     "vistaPreviaAunNoVisible": "It is not visible to anyone yet. This is how it will look once published:",
-    "vistaPreviaEnlaces": "Vehicles link to the participant screens, which only open once the announcement is published.",
-    "volverAlDetalle": "Back to the announcement"
+    "vistaPreviaEnlaces": "Vehicles open inside this same preview. The participant actions are shown, but disabled.",
+    "salirDeLaVistaPrevia": "Exit preview"
   },
   "validacionConvocatoria": {
     "requerido": "This field is required",
@@ -390,7 +390,8 @@
     "enviarComprobante": "Send",
     "campoComprobante": "Payment receipt",
     "formatosComprobante": "JPG, PNG or PDF, up to 10 MB.",
-    "avisoRevisionComprobante": "This file will be reviewed by treasury."
+    "avisoRevisionComprobante": "This file will be reviewed by treasury.",
+    "vistaPreviaSinAccion": "Preview: this is how participants will see this section. No queue actions can be taken from here."
   },
   "filaAdministrativa": {
     "titulo": "Vehicle queue",

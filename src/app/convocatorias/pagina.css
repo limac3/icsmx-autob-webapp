@@ -36,3 +36,16 @@
 .catalogo__estado-explicacion {
   flex: 1 1 12rem;
 }
+
+/* Sin esto la pantalla se desborda a la derecha en movil, y no solo el elemento
+   ancho: **toda** la pagina, porque un elemento de rejilla aporta su ancho de
+   min-content como minimo de la columna. En el detalle de lote la tira de
+   miniaturas pide 464 px —cuatro miniaturas de 100 px con sus huecos—, la
+   columna crece a 464 y arrastra el encabezado, la tarjeta de accion y la
+   ficha, que quedan cortados. Con el minimo en cero la columna se queda en el
+   ancho de la ventana y la galeria usa su propio desplazamiento horizontal,
+   que es para lo que `ScrollTrack` la envuelve. Mismo remedio que las secciones
+   de `FormularioConvocatoria`. */
+.catalogo > * {
+  min-inline-size: 0;
+}

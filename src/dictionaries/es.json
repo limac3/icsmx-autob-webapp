@@ -272,8 +272,8 @@
     "vistaPreviaTitulo": "Vista previa",
     "vistaPreviaVisible": "Así ven esta convocatoria los participantes con acceso a este tipo de venta.",
     "vistaPreviaAunNoVisible": "Todavía no es visible para nadie. Así se verá a partir de su publicación:",
-    "vistaPreviaEnlaces": "Los vehículos llevan a las pantallas del participante, que solo abren si la convocatoria ya está publicada.",
-    "volverAlDetalle": "Volver a la convocatoria"
+    "vistaPreviaEnlaces": "Los vehículos abren dentro de esta misma vista previa. Las acciones del participante están a la vista, pero deshabilitadas.",
+    "salirDeLaVistaPrevia": "Salir de la vista previa"
   },
   "validacionConvocatoria": {
     "requerido": "Este dato es obligatorio",
@@ -390,7 +390,8 @@
     "enviarComprobante": "Enviar",
     "campoComprobante": "Comprobante de pago",
     "formatosComprobante": "JPG, PNG o PDF, hasta 10 MB.",
-    "avisoRevisionComprobante": "Este archivo será revisado por tesorería."
+    "avisoRevisionComprobante": "Este archivo será revisado por tesorería.",
+    "vistaPreviaSinAccion": "Vista previa: así verá el participante esta sección. Desde aquí no se puede actuar sobre la fila."
   },
   "filaAdministrativa": {
     "titulo": "Fila del vehículo",

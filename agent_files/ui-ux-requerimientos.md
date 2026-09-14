@@ -382,6 +382,30 @@ Vista administrativa del lote: estatus, adjudicacion vigente, `venceEn`, `tamano
 > (`permission-matrix.md`, seccion 4). El administrador ve agregados; quien configura la venta
 > no conoce el orden.
 
+### 4.6 `/admin/convocatorias/[id]/vista-publica` y `.../lotes/[loteId]` — vista previa
+
+Quien administra no participa de las convocatorias, pero tiene que poder **consultar como la
+veran los usuarios**. Dos pantallas, una por cada pantalla del participante: la convocatoria
+(3.2) y el vehiculo (3.3 y 3.4). Se entra desde el boton "Ver como participante" del detalle
+administrativo.
+
+Las dos llevan arriba un aviso (`AvisoDeVistaPrevia`) que dice que es una vista previa, desde
+cuando sera visible y que los enlaces se quedan dentro de ella. Su boton **"Salir de la vista
+previa"** vuelve al detalle administrativo — con una etiqueta distinta a la del "Volver a la
+convocatoria" del propio contenido, porque en la pantalla del vehiculo conviven las dos.
+
+> **Se ve todo, no se pulsa nada.** El bloque de participacion (3.4) se renderiza igual y con
+> sus botones deshabilitados. Ocultarlo dejaria fuera la mitad de la pantalla que se quiere
+> revisar; dejarlo vivo invitaria a formarse en una fila desde una pantalla de revision.
+
+> **Se mira desde `publicadaEn`, no desde ahora.** Un borrador no tiene fase de venta: mostrarlo
+> "hoy" lo pintaba como **venta cerrada**, que es falso. Se renderiza como se vera al publicarse
+> y el aviso dice desde cuando (`momentoDeVistaPrevia`). Una convocatoria ya visible se mira en
+> el presente.
+
+Lo que la vista previa **no** hace: ninguna concesion de permisos. Las rutas publicas conservan
+su gating triple con 404 (`permission-matrix.md`, seccion 4).
+
 ---
 
 ## 5. Aprobador — `/aprobaciones`

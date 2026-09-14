@@ -41,6 +41,7 @@ const CONVOCATORIA: Convocatoria = {
 };
 
 const props = {
+  rutaBase: "/convocatorias/CONV1",
   convocatoria: CONVOCATORIA,
   lotes: [],
   estadoDeVenta: { fase: "VENTA_ABIERTA", cierraFormateado: "12 sep 2026" },
@@ -113,6 +114,30 @@ describe("VistaDeConvocatoria", () => {
     );
     expect(context.container.textContent).not.toContain(
       diccionario.catalogo.explicacionAbierta,
+    );
+  });
+
+  it("los vehiculos cuelgan de la ruta desde la que se mira", async () => {
+    // La vista previa administrativa tiene que enlazar dentro de si misma: al
+    // detalle publico del vehiculo, quien administra recibe un 404.
+    await pintar({
+      rutaBase: "/admin/convocatorias/CONV1/vista-publica",
+      lotes: [
+        {
+          loteId: "L1",
+          marca: "Nissan",
+          version: "NP300",
+          modelo: 2019,
+          kilometraje: 100_000,
+          precio: 185_000,
+          estatus: "EN_OFERTA",
+          tamanoFila: 0,
+        },
+      ],
+    });
+
+    expect(context.container.querySelector("a")?.getAttribute("href")).toBe(
+      "/admin/convocatorias/CONV1/vista-publica/lotes/L1",
     );
   });
 

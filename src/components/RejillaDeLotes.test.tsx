@@ -38,7 +38,7 @@ const lote = (
 const context = getTestContext();
 
 genericTests(context, RejillaDeLotes, {
-  convocatoriaId: "CONV1",
+  rutaBase: "/convocatorias/CONV1",
   lotes: [
     lote("L1"),
     lote("L2", { fotografiaPrincipalUrl: "https://cdn/foto.jpg" }),
@@ -52,7 +52,7 @@ describe("RejillaDeLotes", () => {
     await act(async () => {
       context.root.render(
         <RejillaDeLotes
-          convocatoriaId="CONV1"
+          rutaBase="/convocatorias/CONV1"
           lotes={[]}
           diccionario={obtenerDiccionario("es")}
           idioma="es"
@@ -76,7 +76,7 @@ describe("RejillaDeLotes", () => {
     await act(async () => {
       context.root.render(
         <RejillaDeLotes
-          convocatoriaId="CONV1"
+          rutaBase="/convocatorias/CONV1"
           lotes={[lote("L1")]}
           diccionario={obtenerDiccionario("es")}
           idioma="es"
@@ -87,11 +87,30 @@ describe("RejillaDeLotes", () => {
     expect(enlace?.getAttribute("href")).toBe("/convocatorias/CONV1/lotes/L1");
   });
 
+  it("enlaza dentro de la vista previa cuando se mira desde ella", async () => {
+    // Es el defecto que obligo a cambiar la prop: con el identificador de la
+    // convocatoria, la vista previa administrativa mandaba al detalle publico
+    // del vehiculo, que le responde 404 a quien administra (R-01, R-02).
+    await act(async () => {
+      context.root.render(
+        <RejillaDeLotes
+          rutaBase="/admin/convocatorias/CONV1/vista-publica"
+          lotes={[lote("L1")]}
+          diccionario={obtenerDiccionario("es")}
+          idioma="es"
+        />,
+      );
+    });
+    expect(context.container.querySelector("a")?.getAttribute("href")).toBe(
+      "/admin/convocatorias/CONV1/vista-publica/lotes/L1",
+    );
+  });
+
   it("muestra la cantidad en fila, nunca identidades", async () => {
     await act(async () => {
       context.root.render(
         <RejillaDeLotes
-          convocatoriaId="CONV1"
+          rutaBase="/convocatorias/CONV1"
           lotes={[lote("L1", { tamanoFila: 3 })]}
           diccionario={obtenerDiccionario("es")}
           idioma="es"
@@ -106,7 +125,7 @@ describe("RejillaDeLotes", () => {
     await act(async () => {
       context.root.render(
         <RejillaDeLotes
-          convocatoriaId="CONV1"
+          rutaBase="/convocatorias/CONV1"
           lotes={[lote("L1", { precio: 185_000 })]}
           diccionario={obtenerDiccionario("es")}
           idioma="es"

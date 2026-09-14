@@ -45,14 +45,25 @@ export type LoteEnCatalogo = {
 };
 
 export type RejillaDeLotesProps = {
-  convocatoriaId: string;
+  /**
+   * Ruta de la pantalla de convocatoria desde la que se mira; los vehiculos
+   * cuelgan de ella.
+   *
+   * **No es el identificador de la convocatoria, y esa es toda la diferencia.**
+   * La misma rejilla la pintan dos pantallas —la del participante y la vista
+   * previa administrativa— y cada una tiene que enlazar dentro de si misma: con
+   * el identificador, la vista previa mandaba al detalle publico del vehiculo,
+   * que responde 404 a quien administra porque no tiene el permiso de venta del
+   * tipo (R-01, R-02).
+   */
+  rutaBase: string;
   lotes: readonly LoteEnCatalogo[];
   diccionario: Diccionario;
   idioma: string;
 };
 
 const RejillaDeLotes = ({
-  convocatoriaId,
+  rutaBase,
   lotes,
   diccionario,
   idioma,
@@ -72,7 +83,7 @@ const RejillaDeLotes = ({
       {lotes.map((lote) => (
         <Item key={lote.loteId} small={4} medium={4} large={4} xlarge={4}>
           <Link
-            href={`/convocatorias/${convocatoriaId}/lotes/${lote.loteId}`}
+            href={`${rutaBase}/lotes/${lote.loteId}`}
             className="rejilla-lotes__enlace"
           >
             <Card renderAs="article" className="rejilla-lotes__tarjeta">

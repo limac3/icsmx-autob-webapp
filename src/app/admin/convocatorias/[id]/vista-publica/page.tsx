@@ -1,16 +1,14 @@
-import Link from "next/link";
 import { forbidden, notFound, redirect } from "next/navigation";
-import { Info } from "@churchofjesuschrist/eden-alert";
-import { Secondary } from "@churchofjesuschrist/eden-buttons";
-import { Text2 } from "@churchofjesuschrist/eden-text";
+import AvisoDeVistaPrevia from "@/components/AvisoDeVistaPrevia";
 import VistaDeConvocatoria from "@/components/VistaDeConvocatoria";
 import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
 import { lotesParaCatalogo } from "@/lib/convocatorias/lotesParaCatalogo";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
-import { desdeIso, formatearFechaHora } from "@/lib/domain/fechas";
+import { desdeIso } from "@/lib/domain/fechas";
 import { calcularEstadoDeVentaUi } from "@/lib/domain/ventanas";
+import { momentoDeVistaPrevia } from "@/lib/domain/vistaPrevia";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
 import "../../../../convocatorias/pagina.css";
 
@@ -30,13 +28,12 @@ import "../../../../convocatorias/pagina.css";
  * ruta publica conserva su 404 intacto; lo que cambia es quien puede mirar y
  * con que permiso, que es la division que la Etapa 2.1 fijo.
  *
- * **El instante desde el que se mira.** Si la convocatoria todavia no es
- * visible, mostrarla "ahora" seria enganoso: `calcularEstadoDeVentaUi` traduce
- * `NO_VISIBLE` a `VENTA_CERRADA` —lo mas conservador que puede mostrar sin
- * inventar un dato— y un borrador apareceria como venta cerrada, que es falso.
- * Se renderiza entonces desde `publicadaEn`, o sea **como se vera al
- * publicarse**, y el aviso lo dice con la fecha. Un dato que parece cierto y no
- * lo es es peor que no mostrarlo.
+ * **Los vehiculos cuelgan de esta ruta, no de la publica** (`rutaBase`): por lo
+ * mismo, un enlace al detalle publico del vehiculo terminaba en 404. La vista
+ * previa tiene su propio detalle de lote.
+ *
+ * **El instante desde el que se mira** lo decide `momentoDeVistaPrevia`, que es
+ * donde esta explicada la trampa de `NO_VISIBLE`.
  *
  * Dinamica: depende del estatus y del reloj (regla 14).
  */
@@ -63,17 +60,13 @@ const VistaPublicaDeConvocatoria = async ({
   const finVenta = desdeIso(convocatoria.finVenta);
   if (!publicadaEn || !inicioVenta || !finVenta) notFound();
 
-  const ahora = new Date();
-  // Ver el borrador "desde el futuro": el instante en que empezara a ser
-  // visible. Con `ahora` a secas, una convocatoria sin publicar se veria como
-  // venta cerrada.
-  const aunNoVisible =
-    convocatoria.estatus !== "PUBLICADA" || publicadaEn > ahora;
-  const momento = publicadaEn > ahora ? publicadaEn : ahora;
+  const { momento, aunNoVisible } = momentoDeVistaPrevia(
+    { estatus: convocatoria.estatus, publicadaEn },
+    new Date(),
+  );
 
   const idioma = await obtenerIdiomaDePeticion();
   const diccionario = obtenerDiccionario(idioma);
-  const etiquetas = diccionario.convocatorias;
 
   const lotes = await lotesParaCatalogo(convocatoria.lotes);
   const estadoDeVenta = calcularEstadoDeVentaUi(
@@ -83,19 +76,15 @@ const VistaPublicaDeConvocatoria = async ({
 
   return (
     <main className="catalogo">
-      <Info title={etiquetas.vistaPreviaTitulo}>
-        <Text2 renderAs="p">
-          {aunNoVisible
-            ? `${etiquetas.vistaPreviaAunNoVisible} ${formatearFechaHora(publicadaEn)} (${diccionario.catalogo.horaDeNegocio})`
-            : etiquetas.vistaPreviaVisible}
-        </Text2>
-        <Text2 renderAs="p">{etiquetas.vistaPreviaEnlaces}</Text2>
-        <Secondary renderAs={Link} href={`/admin/convocatorias/${id}`} small>
-          {etiquetas.volverAlDetalle}
-        </Secondary>
-      </Info>
+      <AvisoDeVistaPrevia
+        aunNoVisible={aunNoVisible}
+        publicadaEn={publicadaEn}
+        rutaDelDetalle={`/admin/convocatorias/${id}`}
+        diccionario={diccionario}
+      />
 
       <VistaDeConvocatoria
+        rutaBase={`/admin/convocatorias/${id}/vista-publica`}
         convocatoria={convocatoria}
         lotes={lotes}
         estadoDeVenta={estadoDeVenta}
