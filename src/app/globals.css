@@ -47,3 +47,32 @@
 .eden-scroll-track__fade.eden-scroll-track--has-right {
   margin-inline: 44px;
 }
+
+/*
+ * `HtmlFragment` de Eden: prosa en el flujo de la pagina, sin area de scroll
+ * propia.
+ *
+ * Su envoltorio trae `overflow: auto`, y eso dibujaba una barra vertical dentro
+ * del recuadro de la descripcion **por un solo pixel**. Medido en la pagina
+ * desplegada: la altura real del elemento era `575.922px`, que `clientHeight`
+ * redondea a 576 mientras `scrollHeight` redondea el contenido a 577. Ningun
+ * ancestro acotaba la altura —toda la cadena tenia `alto === contenido` y
+ * `max-height: none`—, o sea que no habia nada que ocultar: la barra era
+ * redondeo de subpixel.
+ *
+ * Por eso mismo costo encontrarlo: la fraccion depende del ancho, la fuente y
+ * el zoom, asi que en otra ventana los dos redondeos coinciden y no aparece. No
+ * se reprodujo en desarrollo ni en un build de produccion local —las dos veces
+ * la altura cayo en `562.438px`— y parecia una diferencia del entorno
+ * desplegado (`desafios-implementacion.md` 74).
+ *
+ * **Se quita en los dos ejes y no solo en el vertical**, porque CSS no deja
+ * mezclarlos: con `visible` en un eje y cualquier otro valor en el otro, el
+ * `visible` se convierte en `auto` y la barra volveria. No se pierde nada: la
+ * descripcion solo admite las etiquetas de `htmlDeDescripcion.ts` y la unica
+ * que puede salirse de ancho es `<pre>`, que ya trae su propio `overflow: auto`
+ * de `eden-normalize`.
+ */
+.eden-html-fragment-wrapper {
+  overflow: visible;
+}

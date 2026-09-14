@@ -4077,3 +4077,57 @@ seccion 58, que costo lo mismo aprender dos veces.
 El mensaje **no dice que elemento sobra**, y por eso cada caso de estos cuesta una ronda de ida y
 vuelta con el payload. Nombrar el atributo ofensor en la respuesta convertiria el diagnostico en leer
 la pantalla; exige llevar texto libre por `detalles`, que hoy solo transporta claves de diccionario.
+
+## 74) Una barra de desplazamiento por un pixel de redondeo
+
+### Problema
+Mostrar la descripcion de la participacion en la pantalla publica.
+
+### Sintoma
+El recuadro de la descripcion tenia **su propia barra de desplazamiento vertical**, en vez de que
+creciera y scrolleara la pagina. Y **no se reproducia en la maquina de desarrollo**.
+
+### Causa raiz
+El envoltorio de `HtmlFragment` trae `overflow: auto` (`eden-html-fragment/.../Wrapper.css`). Con la
+cadena de ancestros medida en la pagina desplegada:
+
+```
+SECTION.eden-html-fragment-wrapper   alto 576   cont 577   h 575.922px   overflow-y auto
+DIV.eden-card                        alto 658   cont 658   filas "38.39px 575.922px"
+MAIN.catalogo                        alto 1878  cont 1878
+DIV.envoltura__contenido             alto 2006  cont 2006
+DIV.envoltura                        alto 2112  cont 2112
+```
+
+**Nada acotaba la altura**: toda la cadena tiene `alto === cont` y `max-height: none`, y la fila del
+`Card` mide exactamente lo que el envoltorio. La barra era **un pixel de redondeo**: la altura real
+es `575.922px`, `clientHeight` la redondea a 576 y `scrollHeight` redondea el contenido a 577. Con
+`overflow: auto`, esa diferencia basta.
+
+Que la fraccion dependa del ancho, la fuente y el zoom es lo que hizo parecer que era un problema del
+ambiente desplegado, y costo cinco hipotesis descartadas **con medicion**: el `overflow-x: hidden`
+del armazon —que si vuelve el eje Y `auto`, pero no acota—, el CSS propio, el contenido crudo, el
+contenido ya renderizado con las clases de Eden, y un build de produccion local. En las cinco la
+altura cayo en `562.438px` y los dos redondeos coincidieron.
+
+### Solucion aplicada
+`overflow: visible` sobre `.eden-html-fragment-wrapper` en `globals.css`. La descripcion es prosa en
+el flujo de la pagina y no necesita area de scroll propia; como nada acota su altura, quitar el
+`overflow` no puede ocultar ni derramar nada.
+
+**Se quita en los dos ejes**, porque CSS no deja mezclarlos: con `visible` en un eje y cualquier otro
+valor en el otro, el `visible` se computa como `auto` y la barra volveria. No se pierde el scroll
+horizontal de contenido ancho: la descripcion solo admite las etiquetas de `htmlDeDescripcion.ts`, y
+la unica que puede salirse de ancho es `<pre>`, que ya trae su propio `overflow: auto` de
+`eden-normalize`.
+
+### Regla para futuro
+**Antes de buscar quien acota una altura, comprobar que alguien la acota.** La cadena de ancestros
+con `clientHeight`, `scrollHeight` y `max-height` lo contesta en un comando, y aqui habria ahorrado
+cinco rondas: en cuanto se ve `576` contra `577` con `max-height: none` en todos, el problema deja de
+ser "que lo recorta" y pasa a ser "sobra un pixel".
+
+**Y una diferencia de un pixel no es un problema de entorno aunque lo parezca.** "En local no se
+reproduce" empujo a comparar desarrollo con produccion —igual que en la seccion 73, y por segunda vez
+en dos dias— cuando la variable era el tamano de la ventana. La pregunta util no es *que entorno
+corre* sino *que numero difiere*.
