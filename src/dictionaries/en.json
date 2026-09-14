@@ -267,7 +267,13 @@
     "motivoRetiroLoteAyuda": "It is recorded in the audit log. It is required.",
     "loteConFila": "It cannot be removed: participants are already queued.",
     "enOtraConvocatoria": "That vehicle joined another active sale announcement. Refresh the list and choose a different one.",
-    "creadaPor": "Created by"
+    "creadaPor": "Created by",
+    "vistaPublica": "View as participant",
+    "vistaPreviaTitulo": "Preview",
+    "vistaPreviaVisible": "This is how participants with access to this sale type see this announcement.",
+    "vistaPreviaAunNoVisible": "It is not visible to anyone yet. This is how it will look once published:",
+    "vistaPreviaEnlaces": "Vehicles link to the participant screens, which only open once the announcement is published.",
+    "volverAlDetalle": "Back to the announcement"
   },
   "validacionConvocatoria": {
     "requerido": "This field is required",
@@ -337,6 +343,7 @@
     "horaDeNegocio": "Central Mexico time",
     "cantidadDeVehiculos": "vehicles included",
     "seccionLotes": "Available vehicles",
+    "sinLotes": "This announcement has no vehicles yet.",
     "enFila": "in line",
     "volverAlCatalogo": "Back to sale announcements",
     "volverALaConvocatoria": "Back to the sale announcement",

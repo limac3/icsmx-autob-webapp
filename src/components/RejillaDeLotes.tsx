@@ -60,7 +60,11 @@ const RejillaDeLotes = ({
   const etiquetas = diccionario.catalogo;
 
   if (lotes.length === 0) {
-    return <Text2 renderAs="p">{etiquetas.sinResultados}</Text2>;
+    // `sinResultados` es del **listado de convocatorias** —"No hay
+    // convocatorias disponibles"— y aqui la rejilla habla de vehiculos: el
+    // mensaje contestaba otra pregunta. Lo destapo la vista previa
+    // administrativa, mirando una convocatoria sin lotes.
+    return <Text2 renderAs="p">{etiquetas.sinLotes}</Text2>;
   }
 
   return (

@@ -59,8 +59,16 @@ describe("RejillaDeLotes", () => {
         />,
       );
     });
+    // Se afirma contra la clave y no contra el texto: el literal que habia
+    // aqui era el del **listado de convocatorias**, y fijaba un mensaje que
+    // contestaba otra pregunta. Con la clave, cambiar la redaccion no rompe
+    // la prueba y cambiar de mensaje si.
+    const diccionario = obtenerDiccionario("es");
     expect(context.container.textContent).toContain(
-      "No hay convocatorias disponibles en este momento.",
+      diccionario.catalogo.sinLotes,
+    );
+    expect(context.container.textContent).not.toContain(
+      diccionario.catalogo.sinResultados,
     );
   });
 

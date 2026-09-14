@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { forbidden, notFound, redirect } from "next/navigation";
 import { Badge } from "@churchofjesuschrist/eden-badge";
+import { Secondary } from "@churchofjesuschrist/eden-buttons";
 import { H1, H4 } from "@churchofjesuschrist/eden-headings";
 import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import AccionesDeConvocatoria from "@/components/AccionesDeConvocatoria";
@@ -177,6 +178,19 @@ const DetalleDeConvocatoria = async ({
             </Link>
           ) : null}
         </div>
+
+        {/* Ver la convocatoria como la vera el participante. Es una ruta
+            administrativa y no un enlace a la pantalla publica porque aquella
+            exige `PUBLICADA`, `publicadaEn <= ahora` y el permiso de venta del
+            tipo (R-01): quien administra normalmente no tiene ese permiso, y
+            sobre todo lo util es revisar **antes** de publicar, que es justo
+            cuando aquella ruta devuelve 404. */}
+        <Secondary
+          renderAs={Link}
+          href={`/admin/convocatorias/${convocatoria.convocatoriaId}/vista-publica`}
+        >
+          {diccionario.convocatorias.vistaPublica}
+        </Secondary>
       </header>
 
       <FormularioConvocatoria

@@ -267,7 +267,13 @@
     "motivoRetiroLoteAyuda": "Queda en la bitácora. Es obligatorio.",
     "loteConFila": "No se puede retirar: ya hay participantes formados.",
     "enOtraConvocatoria": "Ese vehículo entró en otra convocatoria activa. Actualiza la lista y elige otro.",
-    "creadaPor": "Creada por"
+    "creadaPor": "Creada por",
+    "vistaPublica": "Ver como participante",
+    "vistaPreviaTitulo": "Vista previa",
+    "vistaPreviaVisible": "Así ven esta convocatoria los participantes con acceso a este tipo de venta.",
+    "vistaPreviaAunNoVisible": "Todavía no es visible para nadie. Así se verá a partir de su publicación:",
+    "vistaPreviaEnlaces": "Los vehículos llevan a las pantallas del participante, que solo abren si la convocatoria ya está publicada.",
+    "volverAlDetalle": "Volver a la convocatoria"
   },
   "validacionConvocatoria": {
     "requerido": "Este dato es obligatorio",
@@ -337,6 +343,7 @@
     "horaDeNegocio": "Horario del centro de México",
     "cantidadDeVehiculos": "vehículos incluidos",
     "seccionLotes": "Vehículos disponibles",
+    "sinLotes": "Esta convocatoria todavía no tiene vehículos.",
     "enFila": "en fila",
     "volverAlCatalogo": "Volver a convocatorias",
     "volverALaConvocatoria": "Volver a la convocatoria",
