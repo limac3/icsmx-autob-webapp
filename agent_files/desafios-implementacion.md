@@ -4010,3 +4010,58 @@ un despliegue, la pregunta es *que hay en `.env.local` que el entorno desplegado
 proyecto, con dos causas distintas: el Lambda (65) y el computo SSR (esta). La generalizacion:
 **la consola de Amplify configura el build, y cada consumidor fuera del build necesita su propio
 camino** — `addEnvironment` para una funcion de CDK, el bloque `env` para el servidor de Next.
+
+## 73) La lista blanca, otra vez mas estrecha que los controles del editor
+
+### Problema
+Poner un enlace en la descripcion de la participacion desde el editor enriquecido.
+
+### Sintoma
+Con texto simple, guarda. Al insertar un enlace, el formulario responde **"El formato del texto
+tiene elementos que no se admiten"** — el motivo `etiqueta_no_admitida`, distinto del
+`enlace_no_admitido` de la seccion 58.
+
+### Causa raiz
+El editor ofrece una casilla **"abrir en pestana nueva"**, y su exportador de `LinkNode`
+(`eden-rich-text-editor/lib/es/utils/html.js`) escribe entonces dos atributos mas:
+
+```js
+if (node.__target === "_blank") {
+  element.setAttribute("target", "_blank");
+  element.setAttribute("rel", "noopener");
+}
+```
+
+La validacion admitia **un solo atributo y solo en `<a>`**: `HREF` exigia que el resto de la
+etiqueta fuera exactamente `href="..."`. Con `target` y `rel` presentes, el resto no encajaba y
+caia como etiqueta no admitida. Habia incluso una prueba que fijaba ese rechazo a proposito.
+
+Es la **segunda vez** que esta lista queda por detras de lo que el editor produce —la primera fue
+`mailto:` (seccion 58)— y la cabecera del propio archivo ya advertia que eso no debe pasar: *"como
+el editor va con `availableControls` restringido, un usuario honesto nunca produce algo fuera de
+esta lista"*. La advertencia estaba escrita; lo que faltaba era comprobarla contra el paquete.
+
+### Solucion aplicada
+El resto de la etiqueta se consume **atributo por atributo** contra una lista de nombres con sus
+valores admisibles: `href` (con el esquema de siempre), `target` solo `_blank`, y `rel` solo
+combinaciones de `noopener` y `noreferrer`.
+
+**La propiedad que habia que conservar es que lo no reconocido caiga**, y por eso el patron va
+anclado al principio y se consume el resto en un bucle: un `matchAll` global habria reconocido los
+atributos buenos e **ignorado la basura entre ellos**. Con el bucle, un `onclick=alert(1)` sin
+comillas no encaja, el resto no queda vacio y la etiqueta se rechaza. Hay prueba de ese caso, y de
+que un `<a>` con atributos pero sin `href` tambien cae.
+
+No se exige `rel` junto a `target`: los navegadores actuales ya implican `noopener` en
+`target="_blank"`, y exigirlo volveria a poner al servidor por delante del editor — el error que
+esta seccion documenta.
+
+### Regla para futuro
+**Una lista blanca de marcado se verifica contra el codigo del editor, no contra la intuicion.** La
+pregunta no es "que etiquetas parecen razonables" sino "que emite exactamente el exportador de este
+paquete con los controles que le habilito". Son diez minutos de leer `utils/html.js` y evitan un
+formulario imposible de guardar con un mensaje que no explica nada.
+
+Y **cuando una prueba fija un rechazo, conviene anotar de donde salio el caso**: la prueba que
+afirmaba "rechaza cualquier atributo que no sea href" parecia una decision de seguridad y era una
+suposicion sobre el editor.

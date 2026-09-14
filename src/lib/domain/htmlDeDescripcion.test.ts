@@ -66,13 +66,66 @@ describe("lo que no se reconoce se rechaza", () => {
     );
   });
 
-  it("rechaza cualquier atributo que no sea href en un enlace", () => {
+  it("admite lo que el editor produce al abrir en pestana nueva", () => {
+    // `eden-rich-text-editor` tiene una casilla "abrir en pestana nueva" y su
+    // exportador escribe estos dos atributos. Rechazarlos dejaba un formulario
+    // imposible de guardar (desafios 73), igual que paso con `mailto:` (58).
     expect(
-      revisarHtmlDeDescripcion('<a href="/x" target="_blank">ir</a>'),
+      revisarHtmlDeDescripcion(
+        '<a href="https://ejemplo.test" target="_blank" rel="noopener">ir</a>',
+      ),
+    ).toBeUndefined();
+    // Y en el orden inverso, que tambien es HTML valido.
+    expect(
+      revisarHtmlDeDescripcion(
+        '<a rel="noopener noreferrer" target="_blank" href="/x">ir</a>',
+      ),
+    ).toBeUndefined();
+  });
+
+  it("rechaza atributos fuera de la lista, y valores fuera de lo previsto", () => {
+    // El atributo no existe para un enlace.
+    expect(
+      revisarHtmlDeDescripcion('<a href="/x" download="a.pdf">ir</a>'),
     ).toBe("etiqueta_no_admitida");
+    // El atributo si existe, pero con un valor que el editor no produce:
+    // `_self` no aporta nada y `rel` arbitrario abre la puerta a mas.
+    expect(revisarHtmlDeDescripcion('<a href="/x" target="_self">ir</a>')).toBe(
+      "etiqueta_no_admitida",
+    );
+    expect(
+      revisarHtmlDeDescripcion('<a href="/x" rel="cualquiera">ir</a>'),
+    ).toBe("etiqueta_no_admitida");
+    // Ningun otro elemento admite atributos.
     expect(revisarHtmlDeDescripcion('<strong class="x">hola</strong>')).toBe(
       "etiqueta_no_admitida",
     );
+  });
+
+  it("rechaza un atributo sin comillas aunque venga junto a otros validos", () => {
+    // La propiedad que sostiene todo lo anterior: el resto se consume atributo
+    // por atributo y lo que no encaja **cae**. Un escaneo global habria
+    // reconocido el `href` e ignorado lo de al lado.
+    expect(
+      revisarHtmlDeDescripcion('<a href="/x" onclick=alert(1)>ir</a>'),
+    ).toBe("etiqueta_no_admitida");
+    expect(
+      revisarHtmlDeDescripcion('<a href="/x" onclick="alert(1)">ir</a>'),
+    ).toBe("etiqueta_no_admitida");
+  });
+
+  it("rechaza un enlace con atributos pero sin href", () => {
+    expect(revisarHtmlDeDescripcion('<a target="_blank">ir</a>')).toBe(
+      "etiqueta_no_admitida",
+    );
+  });
+
+  it("sigue revisando el esquema aunque el href no sea el primer atributo", () => {
+    expect(
+      revisarHtmlDeDescripcion(
+        '<a target="_blank" href="javascript:alert(1)">ir</a>',
+      ),
+    ).toBe("enlace_no_admitido");
   });
 
   it("rechaza un comentario, que puede esconder carga util", () => {
