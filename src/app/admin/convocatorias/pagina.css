@@ -5,6 +5,21 @@
   display: grid;
   gap: 1.5rem;
   padding: 1.5rem;
+
+  /* **Sin esto la pantalla no es responsiva, y el sintoma enganaba.** La
+     columna implicita de una rejilla se dimensiona a max-content, y el
+     max-content de la lista de pestanas de Eden son sus seis pestanas en un
+     renglon (display: flex con white-space: nowrap): 738 px. La rejilla crecia
+     a eso, el overflow-x: hidden del armazon lo recortaba, y en un telefono el
+     boton "Crear convocatoria" quedaba fuera de la pantalla y sin forma de
+     alcanzarlo — medido a 390 px: right 778.
+
+     Lo peor es que **impedia que Eden se adaptara solo**: Tabs trae una lista
+     alternativa para pantalla angosta (.eden-tabs__mobile-tab-list) y la activa
+     cuando la suya no cabe. Con la rejilla creciendo a su medida, nunca dejaba
+     de caber. Con minmax(0, 1fr) la columna se queda en el ancho disponible y
+     el componente hace lo que ya sabia hacer. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .convocatorias__encabezado {

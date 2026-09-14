@@ -16,7 +16,6 @@ import {
 import { Tab, Tabs } from "@churchofjesuschrist/eden-tabs";
 import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import type { Diccionario } from "@/dictionaries";
-import { textoPlanoDeDescripcion } from "@/lib/domain/htmlDeDescripcion";
 import {
   ESTATUS_CONVOCATORIA,
   type Convocatoria,
@@ -89,11 +88,13 @@ const TablaConvocatorias = ({
                 <Table className="tabla-convocatorias">
                   <ColGroup>
                     <Col id="col-convocatoria" />
+                    <Col id="col-tipo" />
                     <Col id="col-periodo" />
                     <Col id="col-estatus" />
                   </ColGroup>
                   <THead>
                     <TR>
+                      <TH scope="col">{etiquetas.columnaConvocatoria}</TH>
                       <TH scope="col">{etiquetas.columnaTipo}</TH>
                       <TH scope="col">{etiquetas.columnaPeriodo}</TH>
                       <TH scope="col">{etiquetas.columnaEstatus}</TH>
@@ -102,22 +103,27 @@ const TablaConvocatorias = ({
                   <TBody>
                     {grupo.map((convocatoria) => (
                       <TR key={convocatoria.convocatoriaId}>
+                        {/* Nombre y folio, **lo mismo que el listado
+                            publico**. Antes esta celda mostraba el tipo y un
+                            resumen de la descripcion: el tipo no distingue una
+                            venta de la siguiente —todas las de empleados se
+                            llamaban igual— y el resumen ocupaba tres renglones
+                            de texto que se repite convocatoria a convocatoria.
+                            El folio es el dato con el que se pregunta por una,
+                            y quien administra necesita reconocerla por el mismo
+                            nombre con el que la ve el participante. */}
                         <TD>
                           <Link
                             href={`/admin/convocatorias/${convocatoria.convocatoriaId}`}
                           >
-                            {diccionario.tiposConvocatoria[convocatoria.tipo]}
+                            {convocatoria.nombre}
                           </Link>
-                          {/* La descripcion es HTML del editor enriquecido.
-                              Pintarla tal cual dejaria las etiquetas a la vista
-                              —React las escapa, asi que no es un agujero, pero
-                              si un listado ilegible—. */}
                           <Text4 renderAs="p">
-                            {textoPlanoDeDescripcion(
-                              convocatoria.descripcionParticipacion,
-                              120,
-                            )}
+                            {`${etiquetas.campoFolio}: ${convocatoria.folio}`}
                           </Text4>
+                        </TD>
+                        <TD>
+                          {diccionario.tiposConvocatoria[convocatoria.tipo]}
                         </TD>
                         <TD>
                           {periodos[convocatoria.convocatoriaId] ?? ""}

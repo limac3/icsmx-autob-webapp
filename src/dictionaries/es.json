@@ -223,6 +223,7 @@
     "descripcion": "Agrupaciones de vehículos para su venta.",
     "nueva": "Crear convocatoria",
     "sinResultados": "No hay convocatorias en este estatus.",
+    "columnaConvocatoria": "Convocatoria",
     "columnaPeriodo": "Periodo de venta",
     "columnaEstatus": "Estatus",
     "columnaTipo": "Tipo",

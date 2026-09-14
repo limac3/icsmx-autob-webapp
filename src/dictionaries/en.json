@@ -223,6 +223,7 @@
     "descripcion": "Groups of vehicles offered for sale.",
     "nueva": "Create sale announcement",
     "sinResultados": "There are no sale announcements with this status.",
+    "columnaConvocatoria": "Announcement",
     "columnaPeriodo": "Sale period",
     "columnaEstatus": "Status",
     "columnaTipo": "Type",
