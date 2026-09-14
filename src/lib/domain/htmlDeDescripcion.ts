@@ -82,28 +82,36 @@ const NOMBRE = /^\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)/;
 const ATRIBUTO = /^\s*([a-zA-Z][a-zA-Z0-9-]*)\s*=\s*("([^"]*)"|'([^']*)')\s*/;
 
 /**
- * Atributos admisibles en un enlace, con los valores que puede tomar cada uno.
+ * Atributos admisibles **por elemento**, con los valores que cada uno puede
+ * tomar. Un elemento que no aparece aqui no admite ninguno.
  *
- * **La lista sale de lo que el editor produce, no de lo que parece prudente.**
- * `eden-rich-text-editor` ofrece una casilla "abrir en pestana nueva" y su
- * exportador escribe `target="_blank" rel="noopener"` (`utils/html.js`,
- * exportador de `LinkNode`). Con `href` como unico atributo admitido, marcar
- * esa casilla producia un formulario imposible de guardar y un mensaje —"el
- * formato del texto tiene elementos que no se admiten"— que no decia cual era
- * el elemento.
+ * **La lista sale de lo que el editor emite, no de lo que parece prudente**, y
+ * cada entrada se gano con un formulario que no se podia guardar:
  *
- * Es la **segunda vez** que esta lista queda mas estrecha que los controles
- * del editor; la primera fue `mailto:` (`desafios-implementacion.md` 58 y 73).
- * La cabecera de este archivo ya advertia que eso no debe pasar.
+ * - `target` y `rel`: los escribe el exportador de `LinkNode` cuando se marca
+ *   la casilla "abrir en pestana nueva".
+ * - `title`: Lexical lo pone en el enlace junto al `href`. Es texto inerte —lo
+ *   que el navegador muestra al pasar el raton— y el serializador ya escapa su
+ *   contenido; se acota a texto sin `<` ni `>` para que no pueda cerrar la
+ *   etiqueta.
+ * - `value` en `<li>`: Lexical lo emite en **cada** elemento de lista, tambien
+ *   en listas con vinetas. Es el numero de orden y se acota a digitos.
  *
- * `rel` se acota a los dos valores que existen para **quitar** capacidad a la
- * pestana nueva; cualquier otro se rechaza. No se exige `rel` junto a `target`
- * porque los navegadores actuales ya implican `noopener` en `target="_blank"`,
- * y exigirlo volveria a poner al servidor por delante del editor.
+ * Esta ultima es la que explica por que el mismo texto pasaba en una maquina y
+ * fallaba en otra: no era el entorno, era que solo una de las dos pruebas
+ * llevaba una lista (`desafios-implementacion.md` 73).
+ *
+ * `rel` se acota a los dos valores que **quitan** capacidad a la pestana nueva.
+ * No se exige junto a `target` porque los navegadores actuales ya implican
+ * `noopener`, y exigirlo volveria a poner al servidor por delante del editor.
  */
-const VALORES_DE_ATRIBUTO: Record<string, RegExp> = {
-  target: /^_blank$/,
-  rel: /^(noopener|noreferrer)(\s+(noopener|noreferrer))*$/,
+const ATRIBUTOS_POR_ETIQUETA: Record<string, Record<string, RegExp>> = {
+  a: {
+    target: /^_blank$/,
+    rel: /^(noopener|noreferrer)(\s+(noopener|noreferrer))*$/,
+    title: /^[^<>]*$/,
+  },
+  li: { value: /^\d{1,4}$/ },
 };
 
 export type MotivoDeHtml = "etiqueta_no_admitida" | "enlace_no_admitido";
@@ -149,8 +157,10 @@ export const revisarHtmlDeDescripcion = (
 
     if (resto === "") continue;
 
-    // Los atributos solo se admiten en el unico elemento que los necesita.
-    if (etiqueta.toLowerCase() !== "a") return "etiqueta_no_admitida";
+    const nombreEtiqueta = etiqueta.toLowerCase();
+    const admisibles = ATRIBUTOS_POR_ETIQUETA[nombreEtiqueta];
+    // Un elemento que no figura en el mapa no admite atributo alguno.
+    if (!admisibles) return "etiqueta_no_admitida";
 
     let pendiente = resto;
     let tieneHref = false;
@@ -164,14 +174,14 @@ export const revisarHtmlDeDescripcion = (
       const nombreAtributo = (atributo[1] ?? "").toLowerCase();
       const valor = (atributo[3] ?? atributo[4] ?? "").trim();
 
-      if (nombreAtributo === "href") {
+      // `href` se trata aparte porque su fallo tiene motivo propio: lo que
+      // importa de un enlace no es que lleve el atributo, es a donde apunta.
+      if (nombreAtributo === "href" && nombreEtiqueta === "a") {
         tieneHref = true;
         if (!ENLACE_ADMISIBLE.test(valor)) return "enlace_no_admitido";
       } else {
-        const admisible = VALORES_DE_ATRIBUTO[nombreAtributo];
-        if (!admisible || !admisible.test(valor)) {
-          return "etiqueta_no_admitida";
-        }
+        const patron = admisibles[nombreAtributo];
+        if (!patron || !patron.test(valor)) return "etiqueta_no_admitida";
       }
 
       pendiente = pendiente.slice(atributo[0].length);
@@ -179,7 +189,7 @@ export const revisarHtmlDeDescripcion = (
 
     // Un `<a>` con atributos pero sin `href` no es un enlace: es una etiqueta
     // con adornos, y no hay control del editor que la produzca.
-    if (!tieneHref) return "etiqueta_no_admitida";
+    if (nombreEtiqueta === "a" && !tieneHref) return "etiqueta_no_admitida";
   }
 
   return undefined;

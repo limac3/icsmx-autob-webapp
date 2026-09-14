@@ -4014,54 +4014,66 @@ camino** — `addEnvironment` para una funcion de CDK, el bloque `env` para el s
 ## 73) La lista blanca, otra vez mas estrecha que los controles del editor
 
 ### Problema
-Poner un enlace en la descripcion de la participacion desde el editor enriquecido.
+Escribir la descripcion de la participacion con el editor enriquecido: un enlace y una lista.
 
 ### Sintoma
-Con texto simple, guarda. Al insertar un enlace, el formulario responde **"El formato del texto
-tiene elementos que no se admiten"** — el motivo `etiqueta_no_admitida`, distinto del
-`enlace_no_admitido` de la seccion 58.
+Con texto simple, guarda. Con un enlace, el formulario responde **"El formato del texto tiene
+elementos que no se admiten"** —el motivo `etiqueta_no_admitida`, distinto del
+`enlace_no_admitido` de la seccion 58— y despues **no se recupera**: borrar todo y escribir una
+sola letra sigue mostrando el mismo mensaje.
+
+Y lo que mas despisto: **el mismo ejercicio pasaba en la maquina de desarrollo y fallaba en el
+ambiente desplegado.**
 
 ### Causa raiz
-El editor ofrece una casilla **"abrir en pestana nueva"**, y su exportador de `LinkNode`
-(`eden-rich-text-editor/lib/es/utils/html.js`) escribe entonces dos atributos mas:
+Tres atributos que el editor emite por su cuenta y que la validacion no admitia. El primero se
+encontro leyendo el paquete; los otros dos, **leyendo el HTML real que el navegador mando**:
 
-```js
-if (node.__target === "_blank") {
-  element.setAttribute("target", "_blank");
-  element.setAttribute("rel", "noopener");
-}
-```
+| Atributo | Quien lo pone |
+| --- | --- |
+| `target="_blank"` y `rel="noopener"` en `<a>` | El exportador de `LinkNode` cuando se marca la casilla "abrir en pestana nueva" (`eden-rich-text-editor/lib/es/utils/html.js`) |
+| `title` en `<a>` | Lexical, junto al `href`, sin que haya control que lo pida |
+| `value` en `<li>` | Lexical, en **cada** elemento de lista, tambien en listas con vinetas |
 
 La validacion admitia **un solo atributo y solo en `<a>`**: `HREF` exigia que el resto de la
-etiqueta fuera exactamente `href="..."`. Con `target` y `rel` presentes, el resto no encajaba y
-caia como etiqueta no admitida. Habia incluso una prueba que fijaba ese rechazo a proposito.
+etiqueta fuera exactamente `href="..."`. Habia incluso una prueba que fijaba ese rechazo, y parecia
+una decision de seguridad cuando era una suposicion sobre el editor.
 
-Es la **segunda vez** que esta lista queda por detras de lo que el editor produce —la primera fue
+**La diferencia entre maquinas no era de entorno.** Era que solo una de las dos pruebas llevaba una
+lista con vinetas, y `<li value="1">` es lo que caia. Se perdio una ronda de diagnostico buscando
+una diferencia entre desarrollo y produccion que no existia.
+
+Es la **tercera vez** que esta lista queda por detras de lo que el editor produce —antes fue
 `mailto:` (seccion 58)— y la cabecera del propio archivo ya advertia que eso no debe pasar: *"como
 el editor va con `availableControls` restringido, un usuario honesto nunca produce algo fuera de
-esta lista"*. La advertencia estaba escrita; lo que faltaba era comprobarla contra el paquete.
+esta lista"*. La advertencia estaba escrita; lo que faltaba era comprobarla.
 
 ### Solucion aplicada
-El resto de la etiqueta se consume **atributo por atributo** contra una lista de nombres con sus
-valores admisibles: `href` (con el esquema de siempre), `target` solo `_blank`, y `rel` solo
-combinaciones de `noopener` y `noreferrer`.
+Los atributos pasan a declararse **por elemento** (`ATRIBUTOS_POR_ETIQUETA`), con el patron de
+valor de cada uno: en `<a>`, `target` solo `_blank`, `rel` solo combinaciones de `noopener` y
+`noreferrer`, y `title` texto sin `<` ni `>`; en `<li>`, `value` solo digitos. `href` sigue
+aparte porque su fallo tiene motivo propio.
 
 **La propiedad que habia que conservar es que lo no reconocido caiga**, y por eso el patron va
-anclado al principio y se consume el resto en un bucle: un `matchAll` global habria reconocido los
-atributos buenos e **ignorado la basura entre ellos**. Con el bucle, un `onclick=alert(1)` sin
-comillas no encaja, el resto no queda vacio y la etiqueta se rechaza. Hay prueba de ese caso, y de
-que un `<a>` con atributos pero sin `href` tambien cae.
+anclado al principio y el resto se consume en bucle: un `matchAll` global habria reconocido los
+atributos buenos e **ignorado la basura entre ellos**. Hay prueba de un `onclick=alert(1)` sin
+comillas junto a un `href` valido.
 
-No se exige `rel` junto a `target`: los navegadores actuales ya implican `noopener` en
-`target="_blank"`, y exigirlo volveria a poner al servidor por delante del editor — el error que
-esta seccion documenta.
+Y la prueba que mas vale del archivo es la descripcion **real** que fallo, entera, como fixture: no
+un caso inventado sino el texto que una persona escribio.
 
 ### Regla para futuro
 **Una lista blanca de marcado se verifica contra el codigo del editor, no contra la intuicion.** La
 pregunta no es "que etiquetas parecen razonables" sino "que emite exactamente el exportador de este
-paquete con los controles que le habilito". Son diez minutos de leer `utils/html.js` y evitan un
-formulario imposible de guardar con un mensaje que no explica nada.
+paquete". Y cuando una prueba fija un rechazo, conviene anotar de donde salio el caso: la que
+afirmaba "rechaza cualquier atributo que no sea href" parecia seguridad y era una suposicion.
 
-Y **cuando una prueba fija un rechazo, conviene anotar de donde salio el caso**: la prueba que
-afirmaba "rechaza cualquier atributo que no sea href" parecia una decision de seguridad y era una
-suposicion sobre el editor.
+**Y ante "en mi maquina funciona", la primera pregunta es que dato entra, no que entorno corre.** Se
+gasto una ronda comparando desarrollo con produccion cuando la diferencia estaba en el contenido: una
+lista con vinetas. Lo resolvio pedir el HTML que el navegador mandaba — la misma leccion de la
+seccion 58, que costo lo mismo aprender dos veces.
+
+### Pendiente
+El mensaje **no dice que elemento sobra**, y por eso cada caso de estos cuesta una ronda de ida y
+vuelta con el payload. Nombrar el atributo ofensor en la respuesta convertiria el diagnostico en leer
+la pantalla; exige llevar texto libre por `detalles`, que hoy solo transporta claves de diccionario.

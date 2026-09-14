@@ -260,3 +260,45 @@ describe("textoPlanoDeDescripcion", () => {
     expect(textoPlanoDeDescripcion("<p></p><br>")).toBe("");
   });
 });
+
+describe("el contenido real que fallo en el ambiente de pruebas", () => {
+  // **Esta es la prueba que mas vale de este archivo**: no es un caso inventado,
+  // es la descripcion que una persona escribio y que el servidor rechazo con un
+  // mensaje que no explicaba nada. Traia dos atributos que el editor pone solo:
+  // `title` en el enlace y `value` en cada elemento de lista.
+  //
+  // El mismo texto pasaba en una maquina y fallaba en otra, y parecia una
+  // diferencia de entorno. No lo era: solo una de las dos pruebas llevaba una
+  // lista con vinetas.
+  const DESCRIPCION_REAL =
+    '<h4>Las condiciones físicas, mecánicas y legales que se muestran aquí son generales, verifique las mismas a detalle en las fotos publicadas y antes de ofertar haciendo una visita al sitio donde se encuentra el vehículo, ya que una vez confirmada su compra y enviado la ficha de depósito no habrá devoluciones de pagos realizados.</h4><p>Envíe un correo a <a href="mailto:ventavehiculos@churchofjesuschrist.org" title="ventavehiculos@churchofjesuschrist.org">ventavehiculos@churchofjesuschrist.org</a> indicando el ID en el cuerpo del correo y en el asunto del correo del auto de su interés.</p><p>Las solicitudes se tomarán en cuenta en orden cronológico.</p><p>Se le enviará la ficha de deposito correspondiente dos días después en caso de que sea adjudicado y tendrá 2 días hábiles para efectuar el pago (únicamente se aceptaran pagos por transferencia electrónica, NO efectivo), de lo contrario se pasará la oportunidad al siguiente interesado.</p><p>Al efectuarse el pago, deberá entregar la siguiente documentación en formato PDF:</p><ul><li value="1">Identificación oficial INE o pasaporte.</li><li value="2">Cédula del RFC con domicilio fiscal.</li><li value="3">Copia de la transferencia electrónica.</li><li value="4">Describa uso de CFDI, y regimen fiscal</li></ul><p>Las unidades se entregan sin verificación ambiental y con baja de placa.</p><h3>El vehículo se vende a satisfacción en las condiciones y estado en que se encuentra.</h3>';
+
+  it("se acepta entera", () => {
+    expect(revisarHtmlDeDescripcion(DESCRIPCION_REAL)).toBeUndefined();
+  });
+
+  it("cada uno de sus dos atributos, por separado", () => {
+    expect(
+      revisarHtmlDeDescripcion(
+        '<a href="mailto:a@b.test" title="a@b.test">a</a>',
+      ),
+    ).toBeUndefined();
+    expect(
+      revisarHtmlDeDescripcion('<ul><li value="1">uno</li></ul>'),
+    ).toBeUndefined();
+  });
+
+  it("y siguen acotados: ni titulo con etiquetas ni valor que no sea numero", () => {
+    // `title` es texto inerte, pero no debe poder cerrar la etiqueta.
+    expect(
+      revisarHtmlDeDescripcion('<a href="/x" title="a<script>b">a</a>'),
+    ).toBe("etiqueta_no_admitida");
+    expect(revisarHtmlDeDescripcion('<li value="x">uno</li>')).toBe(
+      "etiqueta_no_admitida",
+    );
+    // Y `value` solo existe para `li`: en un parrafo no significa nada.
+    expect(revisarHtmlDeDescripcion('<p value="1">uno</p>')).toBe(
+      "etiqueta_no_admitida",
+    );
+  });
+});
