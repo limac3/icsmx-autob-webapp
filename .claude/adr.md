@@ -11,9 +11,9 @@
 > motor de fila— se verifica leyendo el archivo antes de afirmarlo o de editarlo. Ver
 > `CLAUDE.md`, seccion "Grafo de Codigo — Consulta, No Evidencia".
 >
-> Sincronizado con: rama `main`, 2026-09-15 — **Etapas 14 y 15 implementadas pero sin commit**,
-> asi que sus anclas de codigo todavia no estan en el grafo (`index_repository` se ancla al
-> `head_sha` y no ve el trabajo sin confirmar). Antes de eso: 2026-09-10, Etapas 7 a 11.2
+> Sincronizado con: rama `main`, 2026-09-15 — **Etapas 14 y 15** confirmadas en `7ca60f4`
+> (cupos de participacion por convocatoria y modalidad manual de adjudicacion; sus decisiones
+> viven en el Registro de decisiones, no como `D-N`). Antes de eso: 2026-09-10, Etapas 7 a 11.2
 > confirmadas (`5d746e7`, `496d98e`,
 > `6e45c4e`, `58852e2`, sobre `cc5af85`) mas la **Etapa 2.2** (impersonacion de identidad en
 > desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y navegacion por permiso, decision
