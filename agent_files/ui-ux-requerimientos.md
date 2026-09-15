@@ -448,6 +448,43 @@ Que la consecuencia aparezca antes de confirmar es lo que evita rechazos por err
 
 ---
 
+## 6.1 Adjudicador — `/adjudicacion`
+
+Solo existe para convocatorias de modalidad `MANUAL` (R-23).
+
+- **Bandeja** (`/adjudicacion`) — los lotes que esperan decision, **los que llevan mas tiempo
+  esperando primero**: un lote sin decidir es una venta detenida. Muestra el vehiculo, la
+  convocatoria, **cuantos hay en la fila** —una cantidad, jamas identidades— y desde cuando espera.
+  Avisa si la venta sigue abierta.
+
+  **La bandeja no dictamina**, igual que la del aprobador: cada fila lleva al detalle, donde ya
+  viven los datos completos y el boton. Dos vistas del mismo dictamen se separan al primer cambio.
+
+- **Detalle del lote** (`/adjudicacion/<convocatoriaId>/<loteId>`) — **la unica pantalla fuera de
+  auditoria que expone identidades de terceros**, y es el requerimiento entero: quien decide no
+  puede hacerlo a ciegas. Por cada candidato vivo:
+
+  | Dato | Por que |
+  | --- | --- |
+  | Turno y **hora exacta** de llegada | Lo que el operador pidio explicitamente |
+  | Nombre o correo, y su identificador | Para saber a quien se le adjudica |
+  | Su orden dentro de la convocatoria | Los turnos son por lote y no se comparan entre si (R-22) |
+  | Cuantas adjudicaciones lleva | Su cupo consumido en esta convocatoria (R-09) |
+  | **Sus otras solicitudes aqui, con su orden** | El cruce que el requerimiento pidio |
+
+  **Se advierte cuando la venta sigue abierta**, porque puede decidir de todas formas y la fila que
+  tiene delante puede no ser la ultima. **El motivo es obligatorio**: una decision humana sin razon
+  escrita es tan opaca para el auditor como un salto de turno sin evento.
+
+  **A quien agoto su cupo se le marca, pero no se le esconde.** La autoridad sobre el cupo es la
+  condicion de la transaccion y no esta lectura: entre pintar la tabla y decidir, el cupo puede
+  liberarse. Ocultarlo le quitaria al adjudicador una opcion que quiza si existe.
+
+  Quien solo tiene `Autob_Auditar` ve la fila pero **no los botones**: fiscaliza la decision, no la
+  toma.
+
+---
+
 ## 7. Auditor — `/auditoria`
 
 Solo lectura, sin un solo boton de mutacion.

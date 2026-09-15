@@ -52,6 +52,7 @@ colisiones al crecer el catalogo.
 | `Autob_Venta_a_empleados` | Ver y participar en convocatorias `EMPLEADOS` |
 | `Autob_Venta_en_general` | Ver y participar en convocatorias `PUBLICO_GENERAL` |
 | `Autob_Operar_Tesoreria` | Bandeja, aval, rechazo y descarga de cualquier comprobante |
+| `Autob_Adjudicar_Convocatorias` | Bandeja del adjudicador y adjudicacion manual del ganador |
 | `Autob_Auditar` | Bitacora, fila completa, exportacion y lectura de tesoreria |
 
 **Un empleado recibe los dos permisos de venta.** Eso reemplaza la antigua regla "`EMPLEADO` es
@@ -169,6 +170,17 @@ Quien no tenga el permiso del tipo recibe **404**, no 403 (R-01): un 403 confirm
 | `solicitud:ver-mis-solicitudes` | `Autob_Venta_a_empleados` o `Autob_Venta_en_general` | Filtrado por `titularId` en la consulta, no despues |
 | `solicitud:cancelar` | `Autob_Venta_a_empleados` o `Autob_Venta_en_general` | `titularId === participanteId`; estado `EN_FILA`, `CONGELADA` o `ADJUDICADA` |
 | `fila:ver-completa` | `Autob_Auditar` | Solo desde la vista de auditoria |
+| `adjudicacion:ver-bandeja` | `Autob_Adjudicar_Convocatorias` o `Autob_Auditar` | Sin guarda contextual: es la capacidad que abre el menu. `Autob_Auditar` en solo lectura |
+| `adjudicacion:ver-fila-identificada` | `Autob_Adjudicar_Convocatorias` o `Autob_Auditar` | Convocatoria en modalidad `MANUAL`. **Expone identidades de terceros** |
+| `adjudicacion:adjudicar` | `Autob_Adjudicar_Convocatorias` | Modalidad `MANUAL`; lote `EN_OFERTA` sin adjudicacion; convocatoria `PUBLICADA`; motivo obligatorio |
+
+> **`adjudicacion:ver-fila-identificada` es la segunda accion que expone identidades de terceros**,
+> y la primera que lo hace fuera de auditoria. Es deliberada y es el requerimiento entero: el
+> adjudicador no puede decidir a ciegas. R-12 **no se relaja para nadie mas** — el participante
+> sigue viendo solo `miTurno`, `miPosicion` y `tamanoFila`, y hay prueba de que su DTO no crece.
+>
+> **`Autob_Auditar` ve la bandeja pero no adjudica.** Quien fiscaliza una decision no la toma; es
+> la misma separacion que ya rige en tesoreria.
 
 > **Ningun permiso administrativo habilita `solicitud:crear`.** Quien configura la venta no
 > participa en ella: es la separacion que sostiene la equidad del proceso. Hoy la organizacion la

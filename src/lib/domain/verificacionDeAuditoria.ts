@@ -28,10 +28,29 @@ import { turnoDelEvento } from "./turnoDeEvento";
 /** Estados que sostienen la adjudicacion vigente de un lote. */
 const ESTADOS_VIGENTES = new Set(["ADJUDICADA", "EN_VERIFICACION"]);
 
+/** ¿Este `LOTE_ADJUDICADO` lo decidio una persona (R-23)? */
+const esDecisionManual = (evento: EventoDTO): boolean =>
+  evento.datos?.motivoAdjudicacion === "DECISION_MANUAL";
+
+/**
+ * ¿Y lleva la firma que la hace auditable?
+ *
+ * Las dos mitades importan por separado. `actorTipo === "USUARIO"` dice que
+ * hubo una persona; `motivo` no vacio dice **con que criterio**. Una decision
+ * humana sin razon escrita es tan opaca para el auditor como una automatica que
+ * se salto el orden.
+ */
+const estaFirmada = (evento: EventoDTO): boolean =>
+  evento.actorTipo === "USUARIO" &&
+  typeof evento.motivo === "string" &&
+  evento.motivo.trim() !== "";
+
 type Replay = {
   /** Ultimo `estadoNuevo` conocido de cada turno, al final de la historia. */
   estadoFinalPorTurno: Map<number, string>;
   saltosSinJustificar: { turnoSaltado: number; turnoAdjudicado: number }[];
+  /** Turnos adjudicados como decision manual pero sin actor humano o sin motivo. */
+  decisionesManualesSinFirma: number[];
   conflictos: { turnoVigente: number; turnoNuevo: number }[];
   turnosCreados: number[];
   duplicados: number[];
@@ -55,6 +74,7 @@ const reproducir = (eventos: readonly EventoDTO[]): Replay => {
   const turnosCreados: number[] = [];
   const duplicados: number[] = [];
   const saltosSinJustificar: Replay["saltosSinJustificar"] = [];
+  const decisionesManualesSinFirma: number[] = [];
   const conflictos: Replay["conflictos"] = [];
   let vigente: number | undefined;
 
@@ -86,9 +106,41 @@ const reproducir = (eventos: readonly EventoDTO[]): Replay => {
       const turno = turnoDelEvento(evento);
       if (turno === undefined) continue;
 
-      for (const [otro, estado] of estadoPorTurno) {
+      // **Si la decision fue humana, saltarse turnos menores es el proposito,
+      // no una anomalia** (R-23).
+      //
+      // La modalidad se deduce **del propio evento** y no del registro actual
+      // del lote, y es deliberado: el auditor verifica contra la bitacora, que
+      // es append-only, no contra un atributo que alguien pudo cambiar despues.
+      // Un `LOTE_ADJUDICADO` con `DECISION_MANUAL` firmado por una persona
+      // **es** la justificacion del salto.
+      //
+      // Y por eso la firma se comprueba: una decision manual sin actor humano o
+      // sin motivo es justo lo contrario de lo que dice ser — un automatismo
+      // que decidio donde debia decidir alguien. Eso si se reporta.
+      const manual = esDecisionManual(evento);
+      if (manual) {
+        if (!estaFirmada(evento)) {
+          decisionesManualesSinFirma.push(turno);
+        }
+      }
+
+      for (const [otro, estado] of manual ? [] : estadoPorTurno) {
         if (otro >= turno) continue;
-        const explicado = estado !== "EN_FILA" && omitidoPorTurno.has(otro);
+        // **Un `SOLICITUD_OMITIDA` justifica el salto por si solo.**
+        //
+        // Hasta la Etapa 14 esta condicion exigia ademas `estado !==
+        // "EN_FILA"`, y era una redundancia valida mientras omitir implicara
+        // congelar: las dos senales llegaban siempre juntas. Con el cupo por
+        // convocatoria el saltado se queda `EN_FILA` a proposito —el cupo se
+        // libera y quiere recuperar su lugar—, asi que esa exigencia extra
+        // marcaria **cada salto legitimo** como `saltosSinJustificar`, es
+        // decir, acusaria de fraude al comportamiento que el negocio pidio.
+        //
+        // Lo que la comprobacion sigue detectando, que es para lo que existe:
+        // una adjudicacion a un turno mayor con turnos vivos menores y **sin
+        // ningun evento que lo explique**.
+        const explicado = omitidoPorTurno.has(otro);
         if (!explicado && (estado === "EN_FILA" || estado === "CONGELADA")) {
           saltosSinJustificar.push({
             turnoSaltado: otro,
@@ -109,6 +161,7 @@ const reproducir = (eventos: readonly EventoDTO[]): Replay => {
   return {
     estadoFinalPorTurno: estadoPorTurno,
     saltosSinJustificar,
+    decisionesManualesSinFirma,
     conflictos,
     turnosCreados,
     duplicados,
@@ -143,8 +196,13 @@ const comprobarOrdenDeAdjudicacion = (
   replay: Replay,
 ): ComprobacionDeIntegridad => ({
   clave: "ordenDeAdjudicacion",
-  veredicto: replay.saltosSinJustificar.length > 0 ? "incumple" : "cumple",
+  veredicto:
+    replay.saltosSinJustificar.length > 0 ||
+    replay.decisionesManualesSinFirma.length > 0
+      ? "incumple"
+      : "cumple",
   saltosSinJustificar: replay.saltosSinJustificar,
+  decisionesManualesSinFirma: replay.decisionesManualesSinFirma,
 });
 
 const comprobarUnaAdjudicacionVigente = (

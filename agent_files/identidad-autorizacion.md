@@ -121,6 +121,15 @@ decide la aplicabilidad** (seccion 0 de `permission-matrix.md`). La consecuencia
 ninguna politica organizacional se escribe aqui. "Un administrador no compra" es cierto hoy
 porque EAS no le concede permisos de venta, no porque el codigo se lo impida.
 
+**`Autob_Adjudicar_Convocatorias`** se suma en la Etapa 15 (R-23): habilita la bandeja del
+adjudicador y la adjudicacion manual del ganador. Como los otros siete, **su nombre esta pendiente
+de confirmar con el equipo de EAS** (riesgo R19); hasta entonces se trabaja con el simulador, donde
+lo concede el rol `ADJUDICADOR`.
+
+Que ese rol no reciba permisos de venta es la misma conveniencia de desarrollo que rige para el
+administrador —quien decide quien gana no compite por lo que reparte— y, como aquella, **es
+configuracion de EAS y no una regla programada**.
+
 ### 4.1 Adaptador conmutable
 
 `src/lib/auth/eas.ts` elige entre implementacion real y simulada segun `ENABLE_DEV_TOOLS`:

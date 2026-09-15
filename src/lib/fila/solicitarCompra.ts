@@ -30,6 +30,7 @@ import {
   esConflictoDeTransaccion,
   esFalloDeCondicion,
 } from "@/lib/data/transacciones";
+import { transicion } from "@/lib/domain/transiciones";
 import { ventaAbierta } from "@/lib/domain/ventanas";
 import { desdeIso } from "@/lib/domain/fechas";
 import { conTraza } from "@/lib/observabilidad/traza";
@@ -88,8 +89,23 @@ export type EntradaSolicitarCompra = {
 export type SolicitudRegistrada = {
   solicitudId: string;
   turno: number;
-  /** Que paso al intentar adjudicar despues de entrar a la fila. */
-  adjudicacion: ResultadoDeAdjudicacion;
+  /**
+   * El n-esimo intento de este participante en esta convocatoria (R-22). Lo
+   * entrega el `ADD` del item de cupo.
+   */
+  ordenEnConvocatoria: number;
+  /**
+   * `true` si el ordinal excedio el tope de la convocatoria y la solicitud se
+   * cancelo a continuacion (R-22). La solicitud **existe** y quedo constancia
+   * de ella; simplemente no esta en la fila.
+   */
+  canceladaPorLimite: boolean;
+  /**
+   * Que paso al intentar adjudicar despues de entrar a la fila. Ausente si la
+   * solicitud se cancelo por tope: no se intenta adjudicar lo que acaba de
+   * salir de la fila.
+   */
+  adjudicacion?: ResultadoDeAdjudicacion;
 };
 
 /**
@@ -115,10 +131,14 @@ export const solicitarCompra = async (
         ? {
             desenlace: "ok",
             turno: resultado.data.turno,
+            ordenEnConvocatoria: resultado.data.ordenEnConvocatoria,
             // El desenlace de la adjudicacion que dispara toda solicitud. Es
             // lo que responde "entro a la fila, ¿y gano?" sin cruzar dos
-            // lineas de registro.
-            adjudicacion: resultado.data.adjudicacion.estado,
+            // lineas de registro. `cancelada_por_limite` ocupa su lugar cuando
+            // la solicitud nunca llego a competir (R-22), que es una respuesta
+            // distinta de "compitio y no gano".
+            adjudicacion:
+              resultado.data.adjudicacion?.estado ?? "cancelada_por_limite",
           }
         : { desenlace: "rechazado", error: resultado.error },
   );
@@ -152,9 +172,26 @@ const ejecutarSolicitud = async (
   }
   const { turno } = paso1;
 
+  // Paso 1b — el ordinal de la convocatoria (R-22).
+  //
+  // **Despues de `pedirTurno`, no antes**, y la razon es la misma que hace que
+  // los huecos de turno sean aceptables pero este ordinal no: un `ADD` es
+  // atomico y no se puede deshacer, solo que aqui lo que se quema **cuenta
+  // contra un tope**, asi que le costaria una participacion a quien no hizo
+  // nada mal. Llegados aqui, la ventana de venta y el estado del lote ya los
+  // valido la condicion del contador de turnos, y lo unico que aun puede fallar
+  // es una carrera genuina.
+  const ordenEnConvocatoria = await pedirOrdenEnConvocatoria(
+    {
+      participanteId: entrada.participanteId,
+      convocatoriaId: lote.convocatoriaId,
+    },
+    deps,
+  );
+
   // Paso 2 — la solicitud se hace visible, y la reserva se retira con ella.
   const registro = await registrarEnLaFila(
-    { ...entrada, turno, reservaId, ahora },
+    { ...entrada, turno, ordenEnConvocatoria, reservaId, ahora },
     deps,
   );
   if (!registro.ok) {
@@ -163,6 +200,28 @@ const ejecutarSolicitud = async (
     // adjudicaciones ajenas hasta el umbral.
     await liberarReserva({ loteId: lote.loteId, reservaId }, deps);
     return registro;
+  }
+
+  const solicitudId = identificadorDeSolicitud(lote.loteId, turno);
+
+  // Paso 3 — el tope de solicitudes, **despues de crear** (R-22).
+  //
+  // Es lo que pidio el negocio —que quede constancia del intento— y tambien lo
+  // que exige el motor: comprobarlo antes seria leer-y-decidir, y meterlo como
+  // condicion del paso 2 obligaria a que cada solicitud tocara un item
+  // compartido, que es la causa medida de cancelaciones masivas por
+  // `TransactionConflict`.
+  if (excedeElTope(ordenEnConvocatoria, lote.limiteSolicitudes)) {
+    await cancelarPorLimite(
+      { ...entrada, turno, solicitudId, ordenEnConvocatoria, ahora },
+      deps,
+    );
+    return exito({
+      solicitudId,
+      turno,
+      ordenEnConvocatoria,
+      canceladaPorLimite: true,
+    });
   }
 
   const adjudicacion = await adjudicarLote(
@@ -177,10 +236,146 @@ const ejecutarSolicitud = async (
   );
 
   return exito({
-    solicitudId: identificadorDeSolicitud(lote.loteId, turno),
+    solicitudId,
     turno,
+    ordenEnConvocatoria,
+    canceladaPorLimite: false,
     adjudicacion,
   });
+};
+
+const excedeElTope = (ordinal: number, limite: number): boolean =>
+  ordinal > limite;
+
+/**
+ * Paso 1b: `ADD solicitudesCreadas :uno` con `ReturnValues: UPDATED_NEW`.
+ *
+ * Mismo patron que `pedirTurno` y por el mismo motivo: `TransactWriteItems` no
+ * devuelve valores, asi que un contador cuyo valor nuevo hay que **usar** no
+ * puede vivir dentro de la transaccion.
+ *
+ * **Sin condicion, a diferencia de `pedirTurno`.** El tope no rechaza: cancela
+ * despues (R-22). Una condicion aqui convertiria el exceso en un rechazo
+ * silencioso y perderia justo la constancia que el negocio pidio.
+ */
+const pedirOrdenEnConvocatoria = async (
+  entrada: { participanteId: string; convocatoriaId: string },
+  deps: DepsDeServicio,
+): Promise<number> => {
+  const salida = await clienteDe(deps).send(
+    new UpdateCommand({
+      TableName: nombreDeTabla(),
+      Key: clave.cupoDeParticipante(
+        entrada.participanteId,
+        entrada.convocatoriaId,
+      ),
+      UpdateExpression: "ADD solicitudesCreadas :uno",
+      ExpressionAttributeValues: { ":uno": 1 },
+      ReturnValues: "UPDATED_NEW",
+    }),
+  );
+
+  const ordinal = salida.Attributes?.solicitudesCreadas;
+  if (typeof ordinal !== "number") {
+    // Mismo criterio que el turno: `UPDATED_NEW` sobre un `ADD` siempre
+    // devuelve el contador, y seguir sin el escribiria una solicitud cuyo lugar
+    // en la convocatoria nadie puede verificar despues.
+    throw new Error(
+      `El paso 1b no devolvio el ordinal de ${entrada.participanteId} en ${entrada.convocatoriaId}`,
+    );
+  }
+  return ordinal;
+};
+
+/**
+ * Paso 3: la solicitud recien creada excede el tope y se cancela (R-22).
+ *
+ * **Transaccion propia y no items del paso 2**, porque la solicitud tiene que
+ * existir antes de poder cancelarse — que es literalmente lo que el negocio
+ * pidio: "se cancelaran las que excedan... dejando constancia de dicha
+ * participacion".
+ *
+ * Retira el centinela de fila igual que una cancelacion voluntaria: el
+ * participante no gasta con esto su lugar de R-07 en ese lote. Lo que si gasto,
+ * y no recupera, es su ordinal — el tope mide intentos.
+ */
+const cancelarPorLimite = async (
+  entrada: EntradaSolicitarCompra & {
+    turno: number;
+    solicitudId: string;
+    ordenEnConvocatoria: number;
+    ahora: Date;
+  },
+  deps: DepsDeServicio,
+): Promise<void> => {
+  const { lote, participanteId, turno, solicitudId, ahora } = entrada;
+  const tabla = nombreDeTabla();
+
+  // El destino sale de la maquina de estados y no de una constante local, igual
+  // que en `cancelarSolicitud`: la lista de estados alcanzables vive en un solo
+  // sitio (proyecto.md 5.4).
+  const destino = transicion("solicitud", "EN_FILA", "CANCELAR_POR_LIMITE");
+  if (!destino) {
+    throw new Error("La maquina de estados ya no admite CANCELAR_POR_LIMITE");
+  }
+
+  await ejecutarTransaccion(
+    [
+      {
+        item: {
+          Update: {
+            TableName: tabla,
+            Key: clave.solicitud(lote.loteId, turno),
+            UpdateExpression: "SET #estatus = :destino, canceladaEn = :ahora",
+            // Solo cancela lo que sigue `EN_FILA`. Entre el paso 2 y este paso
+            // cabe una adjudicacion: si la solicitud ya gano el lote, esta
+            // transaccion se cancela sin efectos y el participante conserva una
+            // adjudicacion legitima. El tope se aplicara a su siguiente intento.
+            ConditionExpression: "#estatus = :enFila",
+            ExpressionAttributeNames: { "#estatus": "estatus" },
+            ExpressionAttributeValues: {
+              ":destino": destino,
+              ":enFila": "EN_FILA",
+              ":ahora": ahora.toISOString(),
+            },
+          },
+        },
+        siFalla: "invalid_state",
+        descripcion: `solicitud turno ${String(turno)} sigue EN_FILA`,
+      },
+      {
+        item: {
+          Delete: {
+            TableName: tabla,
+            Key: clave.centinelaFila(lote.loteId, participanteId),
+            ConditionExpression: "attribute_exists(SK)",
+          },
+        },
+        siFalla: "conflicto_concurrencia",
+        descripcion: "centinela de fila (R-07)",
+      },
+      eventoParaTransaccion({
+        tipo: "SOLICITUD_CANCELADA_POR_LIMITE",
+        agregado: "LOTE",
+        agregadoId: lote.loteId,
+        actor: { tipo: "SISTEMA" },
+        ocurridoEn: ahora,
+        correlacionId: nuevaCorrelacion(ahora),
+        convocatoriaId: lote.convocatoriaId,
+        loteId: lote.loteId,
+        solicitudId,
+        vehiculoId: lote.vehiculoId,
+        estadoAnterior: "EN_FILA",
+        estadoNuevo: destino,
+        datos: {
+          turno,
+          ordenEnConvocatoria: entrada.ordenEnConvocatoria,
+          limiteSolicitudes: lote.limiteSolicitudes,
+        },
+      }),
+    ],
+    deps,
+  );
 };
 
 /**
@@ -300,6 +495,7 @@ const motivoDelRechazo = (lote: Lote, ahora: Date): CodigoError => {
 const registrarEnLaFila = async (
   entrada: EntradaSolicitarCompra & {
     turno: number;
+    ordenEnConvocatoria: number;
     reservaId: string;
     ahora: Date;
   },
@@ -327,6 +523,10 @@ const registrarEnLaFila = async (
               // Informativo (R-08). No participa en ninguna clave: es
               // imposible ordenar la fila por tiempo aunque alguien lo intente.
               solicitadoEn,
+              // El ordinal del paso 1b. A diferencia de `solicitadoEn`, este si
+              // ordena — pero **entre lotes distintos de la convocatoria**, no
+              // dentro de la fila, que sigue ordenandose solo por turno.
+              ordenEnConvocatoria: entrada.ordenEnConvocatoria,
               ...(entrada.correoTitular
                 ? { correoTitular: entrada.correoTitular }
                 : {}),

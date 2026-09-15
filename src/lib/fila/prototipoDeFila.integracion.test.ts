@@ -256,7 +256,7 @@ describe.skipIf(!hayBackend || !seSolicito)(
 
     const participante = (escenario: Escenario, etiqueta: string): string => {
       const id = `proto-part-${escenario.loteId}-${etiqueta}`;
-      particionesCreadas.add(clave.centinelaAdjudicacion(id).PK);
+      particionesCreadas.add(clave.participante(id).PK);
       return id;
     };
 

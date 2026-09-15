@@ -122,6 +122,7 @@ const LOTE: TablaDeTransiciones<EstatusLote, EventoLote> = {
 export type EventoSolicitud =
   | "ADJUDICAR"
   | "CANCELAR"
+  | "CANCELAR_POR_LIMITE"
   | "CONGELAR"
   | "DESCONGELAR"
   | "NO_ADJUDICAR"
@@ -137,19 +138,27 @@ const SOLICITUD: TablaDeTransiciones<EstatusSolicitud, EventoSolicitud> = {
     ADJUDICAR: "ADJUDICADA",
     CANCELAR: "CANCELADA_POR_PARTICIPANTE",
     CONGELAR: "CONGELADA",
+    CANCELAR_POR_LIMITE: "CANCELADA_POR_LIMITE",
     NO_ADJUDICAR: "NO_ADJUDICADA",
   },
-  // DESCONGELAR conserva el turno original (R-09): el estatus vuelve a
-  // EN_FILA pero la clave `SOL#<turno:010d>` no se reescribe nunca, asi que
-  // el lugar en la fila es inmutable por construccion.
+  // `CONGELAR` y `DESCONGELAR` ya no los dispara nadie: los producia la version
+  // anterior de R-09, sustituida en la Etapa 14 por el cupo por convocatoria.
+  // Se quedan porque la maquina de estados tambien se usa para **leer**
+  // historias ya escritas, y la bitacora es append-only.
   //
-  // CANCELAR desde CONGELADA lo exige R-09: "sus CONGELADA permanecen
-  // congeladas hasta que las cancele o el lote se resuelva".
+  // DESCONGELAR conservaba el turno original: el estatus volvia a EN_FILA pero
+  // la clave `SOL#<turno:010d>` no se reescribe nunca, asi que el lugar en la
+  // fila es inmutable por construccion. Es la misma propiedad de la que hoy
+  // depende el saltado por cupo, que ni siquiera cambia de estado.
   CONGELADA: {
     DESCONGELAR: "EN_FILA",
     CANCELAR: "CANCELADA_POR_PARTICIPANTE",
     NO_ADJUDICAR: "NO_ADJUDICADA",
   },
+  // Terminal, y sin `CANCELAR`: ya esta cancelada. Quien excedio el tope puede
+  // volver a formarse —el centinela de fila se retiro con ella (R-07)—, pero su
+  // ordinal ya se gasto y cuenta contra el tope igual (R-22).
+  CANCELADA_POR_LIMITE: {},
   ADJUDICADA: {
     SUBIR_COMPROBANTE: "EN_VERIFICACION",
     VENCER_PLAZO: "CANCELADA_POR_VENCIMIENTO",

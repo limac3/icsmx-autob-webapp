@@ -34,6 +34,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
 };
@@ -44,13 +47,26 @@ const actor: ActorUsuario = {
   permisos: ["Autob_Venta_a_empleados"],
 };
 
-/** El paso 1 devuelve el turno; los demas comandos no devuelven nada. */
+/**
+ * Hay **dos** contadores sueltos y hay que distinguirlos por su clave: el paso
+ * 1 hace `ADD contadorTurnos` sobre el lote y el paso 1b hace
+ * `ADD solicitudesCreadas` sobre el item de cupo del participante. Responder a
+ * todo `UpdateCommand` con el turno haria que el ordinal llegara indefinido.
+ */
+const esContadorDeCupo = (comando: ComandoEnviado): boolean =>
+  String(
+    (comando.input.Key as Record<string, unknown> | undefined)?.SK,
+  ).startsWith("CUPO#");
+
+/** El paso 1 devuelve el turno, el paso 1b el ordinal. */
 const conTurno =
-  (turno: number) =>
-  (comando: ComandoEnviado): unknown =>
-    comando.nombre === "UpdateCommand"
-      ? { Attributes: { contadorTurnos: turno } }
-      : {};
+  (turno: number, ordinal = 1) =>
+  (comando: ComandoEnviado): unknown => {
+    if (comando.nombre !== "UpdateCommand") return {};
+    return esContadorDeCupo(comando)
+      ? { Attributes: { solicitudesCreadas: ordinal } }
+      : { Attributes: { contadorTurnos: turno } };
+  };
 
 const deps = (cliente: unknown) => ({
   cliente: cliente as never,
@@ -76,7 +92,9 @@ const rechazoDeCentinela =
   () =>
   (comando: ComandoEnviado): unknown => {
     if (comando.nombre === "UpdateCommand") {
-      return { Attributes: { contadorTurnos: 2 } };
+      return esContadorDeCupo(comando)
+        ? { Attributes: { solicitudesCreadas: 1 } }
+        : { Attributes: { contadorTurnos: 2 } };
     }
     if (comando.nombre !== "TransactWriteCommand") return {};
     throw new TransactionCanceledException({
@@ -91,7 +109,7 @@ const rechazoDeCentinela =
     });
   };
 
-describe("el orden de las tres escrituras — R18", () => {
+describe("el orden de las escrituras — R18 y R-22", () => {
   it("anota la reserva ANTES de pedir el turno", async () => {
     // **Es la garantia entera de R18.** Al reves —contador y despues reserva—
     // queda abierta la ventana en la que el turno existe y la fila no lo ve, y
@@ -106,6 +124,7 @@ describe("el orden de las tres escrituras — R18", () => {
     expect(falso.comandos.map((c) => c.nombre)).toEqual([
       "PutCommand",
       "UpdateCommand",
+      "UpdateCommand",
       "TransactWriteCommand",
     ]);
     expect(falso.comandos[0]?.input.Item).toMatchObject({
@@ -113,6 +132,55 @@ describe("el orden de las tres escrituras — R18", () => {
       SK: "RESERVA#R1",
       anotadaEn: AHORA.toISOString(),
     });
+  });
+
+  it("el ordinal se pide DESPUES del turno, no antes (R-22)", async () => {
+    // Un `ADD` no se puede deshacer, y este ordinal **cuenta contra un tope**:
+    // quemarlo le costaria una participacion a quien no hizo nada mal. Pedido
+    // despues, la ventana de venta y el estado del lote ya los valido la
+    // condicion del contador de turnos, y lo unico que aun puede fallar es una
+    // carrera genuina.
+    const falso = crearClienteFalso({ responder: conTurno(1) });
+
+    await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    const [contador, ordinal] = falso.comandos.filter(
+      (c) => c.nombre === "UpdateCommand",
+    );
+    expect(contador?.input.UpdateExpression).toBe("ADD contadorTurnos :uno");
+    expect(ordinal?.input.Key).toEqual({ PK: "PART#P1", SK: "CUPO#C1" });
+    expect(ordinal?.input.UpdateExpression).toBe("ADD solicitudesCreadas :uno");
+    // Sin condicion: el tope no rechaza, cancela despues. Condicionarlo aqui
+    // convertiria el exceso en un rechazo silencioso y perderia la constancia
+    // que el negocio pidio.
+    expect(ordinal?.input.ConditionExpression).toBeUndefined();
+  });
+
+  it("si el turno se rechaza, el ordinal no se llega a gastar", async () => {
+    const falso = crearClienteFalso({
+      responder: (comando) => {
+        if (comando.nombre === "UpdateCommand" && !esContadorDeCupo(comando)) {
+          throw new ConditionalCheckFailedException({
+            message: "venta cerrada",
+            $metadata: {},
+          });
+        }
+        return {};
+      },
+    });
+
+    await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    const ordinales = falso.comandos.filter(
+      (c) => c.nombre === "UpdateCommand" && esContadorDeCupo(c),
+    );
+    expect(ordinales).toHaveLength(0);
   });
 
   it("el turno sale del contador atomico, no del cliente ni del reloj", async () => {
@@ -444,5 +512,128 @@ describe("paso 0 — una reserva repetida no se sobrescribe", () => {
     expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
     // Ningun `UpdateCommand`: el contador de turnos no se toco.
     expect(falso.comandos.map((c) => c.nombre)).toEqual(["PutCommand"]);
+  });
+});
+
+describe("tope de solicitudes por convocatoria — R-22", () => {
+  it("dentro del tope, la solicitud se queda en la fila e intenta adjudicar", async () => {
+    const falso = crearClienteFalso({ responder: conTurno(1, 3) });
+
+    const resultado = await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data.ordenEnConvocatoria).toBe(3);
+    expect(resultado.data.canceladaPorLimite).toBe(false);
+    expect(adjudicacion).toHaveBeenCalled();
+    // Una sola transaccion: la que hace visible la solicitud.
+    expect(
+      falso.comandos.filter((c) => c.nombre === "TransactWriteCommand"),
+    ).toHaveLength(1);
+  });
+
+  it("al exceder el tope, la solicitud SE CREA y despues se cancela", async () => {
+    // **Es lo que el negocio pidio literalmente**: "se cancelaran las que
+    // excedan... dejando constancia de dicha participacion". Rechazarla antes
+    // no dejaria rastro del intento, y ademas seria leer-y-decidir sobre un
+    // item compartido, que es la causa medida de cancelaciones masivas por
+    // `TransactionConflict`.
+    const falso = crearClienteFalso({ responder: conTurno(1, 4) });
+
+    const resultado = await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data.ordenEnConvocatoria).toBe(4);
+    expect(resultado.data.canceladaPorLimite).toBe(true);
+
+    const transacciones = falso.comandos.filter(
+      (c) => c.nombre === "TransactWriteCommand",
+    );
+    expect(transacciones).toHaveLength(2);
+
+    // La primera la crea...
+    const creacion = transacciones[0]?.input.TransactItems as Record<
+      string,
+      Record<string, unknown>
+    >[];
+    expect(creacion[0]?.Put?.Item).toMatchObject({
+      SK: "SOL#0000000001",
+      estatus: "EN_FILA",
+      ordenEnConvocatoria: 4,
+    });
+
+    // ...y la segunda la cancela, con su evento y retirando el centinela de
+    // fila, para que el participante no gaste su lugar de R-07 en este lote.
+    const cancelacion = transacciones[1]?.input.TransactItems as Record<
+      string,
+      Record<string, unknown>
+    >[];
+    expect(cancelacion[0]?.Update).toMatchObject({
+      Key: { PK: "LOTE#L1", SK: "SOL#0000000001" },
+      ConditionExpression: "#estatus = :enFila",
+    });
+    expect(cancelacion[0]?.Update?.ExpressionAttributeValues).toMatchObject({
+      ":destino": "CANCELADA_POR_LIMITE",
+    });
+    expect(cancelacion[1]?.Delete?.Key).toEqual({
+      PK: "LOTE#L1",
+      SK: "PART#P1",
+    });
+    expect(cancelacion[2]?.Put?.Item).toMatchObject({
+      tipo: "SOLICITUD_CANCELADA_POR_LIMITE",
+      estadoAnterior: "EN_FILA",
+      estadoNuevo: "CANCELADA_POR_LIMITE",
+      datos: { turno: 1, ordenEnConvocatoria: 4, limiteSolicitudes: 3 },
+    });
+  });
+
+  it("cancelada por tope, no se intenta adjudicar", async () => {
+    // No tiene sentido competir por el lote con una solicitud que acaba de
+    // salir de la fila.
+    const falso = crearClienteFalso({ responder: conTurno(1, 9) });
+
+    await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    expect(adjudicacion).not.toHaveBeenCalled();
+  });
+
+  it("el ordinal exacto del tope todavia entra: el limite es inclusivo", async () => {
+    const falso = crearClienteFalso({ responder: conTurno(1, 3) });
+
+    const resultado = await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data.canceladaPorLimite).toBe(false);
+  });
+
+  it("si la solicitud ya gano el lote, la cancelacion por tope no la toca", async () => {
+    // Entre crear y cancelar cabe una adjudicacion. La condicion
+    // `#estatus = :enFila` es lo que impide arrebatarle el vehiculo a quien
+    // acaba de recibirlo; el tope se aplicara a su siguiente intento.
+    const falso = crearClienteFalso({ responder: conTurno(1, 4) });
+
+    await solicitarCompra(
+      { lote, participanteId: "P1", actor },
+      deps(falso.cliente),
+    );
+
+    const cancelacion = falso.comandos.filter(
+      (c) => c.nombre === "TransactWriteCommand",
+    )[1]?.input.TransactItems as Record<string, Record<string, unknown>>[];
+
+    expect(cancelacion[0]?.Update?.ConditionExpression).toBe(
+      "#estatus = :enFila",
+    );
   });
 });

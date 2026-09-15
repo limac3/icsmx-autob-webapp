@@ -85,6 +85,9 @@ const datosDeConvocatoria = (folio: string): DatosConvocatoria => ({
   inicioVenta: "2026-10-05T15:00:00.000Z",
   finVenta: "2026-10-12T15:00:00.000Z",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
 });
 
 const datosDeVehiculo = (

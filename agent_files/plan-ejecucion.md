@@ -36,14 +36,23 @@ entregables estan hechos y su compuerta de calidad pasa en verde.
 > —navegador, AWS desplegado, correo entregado, cada runbook ejecutado una vez— sigue
 > **`[OPERADOR]`**, bloqueado por las mismas credenciales que bloquean la verificacion visual de
 > las Etapas 5 a 11.
-> Siguiente: **cerrar los puntos `[OPERADOR]` de la Etapa 12** — ninguno es codigo.
+> **2026-09-14 — ampliacion de alcance.** El operador agrego tres frentes, desglosados en las
+> **Etapas 14, 15 y 16** y registrados en la seccion "Ampliacion de alcance": **cupos de
+> participacion por convocatoria** —que sustituyen a R-09, hasta hoy la unica defensa contra el
+> acaparamiento—, una **modalidad manual de adjudicacion** con un perfil nuevo que decide al
+> ganador, y la **equidad del instante de apertura** frente a la automatizacion. Ninguna esta
+> empezada. La 14 vuelve a tocar el motor de fila, asi que hereda el nivel de cuidado de la
+> Etapa 8; la 15 depende de ella; la 16 es ortogonal y puede correr en paralelo.
+>
+> Siguiente: **cerrar los puntos `[OPERADOR]` de la Etapa 12** —ninguno es codigo— y arrancar la
+> **Etapa 14** por su primer entregable, que es documentar antes de codificar.
 
 ---
 
 ## Como se usa este documento
 
-1. Se trabaja **una etapa a la vez**, en orden. Las etapas 5 a 7 pueden solaparse entre si;
-   las demas tienen dependencia dura de la anterior.
+1. Se trabaja **una etapa a la vez**, en orden. Las etapas 5 a 7 pueden solaparse entre si, y la
+   **16 es ortogonal** a todo lo demas; las restantes tienen dependencia dura de la anterior.
 2. Cada entregable es un `- [ ]`. Se marca `[x]` al terminarlo, en la misma conversacion.
 3. Ninguna etapa se cierra sin pasar la **compuerta de calidad** de abajo.
 4. Si aparece un problema no obvio, se documenta en `desafios-implementacion.md` antes de
@@ -1744,6 +1753,312 @@ filas huerfanas se cerraban al concluir.
 
 ---
 
+## Ampliacion de alcance — 2026-09-14
+
+Requerimiento recibido del operador, que agrega tres frentes al sistema ya construido. Se registra
+aqui **antes de escribir codigo**, desglosado en las Etapas 14, 15 y 16.
+
+**Lo que se pidio, en sus terminos:**
+
+1. Que cada convocatoria limite **cuantos vehiculos puede adjudicarse** un participante. La
+   verificacion ocurre *posterior a la creacion de la solicitud*, dejando registro de la
+   participacion.
+2. Que cada convocatoria limite **cuantas solicitudes** puede hacer un participante. Las que
+   excedan **se cancelan despues de creadas**, dejando constancia.
+3. Una **modalidad manual** de adjudicacion, junto a la automatica actual: un perfil nuevo —el
+   adjudicador— revisa cada fila y **determina al ganador**, viendo la hora exacta de cada
+   solicitud, los datos del participante, cuantas adjudicaciones tiene y que otras solicitudes
+   suyas hay en la misma convocatoria y en que orden.
+
+**Decisiones tomadas al aclarar el requerimiento:**
+
+| Pregunta | Decision |
+| --- | --- |
+| Que consume cupo de adjudicacion | Una adjudicacion **viva** (`ADJUDICADA`, `EN_VERIFICACION`) o **consumada** (`VENDIDA`). Vencer y ser rechazada por tesoreria **liberan** el cupo |
+| Que pasa con R-09 | **El cupo la reemplaza.** Un participante puede sostener varias adjudicaciones vivas a la vez, hasta agotar su cupo de esa convocatoria |
+| Cuando adjudica el adjudicador | **En cualquier momento**, aun con la venta abierta y la fila creciendo. La pantalla lo advierte y la bitacora lo registra |
+| Si el ganador elegido no paga | **El lote vuelve al adjudicador.** En modalidad manual no hay reasignacion automatica |
+| Al saltar a alguien por cupo agotado | **Sigue `EN_FILA` con su turno intacto.** Si mas tarde libera cupo, vuelve a ser candidato sin perder su lugar |
+| El conteo de solicitudes | **Jamas decrece.** Las canceladas, vencidas y rechazadas siguen contando contra el tope |
+| Equidad del instante de apertura | Entra al alcance: **medir primero**, despues limitar la tasa, y registrar la evidencia |
+
+> **El cupo de adjudicaciones se recupera; el de solicitudes no.** Los dos contadores miden cosas
+> distintas —cuantos vehiculos tiene en firme, y cuantas veces intento— y por eso se comportan al
+> reves. Conviene tenerlo presente al leer las tres etapas.
+
+> **Consecuencia de retirar R-09 que no conviene descubrir despues:** desaparece el unico tope
+> *entre* convocatorias. Un participante podra sostener su cupo completo en la convocatoria A y
+> otro tanto en la B al mismo tiempo. Es lo que implica la decision tomada; si hiciera falta un
+> tope global, vuelve como un tercer contador sobre el mismo item, no como un rediseno.
+
+---
+
+## Etapa 14 — Cupos de participacion por convocatoria — **parcial**
+
+> **Etapa de riesgo tecnico alto: vuelve a tocar el motor de fila**, que es donde vive la equidad
+> del sistema. Se recomienda trabajarla con el modelo mas capaz disponible, como la Etapa 8.
+
+**Objetivo:** que cada convocatoria limite cuantos vehiculos se lleva un participante y en cuantos
+lotes puede formarse, sustituyendo R-09.
+
+**Dependencias:** Etapa 8. Ninguno de los pendientes `[OPERADOR]` de la Etapa 12 la bloquea.
+
+**El item de cupo**, uno por participante y convocatoria, es la pieza central:
+
+```
+PK  PART#<participanteId>
+SK  CUPO#<convocatoriaId>
+
+solicitudesCreadas   monotonico, solo crece. Su valor nuevo es el `ordenEnConvocatoria`
+cupoConsumido        sube al adjudicar, baja al perder la adjudicacion, NO baja al vender
+```
+
+- [x] **Documentar antes de codificar.** `proyecto.md` (reescribir R-09, reglas nuevas de cupo,
+      atributos de 4.2, estatus nuevo en 5.4), `modelo-datos-dynamodb.md` (la seccion 4.3 deja de
+      ser el centinela de adjudicacion activa y pasa a ser el item de cupo; T1, T2, T5 y T6
+      modificadas; invariantes de la seccion 7) y `trazabilidad-auditoria.md`. El codigo es la
+      traduccion del documento, no al reves
+- [x] Campos nuevos en `src/types/convocatoria.ts` — `DatosConvocatoria` **y**
+      `CAMPOS_CONVOCATORIA`, que es lo que alimenta `camposModificados` del evento de edicion; un
+      campo que falte ahi se guarda pero no deja rastro de haber cambiado
+- [x] Validacion en `src/lib/domain/convocatorias.ts`: `LIMITES_CONVOCATORIA`,
+      `MOTIVOS_INVALIDEZ_CONVOCATORIA`, `revisarDatosConvocatoria`, `normalizarDatosConvocatoria`
+- [x] Desnormalizacion al lote: `src/types/lote.ts`, `src/lib/convocatorias/incluirVehiculo.ts`
+      (donde nace el lote) y `propagarALotes.ts`, cuyo `SET` enumera los atributos a mano y hoy
+      lleva cinco
+- [x] `clave.cupoDeParticipante(participanteId, convocatoriaId)` en `src/lib/data/claves.ts`,
+      junto a `centinelaAdjudicacion`
+- [x] **Tope de solicitudes** en `src/lib/fila/solicitarCompra.ts`:
+  - [x] `ADD solicitudesCreadas :uno` con `ReturnValues: UPDATED_NEW`, en paso propio — igual que
+        el contador de turnos, porque `TransactWriteItems` no devuelve valores
+  - [x] **Despues de `pedirTurno`, no antes.** Un `ADD` no se puede deshacer, y aqui el ordinal
+        cuenta contra un tope: quemarlo le cuesta una participacion a quien no hizo nada mal. Tras
+        `pedirTurno` ya estan validados la ventana de venta y el estado del lote, y lo unico que
+        puede fallar es una carrera genuina
+  - [x] El ordinal se persiste en la solicitud como `ordenEnConvocatoria`
+  - [x] Si el ordinal supera el tope, la solicitud **se crea igual y se cancela a continuacion**, a
+        `CANCELADA_POR_LIMITE`, con su evento. Queda constancia de la participacion, que es lo que
+        el requerimiento pidio
+- [x] **Tope de adjudicaciones** en `src/lib/fila/adjudicarLote.ts`: el item 2 de T2 deja de ser el
+      `Put` del centinela de R-09 y pasa a ser un `Update` del item de cupo, con
+      `ADD cupoConsumido :uno` y `ConditionExpression: attribute_not_exists(cupoConsumido) OR
+      cupoConsumido < :limite`, `siFalla: "limite_alcanzado"`
+  - [x] La rama `adjudicacion_activa` de `intentarRonda` se vuelve `limite_alcanzado`: **omite en
+        vez de congelar**, dejando `SOLICITUD_OMITIDA` con razon `LIMITE_ALCANZADO`, y sigue con el
+        turno siguiente
+  - [x] El limite llega desnormalizado en el lote: T2 ya recibe el `Lote` completo y lo necesita
+        como literal de la condicion, sin una lectura extra
+- [x] **Decremento** dentro de la misma transaccion que ya quita la adjudicacion, en
+      `src/lib/tesoreria/rechazarPago.ts`, `src/lib/fila/vencerYReasignar.ts` y
+      `src/lib/fila/cancelarSolicitud.ts`. **`avalarPago.ts` no decrementa**
+- [x] Retiro de la maquinaria de R-09 —centinela `ADJUDICACION_ACTIVA`, `congelar()`,
+      `descongelarSolicitudes` y sus tres llamadas—, **conservando el vocabulario**: `CONGELADA` en
+      `ESTATUS_SOLICITUD` y `SOLICITUD_CONGELADA` / `SOLICITUD_DESCONGELADA` en `TIPOS_DE_EVENTO`
+- [x] `src/lib/domain/verificacionDeAuditoria.ts`: quitar la clausula `estado !== "EN_FILA"` de
+      `explicado`
+- [x] Catalogos y sus etiquetas en `es.json` y `en.json`: `CODIGOS_ERROR` (`limite_alcanzado`),
+      `ESTATUS_SOLICITUD` (`CANCELADA_POR_LIMITE`), `TIPOS_DE_EVENTO`, `RAZONES_DE_OMISION`
+      (`LIMITE_ALCANZADO`)
+- [x] Formulario: `src/components/FormularioConvocatoria.tsx` y el adaptador
+      `guardarConvocatoriaDesdeFormulario` de `src/app/actions/convocatorias.ts`
+- [x] `src/lib/fila/prototipoDeFila.ts` replica el centinela de R-09: actualizarlo o declarar
+      explicitamente que queda congelado como registro historico de la decision de R18
+
+> **El decremento no necesita maquinaria contra el doble conteo.** Viaja dentro de transacciones
+> que ya llevan condiciones que fallan al repetirse —`#estatus = :adjudicada`,
+> `adjudicacionActual = :vencida`—, asi que un reintento posterior al exito no escribe nada.
+
+> **Cuidado con los indices posicionales.** `vencerYReasignar.ts` rutea sus fallos por
+> `intento.indice === 0 | 2 | 4`. Insertar o mover un item de esa transaccion desplaza ese ruteo
+> **en silencio**, sin error de compilacion y sin que ninguna prueba unitaria lo note.
+
+**Pruebas obligatorias de esta etapa** (regla 16):
+
+- [ ] **Cupo bajo concurrencia:** con un cupo de K, N intentos simultaneos del mismo participante
+      producen **exactamente K adjudicaciones**, ni una mas, y los turnos siguen unicos y
+      estrictamente crecientes
+- [ ] **Tope de solicitudes bajo concurrencia:** N solicitudes simultaneas del mismo participante
+      producen ordinales unicos y se cancelan exactamente las que exceden
+- [ ] **Decremento sin doble conteo:** vencer, rechazar y cancelar liberan una unidad y solo una,
+      aunque la operacion se reintente
+- [ ] **Los dos contadores no se confunden:** tras cancelar, el participante recupera cupo de
+      adjudicacion pero **no** ordinal de solicitud; agotado su tope no puede formarse de nuevo
+      aunque no tenga ninguna viva
+- [ ] **El saltado conserva su lugar:** liberado el cupo, quien fue omitido vuelve a ser candidato
+      con su turno original, por delante de quien llego despues
+- [x] **Integridad:** un salto por cupo agotado **no** produce `saltosSinJustificar`; uno sin
+      evento que lo explique, si
+
+Van en `src/lib/fila/fila.integracion.test.ts`, contra DynamoDB real y sobre el codigo de
+produccion, como las diez de la Etapa 8.
+
+> **`[OPERADOR]` Las cinco pruebas de concurrencia estan escritas pero no ejecutadas.** Viven en
+> `fila.integracion.test.ts` y **se omiten sin sandbox** —`describe.skipIf(!hayBackend)`—, que es
+> justo lo que paso en esta corrida. Escribir una prueba de concurrencia no es lo mismo que haberla
+> visto pasar, y la regla 16 exige lo segundo, asi que sus casillas siguen abiertas a proposito.
+> `crearEscenario` ya admite `convocatoriaId`, `limiteAdjudicaciones` y `limiteSolicitudes` para
+> poner **varios lotes en una misma convocatoria**, que es lo unico que ejerce de verdad un cupo.
+>
+> ```bash
+> npx ampx sandbox                                        # en otra terminal
+> npx vitest run src/lib/fila/fila.integracion.test.ts
+> FILA_REPETICIONES=5 npx vitest run src/lib/fila/fila.integracion.test.ts
+> ```
+
+**Verificacion:**
+
+- [x] Compuerta de calidad completa en verde
+- [ ] Las pruebas de concurrencia corren repetidamente sin resultados intermitentes
+- [ ] `npm run carga:apertura` no empeora respecto a la medicion de la Etapa 12
+
+**Salida esperada:** cupos configurables por convocatoria, demostrablemente respetados bajo
+concurrencia.
+
+---
+
+## Etapa 15 — Modalidad manual de adjudicacion — **parcial**
+
+**Objetivo:** que una persona con permiso pueda decidir al ganador de cada lote, con la
+informacion necesaria para hacerlo y dejando constancia de su criterio.
+
+**Dependencias:** Etapa 14 — la adjudicacion manual respeta cupos, y la pantalla del adjudicador
+consume `ordenEnConvocatoria` y `cupoConsumido`.
+
+- [x] **Documentar antes de codificar:** `permission-matrix.md` (el permiso nuevo en la seccion 1 y
+      las acciones en la tabla de su dominio — *"accion nueva: primero aqui, despues al codigo"*),
+      `identidad-autorizacion.md`, `api-contracts.md`, `ui-ux-requerimientos.md` y `proyecto.md`
+- [x] `modalidadAdjudicacion: "AUTOMATICA" | "MANUAL"` en convocatoria y lote, por el mismo camino
+      de la Etapa 14
+- [x] **Bifurcacion de los cinco disparadores de adjudicacion automatica:**
+  - [x] `solicitarCompra.ts` — no adjudica; la solicitud entra a la fila y espera
+  - [x] `rechazarPago.ts` — libera el lote y lo devuelve a la bandeja del adjudicador
+  - [x] `cancelarSolicitud.ts` — igual que el rechazo
+  - [x] `vencerYReasignar.ts` — vence **sin** reasignar; la variante reducida ya cierra al vencido,
+        devuelve el lote a `EN_OFERTA` y libera el vehiculo
+  - [x] `barridoDeVencimientos.ts` — **excluir los lotes manuales de `reconciliarLotesPublicados`**
+- [x] `src/lib/fila/adjudicarManualmente.ts` — reusa la transaccion de T2 cambiando **solo como se
+      elige al candidato**: toma el turno que indico el adjudicador en vez de recorrer la fila.
+      Todas las condiciones se conservan; la regla 6 aplica igual cuando quien decide es una
+      persona. Si el elegido agota su cupo, falla con `limite_alcanzado` y la pantalla lo explica,
+      en vez de elegir a otro por su cuenta
+- [x] Permiso EAS nuevo en `src/types/identidad.ts` — propuesta `Autob_Adjudicar_Convocatorias`,
+      **por confirmar con EAS** (riesgo R19)
+- [x] Acciones nuevas en `CATALOGO_ACCIONES` de `src/lib/auth/permisos.ts`, con guardas
+      contextuales que fallan cerradas por omision via `confirmado()` (regla 18), y su caso en
+      `CATALOGO_ESPERADO` de `permisos.test.ts`, re-derivado a mano
+- [x] Entrada en `ENTRADAS_DE_NAVEGACION` de `src/lib/navegacion.ts`, que declara **la accion que
+      abre la puerta**, nunca una lista de permisos, mas su `IdDeNavegacion` y sus dos etiquetas
+- [x] **Pantalla del adjudicador**, con `src/app/aprobaciones/page.tsx` como molde — bandeja
+      dinamica, `force-dynamic`, y la decision que conviene repetir: **la bandeja no dictamina**,
+      cada fila lleva al detalle, donde ya viven los datos completos y los botones
+  - [x] Bandeja de lotes por decidir
+  - [x] Detalle del lote con la fila **identificada**: turno, `solicitadoEn`, nombre y correo,
+        `ordenEnConvocatoria`, adjudicaciones que lleva en la convocatoria, y sus otras solicitudes
+        dentro de ella con su orden
+  - [x] Aviso visible cuando la venta sigue abierta y la fila puede crecer
+  - [x] Mobile-first con `CardView` y `eden-table` en escritorio, componentes Eden tal cual, sin
+        ENUMs crudos
+- [x] `comprobarOrdenDeAdjudicacion` **consciente de la modalidad**: en un lote `AUTOMATICA` la
+      invariante sigue siendo el orden FIFO; en uno `MANUAL` es que exista un `LOTE_ADJUDICADO`
+      firmado por un adjudicador humano y con su motivo registrado
+- [x] Eventos nuevos con sus `datos`, incluido el registro de que la venta seguia abierta al decidir
+
+> **El cruce "otras solicitudes del mismo participante en esta convocatoria" no necesita un GSI
+> nuevo.** GSI3 no filtra por convocatoria por clave, pero la pantalla es por convocatoria: PA-04
+> da los lotes, PA-07 da cada fila, y el cruce se arma en memoria — que es justo el ambito que el
+> adjudicador necesita ver de todas formas. Un indice seria infraestructura irreversible para una
+> pantalla administrativa de volumen acotado.
+
+**Pruebas obligatorias de esta etapa:**
+
+- [x] **Casos allow y deny** del permiso nuevo, y guardas cerradas por omision: quitar un campo del
+      contexto minimo debe denegar
+- [x] **Privacidad:** el DTO del adjudicador solo lo alcanza quien tiene el permiso, y ninguna
+      proyeccion de participante crece con identidad de terceros
+- [x] **El barrido no toca lotes manuales**, ni siquiera con fila viva y el lote `EN_OFERTA`
+- [x] **Integridad:** una adjudicacion manual sobre un turno mayor **no** produce
+      `saltosSinJustificar`
+- [x] **Un lote manual no se adjudica solo** por ninguno de los cinco caminos
+
+**Verificacion:**
+
+- [x] Compuerta de calidad completa en verde
+- [ ] **`[OPERADOR]`** Una convocatoria manual recorrida de punta a punta: publicar, formar fila,
+      adjudicar a mano, dejar vencer, comprobar que vuelve a la bandeja y no al siguiente turno.
+      **Exige sandbox y navegador**: las cinco propiedades estan cubiertas por separado con dobles
+      del cliente, pero recorrerlas juntas y a traves de la pantalla es lo unico que comprueba que
+      la modalidad se sostiene de punta a punta, y eso no se puede montar en jsdom
+
+**Salida esperada:** convocatorias que se adjudican por criterio humano, con la misma trazabilidad
+que las automaticas.
+
+---
+
+## Etapa 16 — Equidad del instante de apertura
+
+**Objetivo:** saber cuanta ventaja da automatizar la apertura, acotarla, y dejar evidencia de los
+intentos.
+
+**Dependencias:** ninguna. Es ortogonal a las Etapas 14 y 15 y puede correr en paralelo.
+
+**El orden interno no es negociable: primero medir, despues acotar.** El proyecto ya tiene el
+precedente — `UMBRAL_CONFLICTOS_POR_PERIODO` quedo pendiente de calibrar precisamente por no tener
+el numero.
+
+- [ ] **Medir primero.** Reusar el arnes que ya existe, `npm run carga:apertura`, para cuantificar
+      **cuanto turno gana** un cliente que dispara en el milisegundo exacto frente a uno que
+      dispara 200-400 ms despues, que es la reaccion humana. Sin ese numero, cualquier umbral de
+      tasa es una intuicion disfrazada de constante
+- [ ] **Limitacion de tasa por participante**, con el umbral calibrado por la medicion, mas su
+      codigo de error y las dos etiquetas
+- [ ] **Registrar la evidencia** para quien audita: solicitudes rechazadas por llegar antes de la
+      apertura —que hoy fallan la condicion y no dejan rastro— y tasa por participante
+- [ ] `arquitectura-tecnica-aws.md`: la metrica y la traza nuevas
+
+> **Donde vive el contador de tasa es la decision dificil, y se toma con el numero en la mano.** La
+> aplicacion es SSR sin estado compartido, asi que un contador en memoria no sirve con varias
+> instancias. La tentacion es montarlo sobre el item `PART#<pid>/CUPO#<convId>`, que ya se escribe
+> en cada solicitud: costaria cero viajes extra. **Pero esa escritura ocurre despues de
+> `pedirTurno`**, asi que una solicitud estrangulada ya habria consumido un turno — justo lo que no
+> debe pasar. Ponerlo antes cuesta un viaje adicional en el camino mas caliente del sistema y en su
+> momento de mayor contencion. Cual de los dos costos se paga lo decide la medicion.
+
+> **Parte de la evidencia ya existe y solo falta mostrarla.** `solicitadoEn` esta persistido y el
+> lote lleva `inicioVenta`, asi que "a cuantos milisegundos de la apertura llego esta persona" es
+> derivable hoy sin escribir nada nuevo. Los intentos rechazados por llegar antes si necesitan
+> registro nuevo, y van a **traza operativa y metrica**, no a la bitacora: no son transiciones de
+> estado.
+
+**Lo que se descarto aqui, con su razon:**
+
+- **Token de participacion emitido al abrir.** Verifica autorizacion, que la sesion de Okta ya
+  resuelve, y **no hace a nadie mas lento** — que es donde esta la ventaja real. Peor: todo paso
+  previo lo paga mejor el script que la persona. Emitido al abrir, el script hace dos viajes antes
+  que un humano uno; emitido antes, obliga a todos a pre-armarse y el script lo hace trivialmente.
+  Lo unico que un token compra de verdad es ser de un solo uso, y ahi el trabajo lo hace la
+  limitacion de tasa, no el token.
+- **Prueba de trabajo.** Si grava la automatizacion, pero tambien al usuario honesto, y hace ganar
+  a quien tenga mejor telefono. Cambia una injusticia por otra menos visible.
+- **Cancelar la participacion automaticamente por sospecha de trampa.** Un script y una persona con
+  buena conexion que tenia la pagina abierta se ven casi igual; tambien se les parecen un doble
+  clic, un reintento del navegador ante red inestable y un prefetch. Todo umbral tendra falsos
+  positivos, y el castigo seria una acusacion invisible que el afectado no puede rebatir, en el
+  sistema cuyo argumento entero es la equidad demostrable. Ademas la **regla 17** lo prohibe: a
+  quien se sanciona lo decide la organizacion, no un umbral en un archivo. Queda la division que el
+  proyecto ya usa — **la aplicacion registra, las personas deciden**.
+
+**Verificacion:**
+
+- [ ] **Una solicitud estrangulada no consume turno**, igual que una que llega antes de la
+      apertura. Si la limitacion quema turnos, castiga con huecos de fila a quien solo reintento
+- [ ] **La apertura se mide dos veces**, antes y despues de instalar la limitacion. La segunda no
+      puede ser peor: frenar al que automatiza no puede pagarse degradando a todos los demas
+
+**Salida esperada:** la ventaja de automatizar, medida; el bucle de reintentos, acotado; y los
+intentos, registrados para que la organizacion decida.
+
+---
+
 ## Riesgos y mitigaciones
 
 Ordenados por severidad. La **senal de alerta temprana** es lo que hay que vigilar para
@@ -2090,6 +2405,115 @@ construir el sumidero queda pendiente de decision del operador, no de una etapa 
 **Senal de alerta:** un `PutCommand` sobre una clave `AUDIT#` sin `ConditionExpression`, o una
 comprobacion 5 de `verificarIntegridad` en `incumple` sin que ninguna otra explique por que.
 
+### R21 — El barrido deshace la modalidad manual
+
+**Probabilidad:** alta si se implementa sin cuidado · **Impacto:** critico
+
+`reconciliarLotesPublicados` re-adjudica todo lote `EN_OFERTA` con fila viva. Un lote manual que
+espera la decision de una persona le es **indistinguible** de un lote automatico que se quedo sin
+adjudicar: el barrido lo tomaria y elegiria por su cuenta al turno menor, cada noche, deshaciendo
+en silencio la funcionalidad entera de la Etapa 15.
+
+**Mitigacion aplicada (Etapa 15):** `barridoDeVencimientos.ts` excluye los lotes manuales antes de
+llamar a `adjudicarLote`, con prueba que falla si vuelven a entrar. La exclusion va **despues** de
+`hayFilaViva` a proposito: un lote manual cuya convocatoria ya cerro si debe pasar por el cierre de
+fila, que es lo que deja a los que no alcanzaron en `NO_ADJUDICADA`.
+
+**Senal de alerta:** un evento `LOTE_ADJUDICADO` con `motivoAdjudicacion:
+"RECUPERACION_POR_BARRIDO"` sobre un lote cuya convocatoria es `MANUAL`.
+
+### R22 — La verificacion de integridad acusa de fraude a lo que el negocio pidio
+
+**Probabilidad:** alta · **Impacto:** alto
+
+`comprobarOrdenDeAdjudicacion` da por injustificado todo turno menor que siga `EN_FILA` cuando se
+adjudico a uno mayor. Hoy funciona porque `congelar()` siempre movia al saltado a `CONGELADA`. Las
+dos formas nuevas de saltar un turno rompen esa coincidencia: **por cupo agotado** el saltado sigue
+`EN_FILA` por decision explicita, y **por criterio del adjudicador** tambien. Sin corregirlo, la
+pantalla de auditoria marcaria `incumple` en cada adjudicacion legitima de las dos clases.
+
+No corrompe datos, pero destruye la confianza en la unica pantalla que existe para sostenerla.
+
+**Mitigacion aplicada, en dos cambios, uno por etapa.** En la 14 se quito la clausula
+`estado !== "EN_FILA"` de `explicado`, asi que `SOLICITUD_OMITIDA` justifica el salto por si solo.
+En la 15 la comprobacion se volvio **consciente de la modalidad**, y la deduce **del propio
+evento** y no del registro actual del lote: el auditor verifica contra la bitacora, que es
+append-only, no contra un atributo que alguien pudo cambiar despues. Un `LOTE_ADJUDICADO` con
+`motivoAdjudicacion = DECISION_MANUAL` firmado por una persona **es** la justificacion.
+
+Eso agrego un hallazgo que el plan no preveia: **la firma hay que comprobarla.** Una decision
+manual sin actor humano o sin motivo es lo contrario de lo que dice ser —un automatismo que
+decidio donde debia decidir alguien— y ahora se reporta aparte, en
+`decisionesManualesSinFirma`. Sin ese campo, declarar "es manual" habria bastado para que
+cualquier salto de turno quedara exento de revision.
+
+**Senal de alerta:** `saltosSinJustificar` no vacio en un lote que se adjudico correctamente.
+
+### R23 — Contencion sobre el item de cupo
+
+**Probabilidad:** baja · **Impacto:** medio
+
+El item `PART#<pid>/CUPO#<convId>` entra en la transaccion de adjudicacion y recibe ademas un `ADD`
+propio en cada solicitud. Es **por participante, no compartido**, asi que no repite el defecto del
+`ConditionCheck` sobre la convocatoria que hubo que retirar —aquel lo tocaban todas las solicitudes
+de la convocatoria—; pero un mismo participante con varias solicitudes simultaneas si escribe el
+mismo item dos veces por solicitud.
+
+**Mitigacion:** medirlo en la prueba de concurrencia de la Etapa 14 antes de darlo por bueno, con
+rafagas de **un solo participante**, que es el caso que lo ejerce.
+
+**Senal de alerta:** `TransactionConflict` en `solicitarCompra` con rafagas de un solo
+participante, donde antes no lo habia.
+
+### R24 — Desplazamiento silencioso de indices posicionales
+
+**Probabilidad:** media · **Impacto:** alto
+
+`vencerYReasignar.ts` rutea sus fallos por `intento.indice === 0 | 2 | 4`. Agregar el item de cupo
+a esa transaccion mueve esos numeros **sin error de compilacion y sin que ninguna prueba unitaria
+lo note**: el codigo sigue corriendo y toma la rama equivocada.
+
+**Mitigacion:** releer ese bloque en cada cambio de la transaccion, y considerar sustituir el ruteo
+posicional por el `descripcion` del item, que ya existe y no se desplaza.
+
+**Senal de alerta:** un vencimiento que devuelve `no_vigente` donde antes reasignaba, o que omite
+donde antes abortaba.
+
+### R25 — La apertura la gana quien automatiza
+
+**Probabilidad:** alta · **Impacto:** medio
+
+Las Server Actions son endpoints HTTP. Con sesion valida de Okta, un script puede precalentar la
+conexion y disparar en el milisegundo exacto de `inicioVenta`, mientras una persona pierde entre
+200 y 400 ms de reaccion mas el render. No requiere nada sofisticado, y **hoy no existe ninguna
+limitacion de tasa**.
+
+Lo que el sistema si impide ya: reclamar un turno (lo asigna el contador), entrar antes de la hora
+(la condicion lo rechaza sin consumir turno), suplantar a otro (`participanteId` sale de la sesion)
+y formarse dos veces en el mismo lote (R-07).
+
+**Mitigacion:** la **modalidad manual** de la Etapa 15, que lo vuelve irrelevante donde se use —si
+el adjudicador decide, llegar primero no compra nada—, y la limitacion de tasa de la Etapa 16, que
+acota el bucle de reintentos sin eliminar la ventaja del primer disparo.
+
+**Senal de alerta:** un participante que obtiene el turno 1 de forma sistematica en convocatorias
+distintas, o solicitudes registradas a menos de 50 ms de `inicioVenta`.
+
+### R26 — La limitacion de tasa encarece la apertura
+
+**Probabilidad:** media · **Impacto:** alto
+
+El contador de tasa tiene que consultarse **antes** de consumir turno, es decir en el camino mas
+caliente del sistema y en su momento de mayor contencion. Mal puesto, degrada a todos los
+participantes para frenar a unos pocos — y lo haria precisamente en el instante que la Etapa 12
+midio como el mas fragil.
+
+**Mitigacion:** el orden de la Etapa 16, que no es negociable: medir con `npm run carga:apertura`
+**antes** de construir, para calibrar el umbral con un numero en vez de una intuicion, y volver a
+medir despues para comprobar que no se pago de mas.
+
+**Senal de alerta:** la latencia de `inicioVenta` empeora entre la medicion previa y la posterior.
+
 ---
 
 ## Registro de decisiones
@@ -2098,7 +2522,7 @@ comprobacion 5 de `verificarIntegridad` en `incumple` sin que ninguna otra expli
 | --- | --- | --- |
 | 2026-09-04 | Amplify Gen2 + DynamoDB | Terraform + ECS + PostgreSQL, que es el precedente de la organizacion. Se asume el riesgo R1 |
 | 2026-09-04 | TypeScript `strict` con `tsconfig` y `typecheck` propios | JavaScript con JSDoc, como el proyecto hermano |
-| 2026-09-04 | Varias filas simultaneas, **una sola adjudicacion activa** por participante | Sin limite (riesgo de acaparamiento); una sola solicitud por convocatoria (demasiado restrictivo) |
+| 2026-09-04 | ~~Varias filas simultaneas, **una sola adjudicacion activa** por participante~~ — **sustituida el 2026-09-14** por el cupo por convocatoria, ver abajo | Sin limite (riesgo de acaparamiento); una sola solicitud por convocatoria (demasiado restrictivo) |
 | 2026-09-04 | Plazo de liquidacion en **horas naturales** | Horas habiles con calendario de festivos de Mexico |
 | 2026-09-04 | Mantener `@churchofjesuschrist/festack-scripts` pese a su deprecacion reciente | Migrar de inmediato a eslint/prettier/stylelint/vitest directos, pese a que el costo hoy es minimo (riesgo R16) |
 | 2026-09-04 | `typescript` fijado a `6.0.3` exacto | Ultima version publicada (`7.0.2`): rompe `typescript-eslint@8.69` (`peerDependency typescript: >=4.8.4 <6.1.0`), confirmado ademas por el propio changelog de festack-scripts 27.0.7 |
@@ -2133,3 +2557,11 @@ comprobacion 5 de `verificarIntegridad` en `incumple` sin que ninguna otra expli
 | 2026-09-08 | La prueba de carga mide **con los reintentos del SDK**, como produccion | Medir con `maxAttempts: 1`, que fue el primer intento: sin reintentos se mide una configuracion que el sistema no tiene, y la latencia que importa es la que percibe el participante. El modo sin reintentos se conserva tras `CARGA_SIN_REINTENTOS=1` porque como **diagnostico** si valio: descubrio el defecto de la seccion 41 |
 | 2026-09-11 | De los tres secretos expuestos en un transcripto se rotan **los dos de Okta**; la llave privada de CloudFront queda con **riesgo aceptado** mientras el entorno tenga datos desechables | Rotar las tres. Los secretos de Okta son credenciales de **identidad** y no admiten demora; la llave de CloudFront firma fotografias de vehiculos de un entorno desechable y aprovecharla exige ademas conocer el dominio de la distribucion. Contra eso, rotarla son cuatro pasos encadenados —par nuevo, archivo versionado, **redespliegue** para que CloudFront confie en la publica, y las dos variables— con el peor modo de fallo si se hace a medias: una galeria vacia sin error ni 403 (desafios 50). La condicion que revierte la decision esta escrita en `runbooks.md` R-14 paso 2: en cuanto haya datos que no sean desechables |
 | 2026-09-08 | El paso 1 de T1 traduce `TransactionConflictException` a `conflicto_concurrencia` | Dejarla escapar, que era el comportamiento anterior: el SDK la reintenta y casi nunca llega, pero con contencion sostenida los tres intentos se agotan y el participante recibe un 500 en `inicioVenta` en lugar del "relee y reintenta" que el diseno define para una carrera perdida |
+| 2026-09-14 | **Cupo por convocatoria** con un item `PART#<pid>/CUPO#<convId>` y dos contadores, en sustitucion de R-09 | Conservar R-09 ademas del cupo: mas contenido —no se toca el motor— pero deja dos reglas de acaparamiento superpuestas que hay que explicar juntas, y mantiene viva la maquinaria de `CONGELADA` para una invariante que el cupo ya cubre. Tambien se descarto un cupo **global** entre convocatorias: es lo que el negocio pidio por convocatoria, y si hiciera falta vuelve como un tercer contador sobre el mismo item |
+| 2026-09-14 | El tope de adjudicaciones se evalua **dentro** de la transaccion que adjudica; el de solicitudes, **despues** de crear | Diferir los dos, que es como se enuncio el requerimiento: cancelar una solicitud no deshace nada irreversible, pero adjudicar deja el lote `ADJUDICADO`, el vehiculo `RESERVADO`, el plazo corriendo y el correo encolado. Revisarlo milisegundos despues obligaria a una transaccion compensatoria contra alguien que ya recibio el aviso de que gano |
+| 2026-09-14 | El `ADD` del ordinal de convocatoria va **despues** de `pedirTurno` | Antes, que es donde cabria mas natural: un `ADD` no se deshace, y a diferencia de un hueco de turno este ordinal **cuenta contra un tope**, asi que quemarlo por una solicitud que despues falla le cuesta una participacion a quien no hizo nada mal |
+| 2026-09-14 | Quien es saltado por cupo agotado **sigue `EN_FILA`** con su turno intacto | Un estado terminal `LIMITE_ALCANZADO`: mas simple de leer, pero castiga de forma permanente por una situacion temporal — el cupo se libera al vencer o al ser rechazado, y entonces esa persona deberia poder ganar con el lugar que ya se habia formado |
+| 2026-09-14 | `avalarPago` **no** decrementa el cupo: la venta lo consume para siempre | Liberarlo al vender, que es lo que hace hoy el centinela de R-09 al borrarse: daria una segunda oportunidad de acaparar a quien ya se llevo un vehiculo, que es justo lo que el tope existe para evitar |
+| 2026-09-14 | Se **conserva el vocabulario** de R-09 (`CONGELADA`, `SOLICITUD_CONGELADA`, `SOLICITUD_DESCONGELADA`) aunque se retire su maquinaria | Borrarlos del catalogo: la bitacora es append-only y `reconstruirFila` y `verificarIntegridad` tienen que seguir sabiendo leer historias ya escritas. Ademas `SOLICITUD_OMITIDA` no se jubila en absoluto — gana dos razones nuevas y es lo que sostiene la trazabilidad del salto de turno por cupo y por decision manual |
+| 2026-09-14 | El cruce de solicitudes del adjudicador se arma **en memoria** desde PA-04 + PA-07 | Un `GSI5` con clave `PART#<pid>#CONV#<convId>`: el numero esta libre, pero es infraestructura irreversible para una pantalla administrativa de volumen acotado, y la pantalla es por convocatoria — ya necesita leer todas sus filas de todas formas |
+| 2026-09-14 | Contra la automatizacion de la apertura: **medir, limitar la tasa y registrar la evidencia** | El **token de participacion**, que verifica autorizacion —lo que la sesion de Okta ya hace— sin hacer a nadie mas lento, y que ademas lo paga mejor el script que la persona; la **prueba de trabajo**, que grava tambien al usuario honesto y hace ganar a quien tenga mejor telefono; y **cancelar la participacion por sospecha de trampa**, indistinguible de un doble clic o un reintento de red, con falsos positivos inevitables y prohibida ademas por la regla 17 — a quien se sanciona lo decide la organizacion, no un umbral en un archivo |

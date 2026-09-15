@@ -413,12 +413,25 @@ const instanteDeCampo = (formData: FormData, campo: string): string => {
   return desdeCampoLocal(local)?.toISOString() ?? local;
 };
 
+/**
+ * Un campo numerico vacio da **`NaN`, no cero**.
+ *
+ * `Number("")` vale cero, y ese cero seria el peor valor posible en los tres
+ * campos que usan esta funcion: unas horas de liquidacion sin capturar serian
+ * un plazo que vence al nacer, y un cupo sin capturar dejaria la convocatoria
+ * publicada sin poder adjudicar un solo vehiculo. Con `NaN`, el dominio los
+ * rechaza como `no_es_entero` y quien captura lo ve.
+ */
+const enteroDeCampo = (formData: FormData, campo: string): number => {
+  const crudo = String(formData.get(campo) ?? "").trim();
+  return crudo === "" ? Number.NaN : Number(crudo);
+};
+
 export const guardarConvocatoriaDesdeFormulario = async (
   estadoPrevio: EstadoFormularioConvocatoria,
   formData: FormData,
 ): Promise<EstadoFormularioConvocatoria> => {
   const convocatoriaId = String(formData.get("convocatoriaId") ?? "").trim();
-  const crudoHoras = String(formData.get("horasLiquidacion") ?? "").trim();
 
   const datos: DatosConvocatoria = {
     folio: String(formData.get("folio") ?? ""),
@@ -430,10 +443,16 @@ export const guardarConvocatoriaDesdeFormulario = async (
     publicadaEn: instanteDeCampo(formData, "publicadaEn"),
     inicioVenta: instanteDeCampo(formData, "inicioVenta"),
     finVenta: instanteDeCampo(formData, "finVenta"),
-    // Un campo numerico vacio da `NaN` y no cero: `Number("")` vale cero, y sin
-    // esto unas horas sin capturar se guardarian como cero horas —un plazo que
-    // vence al nacer— en vez de rechazarse.
-    horasLiquidacion: crudoHoras === "" ? Number.NaN : Number(crudoHoras),
+    horasLiquidacion: enteroDeCampo(formData, "horasLiquidacion"),
+    limiteAdjudicaciones: enteroDeCampo(formData, "limiteAdjudicaciones"),
+    limiteSolicitudes: enteroDeCampo(formData, "limiteSolicitudes"),
+    // Sin coercion ni valor por omision: si llegara algo que no es una
+    // modalidad valida, `revisarDatosConvocatoria` lo marca `requerido` y quien
+    // captura lo ve. Elegir `AUTOMATICA` en silencio convertiria un formulario
+    // manipulado en una convocatoria que se adjudica sola.
+    modalidadAdjudicacion: String(
+      formData.get("modalidadAdjudicacion") ?? "",
+    ) as DatosConvocatoria["modalidadAdjudicacion"],
   };
 
   const resultado = convocatoriaId

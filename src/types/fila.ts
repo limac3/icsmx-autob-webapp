@@ -24,6 +24,18 @@ export type Solicitud = {
   estatus: EstatusSolicitud;
   /** Informativo (R-08). **Jamas** se usa para ordenar la fila. */
   solicitadoEn: string;
+  /**
+   * El n-esimo intento de este participante en esta convocatoria (R-22). Lo
+   * entrega el `ADD` del item de cupo, asi que es atomico y monotonico como el
+   * turno.
+   *
+   * Responde algo que el turno no puede: **en que orden llego este
+   * participante respecto de sus otras solicitudes**, aunque sean de lotes
+   * distintos. Los turnos son por lote y no se comparan entre si.
+   *
+   * Opcional porque las solicitudes anteriores a la Etapa 14 no lo traen.
+   */
+  ordenEnConvocatoria?: number;
   adjudicadoEn?: string;
   venceEn?: string;
   comprobanteClaveS3?: string;
@@ -111,6 +123,11 @@ export const MOTIVOS_DE_ADJUDICACION = [
   // `modelo-datos-dynamodb.md` T5b). No es "primera adjudicacion": el lote ya
   // tuvo intentos previos, solo que ninguno la disparo.
   "RECUPERACION_POR_BARRIDO",
+  // Etapa 15 (R-23). **El unico motivo cuyo actor no es `SISTEMA`**: lo firma
+  // la persona que decidio, con sus permisos del momento y su motivo. Es lo que
+  // permite a la verificacion de integridad distinguir una decision humana
+  // legitima de un automatismo que actuo donde debia decidir alguien.
+  "DECISION_MANUAL",
 ] as const;
 
 export type MotivoDeAdjudicacion = (typeof MOTIVOS_DE_ADJUDICACION)[number];
@@ -119,9 +136,16 @@ export type MotivoDeAdjudicacion = (typeof MOTIVOS_DE_ADJUDICACION)[number];
  * Por que la adjudicacion se salto un turno vivo — `datos.razonOmision` de
  * `SOLICITUD_OMITIDA`.
  *
- * Hoy solo hay una razon, y aun asi se nombra: **un salto sin registro es
- * indistinguible de un fraude** (trazabilidad-auditoria.md 3).
+ * Se nombra cada razon porque **un salto sin registro es indistinguible de un
+ * fraude** (trazabilidad-auditoria.md 3).
+ *
+ * `ADJUDICACION_ACTIVA` ya no se escribe: era la razon de la version anterior
+ * de R-09, sustituida en la Etapa 14 por el cupo por convocatoria. Se conserva
+ * porque la bitacora es append-only y las historias ya escritas la contienen.
  */
-export const RAZONES_DE_OMISION = ["ADJUDICACION_ACTIVA"] as const;
+export const RAZONES_DE_OMISION = [
+  "ADJUDICACION_ACTIVA",
+  "LIMITE_ALCANZADO",
+] as const;
 
 export type RazonDeOmision = (typeof RAZONES_DE_OMISION)[number];

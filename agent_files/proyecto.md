@@ -28,7 +28,7 @@ Fijar esto evita que el proyecto crezca sin control:
 
 ## 3. Perfiles
 
-Seis perfiles de negocio. Una misma persona puede tener mas de uno.
+Siete perfiles de negocio. Una misma persona puede tener mas de uno.
 
 | Perfil | Que puede hacer | Permiso que lo materializa |
 | --- | --- | --- |
@@ -38,6 +38,7 @@ Seis perfiles de negocio. Una misma persona puede tener mas de uno.
 | Comprador empleado | Participar en convocatorias de empleados **y** de publico general | `Autob_Venta_a_empleados` **y** `Autob_Venta_en_general` |
 | Comprador general | Participar solo en convocatorias de publico general | `Autob_Venta_en_general` |
 | Operador de tesoreria | Avalar o rechazar comprobantes de pago y marcar el vehiculo como vendido | `Autob_Operar_Tesoreria` |
+| Adjudicador | Decidir a mano el ganador de cada lote en convocatorias de modalidad `MANUAL` (R-23) | `Autob_Adjudicar_Convocatorias` |
 | Auditor de cumplimiento | Consultar la bitacora completa, en solo lectura | `Autob_Auditar` |
 
 ### 3.1 Los perfiles son de negocio; la aplicacion solo conoce permisos
@@ -99,7 +100,9 @@ es una sola transaccion: reservar el valor nuevo, liberar el viejo y actualizar 
 Agrupa uno o mas vehiculos para su venta durante una ventana de tiempo.
 
 Atributos: **folio**, **nombre corto**, tipo, descripcion de participacion, fecha y hora de
-publicacion, de inicio de venta y de fin de venta, horas para liquidacion del pago, y estatus.
+publicacion, de inicio de venta y de fin de venta, horas para liquidacion del pago,
+**limite de adjudicaciones por participante**, **limite de solicitudes por participante**,
+**modalidad de adjudicacion**, y estatus.
 
 **El folio lo teclea el operador y es unico**, con la misma garantia y la misma posibilidad de
 correccion que los numeros del vehiculo. Es como la organizacion nombra la convocatoria.
@@ -111,6 +114,14 @@ que ofrecer.
 
 **Tipos:** `EMPLEADOS` (exige `Autob_Venta_a_empleados`) y `PUBLICO_GENERAL` (exige
 `Autob_Venta_en_general`).
+
+**Los dos limites son por participante y por convocatoria**, y miden cosas distintas: cuantos
+vehiculos puede llevarse (R-09) y en cuantos lotes puede formarse (R-22). Se capturan al crear o
+editar la convocatoria, que solo se edita en `BORRADOR`, asi que **quedan congelados al
+publicar**: nadie cambia las reglas con la fila ya formada.
+
+**La modalidad** (R-23) sigue la misma suerte y por una razon mas fuerte: cambiarla con la fila
+formada alteraria retroactivamente las reglas bajo las que la gente se formo.
 
 ### 4.3 Lote
 
@@ -210,17 +221,16 @@ EN_FILA ──adjudicar──> ADJUDICADA ──subir comprobante──> EN_VERI
    │              CANCELADA_POR_VENCIMIENTO         RECHAZADA_POR_TESORERIA
    │
    ├── cancelar ──> CANCELADA_POR_PARTICIPANTE
-   ├── el titular gana otro lote ──> CONGELADA ──(lo pierde)──> EN_FILA
+   ├── excede el tope de la convocatoria ──> CANCELADA_POR_LIMITE
    └── el lote se vende o se concluye ──> NO_ADJUDICADA
 ```
 
 | Origen | Evento | Destino | Permiso | Guardas |
 | --- | --- | --- | --- | --- |
 | — | Solicitar compra | `EN_FILA` | permiso de venta del tipo | Venta abierta; acceso al tipo de convocatoria; sin solicitud previa viva en el mismo lote (R-07) |
-| `EN_FILA` | Adjudicar | `ADJUDICADA` | sistema | Turno menor vivo; lote sin adjudicacion; titular sin otra adjudicacion activa (R-09) |
+| `EN_FILA` | Adjudicar | `ADJUDICADA` | sistema | Turno menor vivo; lote sin adjudicacion; titular con cupo disponible en la convocatoria (R-09) |
 | `EN_FILA` | Cancelar | `CANCELADA_POR_PARTICIPANTE` | titular | — |
-| `EN_FILA` | El titular gana otro lote | `CONGELADA` | sistema | R-09 |
-| `CONGELADA` | El titular pierde su adjudicacion | `EN_FILA` | sistema | Conserva su turno original (R-09) |
+| `EN_FILA` | Excede el tope de solicitudes de la convocatoria | `CANCELADA_POR_LIMITE` | sistema | R-22. Ocurre inmediatamente despues de crearla, para que quede constancia del intento |
 | `CONGELADA` | Cancelar | `CANCELADA_POR_PARTICIPANTE` | titular | — |
 | `EN_FILA`, `CONGELADA` | El lote se vende o la convocatoria concluye | `NO_ADJUDICADA` | sistema | — |
 | `ADJUDICADA` | Subir comprobante | `EN_VERIFICACION` | titular | Dentro del plazo |
@@ -235,6 +245,12 @@ EN_FILA ──adjudicar──> ADJUDICADA ──subir comprobante──> EN_VERI
 
 **Estados vivos:** `EN_FILA`, `CONGELADA`, `ADJUDICADA`, `EN_VERIFICACION`. Los demas son
 terminales.
+
+> **`CONGELADA` ya no se escribe.** Desde la Etapa 14, R-09 se sostiene con el cupo por
+> convocatoria y nada congela solicitudes: a quien no tiene cupo se le **omite** dejando su
+> evento, y sigue `EN_FILA`. El estado se conserva en el catalogo —y sus dos transiciones de
+> salida tambien— porque la bitacora es append-only y las historias ya escritas tienen que seguir
+> siendo legibles.
 
 **Una vez `EN_VERIFICACION`, el plazo deja de correr.** La demora de tesoreria nunca perjudica
 al participante. Por lo mismo, ese estado **no admite cancelar**: quien ya pago y espera
@@ -290,20 +306,97 @@ atomico del lote y es **la unica fuente de verdad del orden**. `solicitadoEn` es
 sirve para la bitacora, no para ordenar. Esta prohibido ordenar la fila por tiempo: dos
 solicitudes pueden compartir milisegundo, y el reloj puede retroceder — un contador atomico no.
 
-**R-09 — Varias filas, una sola adjudicacion activa.** Un participante puede formarse en cuantos
-lotes quiera, pero solo puede sostener **una adjudicacion a la vez**.
+**R-09 — Cupo de adjudicaciones por convocatoria.** Un participante puede formarse en cuantos
+lotes le permita R-22, pero **no puede adjudicarse mas de `limiteAdjudicaciones` vehiculos de una
+misma convocatoria**. El limite lo fija quien captura la convocatoria.
 
-- Al ganar un lote, sus demas solicitudes `EN_FILA` pasan a `CONGELADA` **conservando su turno**.
-- Una solicitud `CONGELADA` es invisible para la adjudicacion: se salta y se adjudica al
-  siguiente turno vivo.
-- Si pierde la adjudicacion (vencimiento, rechazo o cancelacion), sus solicitudes `CONGELADA`
-  vuelven a `EN_FILA` con el turno original intacto.
-- Si completa la compra, sus `CONGELADA` permanecen congeladas hasta que las cancele o el lote
-  se resuelva. *(No se descongelan automaticamente: ya obtuvo un vehiculo y liberar el resto de
-  inmediato le daria una segunda oportunidad de acaparar.)*
+- **Que consume cupo:** una adjudicacion **viva** (`ADJUDICADA`, `EN_VERIFICACION`) o
+  **consumada** (`VENDIDA`).
+- **Que lo libera:** el vencimiento del plazo, el rechazo de tesoreria y la cancelacion del
+  propio titular. Todos devuelven la unidad al cupo.
+- **Que no lo libera:** completar la compra. Un vehiculo comprado gasta cupo **para siempre**,
+  que es lo que hace que el limite signifique algo.
+- **A quien se salta cuando esta agotado:** la adjudicacion omite a ese candidato y sigue con el
+  turno siguiente, dejando `SOLICITUD_OMITIDA` con razon `LIMITE_ALCANZADO`. **El saltado sigue
+  `EN_FILA` con su turno intacto**: si mas tarde libera cupo vuelve a ser candidato en ese lote
+  sin perder su lugar, por delante de quien llego despues.
 
-Razon de la regla: permite participar ampliamente sin bloquear a los demas, e impide que un
-solo participante retenga varios vehiculos en paralelo mientras decide cual pagar.
+El cupo se comprueba con **escritura condicional dentro de la misma transaccion que adjudica**,
+nunca con una lectura previa (regla 6 de CLAUDE.md). No se puede diferir como el tope de
+solicitudes: adjudicar no es poner una marca, es dejar el lote `ADJUDICADO`, el vehiculo
+`RESERVADO`, arrancar el plazo y encolar el correo de aviso.
+
+Razon de la regla: permite participar ampliamente sin acaparar, que es lo mismo que buscaba su
+version anterior —"una sola adjudicacion activa en todo el sistema"— pero medido por convocatoria,
+que es la unidad en la que el negocio reparte.
+
+> **Version anterior, y lo que se perdio al cambiarla.** Hasta la Etapa 14, R-09 decia que un
+> participante sostenia **una sola adjudicacion activa en todo el sistema**, garantizada por un
+> centinela `PART#<id> / ADJUDICACION_ACTIVA`, y sus demas solicitudes se congelaban mientras
+> tanto. Ese mecanismo limitaba la **simultaneidad**, no el total, y no distinguia una
+> convocatoria de otra. Al sustituirlo **desaparece el unico tope entre convocatorias**: un
+> participante puede sostener su cupo completo en la convocatoria A y otro tanto en la B al mismo
+> tiempo. Si hiciera falta un tope global, vuelve como un contador mas sobre el mismo item, no
+> como un rediseno.
+>
+> El estado `CONGELADA` y los eventos `SOLICITUD_CONGELADA` / `SOLICITUD_DESCONGELADA`
+> **se conservan en el catalogo** aunque ya nada los escriba: la bitacora es append-only (R-20) y
+> las historias ya escritas tienen que seguir siendo legibles.
+
+**R-22 — Tope de solicitudes por convocatoria.** Un participante no puede tener mas de
+`limiteSolicitudes` solicitudes en una misma convocatoria. Las que excedan **se crean y se
+cancelan a continuacion**, a `CANCELADA_POR_LIMITE`, con su evento.
+
+- **Se cancela despues de crear, no se rechaza antes.** Es lo que pidio el negocio —que quede
+  constancia del intento— y ademas lo que exige el motor: comprobar antes seria *leer y luego
+  decidir*, y obligaria a meter un item compartido en la transaccion de cada solicitud, que es la
+  causa medida de cancelaciones masivas por `TransactionConflict`.
+- **El conteo jamas decrece.** Una solicitud cancelada por el titular, vencida por tiempo o
+  rechazada por tesoreria **sigue contando**: el tope mide cuantas veces intento, no cuantas le
+  quedan vivas.
+- En consecuencia, **cada reintento de R-07 consume otro lugar del tope**. Quien agota sus
+  intentos no puede volver a formarse aunque no tenga ninguna solicitud viva.
+
+> **El cupo de adjudicaciones se recupera; el de solicitudes no.** Los dos contadores miden cosas
+> distintas —cuantos vehiculos tiene en firme, y cuantas veces intento— y por eso se comportan al
+> reves. No es una inconsistencia: es la diferencia entre limitar el resultado y limitar la
+> participacion.
+
+Su valor tambien fija el **orden del participante dentro de la convocatoria**: el contador que
+lo produce es atomico y monotonico, asi que el n-esimo intento lleva `ordenEnConvocatoria = n`.
+Ese ordinal responde algo que los turnos no pueden —los turnos son por lote y no se comparan
+entre si— y es lo que el adjudicador de R-23 necesita para ver en que orden llego cada quien.
+
+**R-23 — Modalidad de adjudicacion.** Cada convocatoria declara como se decide al ganador de sus
+lotes, y la decision se toma al capturarla:
+
+- **`AUTOMATICA`** — el motor de fila actual: gana el turno vivo menor con cupo disponible, sin
+  intervencion humana. Es la modalidad por omision y la unica que existia hasta la Etapa 15.
+- **`MANUAL`** — decide una persona con `Autob_Adjudicar_Convocatorias`, el **adjudicador**. Los
+  lotes se quedan `EN_OFERTA` con su fila creciendo hasta que alguien dictamina.
+
+Reglas de la modalidad manual:
+
+- **El adjudicador puede decidir en cualquier momento**, incluso con la venta abierta y la fila
+  todavia creciendo. La pantalla lo advierte y la bitacora lo registra: quien audite tiene que
+  poder ver que la fila no estaba cerrada al decidir.
+- **Nada adjudica solo.** Los cinco disparadores automaticos —crear solicitud, vencer, rechazar,
+  cancelar y el barrido nocturno— no adjudican en esta modalidad. El barrido ademas **tiene que
+  excluir explicitamente los lotes manuales**: un lote en espera de dictamen le es, si no,
+  indistinguible de uno automatico que se quedo atorado.
+- **Si el ganador elegido no paga, el lote vuelve al adjudicador**, no al siguiente turno. Vencer,
+  rechazar y cancelar liberan el lote a `EN_OFERTA` y lo devuelven a la bandeja.
+- **Los cupos aplican igual** (R-09 y R-22). Si el elegido no tiene cupo, la accion falla y la
+  pantalla lo explica; el sistema **no elige a otro por su cuenta**, porque la decision es humana
+  por definicion.
+- **El orden deja de ser la invariante.** Saltarse turnos menores es el proposito de la modalidad,
+  no una anomalia — pero cada decision lleva su `LOTE_ADJUDICADO` firmado por una persona y con su
+  motivo. La verificacion de integridad tiene que ser **consciente de la modalidad**: en un lote
+  `AUTOMATICA` la invariante sigue siendo el orden FIFO; en uno `MANUAL` es que exista esa firma.
+
+> **La modalidad manual vuelve irrelevante la carrera del instante de apertura.** Si quien decide
+> es una persona, llegar primero no compra nada. Es la mitigacion mas fuerte de R25, y sale gratis
+> donde el negocio pueda usarla.
 
 **R-10 — Un vehiculo en una sola convocatoria activa.** Puede figurar en el historico de muchas,
 pero no puede estar simultaneamente en dos convocatorias no concluidas.
@@ -374,8 +467,9 @@ automaticas, y lleva motivo cuando la transicion lo exige.
 5. Llegado `publicadaEn`, quienes tienen `Autob_Venta_a_empleados` la ven con sus vehiculos, fotografias y
    la hora de apertura. Todavia no pueden solicitar (R-03).
 6. Llegado `inicioVenta`, solicitan. Cada uno recibe un `turno` del contador atomico del lote.
-7. El turno 1 obtiene la adjudicacion y recibe por correo los datos de pago y su plazo. Sus
-   demas solicitudes se congelan (R-09). Los demas ven solo su lugar y el tamano de la fila.
+7. El turno 1 obtiene la adjudicacion y recibe por correo los datos de pago y su plazo, siempre
+   que le quede cupo en la convocatoria; si no, se le omite y pasa al turno siguiente (R-09). Sus
+   demas solicitudes siguen `EN_FILA`. Los demas ven solo su lugar y el tamano de la fila.
 8. Segun lo que ocurra:
    - **Paga y sube el comprobante** → `EN_VERIFICACION`. Tesoreria avala → solicitud `VENDIDA`,
      vehiculo `VENDIDO`. Las demas solicitudes del lote pasan a `NO_ADJUDICADA`.
@@ -394,7 +488,15 @@ automaticas, y lleva motivo cuando la transicion lo exige.
 
 | Decision | Alternativa descartada | Razon |
 | --- | --- | --- |
-| Varias filas simultaneas, una sola adjudicacion activa (R-09) | Sin limite; una sola solicitud por convocatoria | Equilibra participacion amplia con evitar acaparamiento |
+| ~~Varias filas simultaneas, una sola adjudicacion activa (R-09)~~ | ~~Sin limite; una sola solicitud por convocatoria~~ | *Sustituida en la Etapa 14 por el cupo por convocatoria* |
+| Cupo de adjudicaciones por convocatoria (R-09) | Conservar el tope global de una adjudicacion activa | El negocio reparte por convocatoria; el tope global limitaba la simultaneidad, no el total |
+| Tope de solicitudes que **cancela despues de crear** (R-22) | Rechazar la solicitud antes de crearla | Deja constancia del intento, y comprobar antes seria leer-y-decidir sobre un item compartido |
+| El conteo de solicitudes jamas decrece | Devolver el lugar al cancelar o vencer | El tope mide cuantas veces intento, no cuantas le quedan vivas |
+| Al saltar por cupo agotado, el saltado sigue `EN_FILA` | Congelarlo, como hacia R-09 | El cupo se libera; congelarlo le costaria su lugar por una condicion reversible |
+| Modalidad por convocatoria (R-23), no por lote | Una aplicacion entera manual o automatica | El negocio reparte por convocatoria, y el motor decide leyendo el lote que ya tiene en la mano |
+| El adjudicador decide **en cualquier momento** | Exigir la venta cerrada primero | Es lo que el operador pidio; la pantalla advierte y la bitacora registra que la fila seguia abierta |
+| Si el elegido no paga, el lote **vuelve al adjudicador** | Reasignar al siguiente turno | En modalidad manual el orden no decide: reasignar automaticamente contradiria la modalidad entera |
+| Si el elegido no tiene cupo, la accion **falla** | Que el sistema elija a otro | La decision es humana por definicion; elegir por su cuenta seria volver a la modalidad automatica |
 | Plazo en horas naturales (R-13) | Horas habiles con calendario de festivos | Auditabilidad y simplicidad de dominio |
 | `EN_APROBACION` como estatus adicional | Reusar `BORRADOR` para lo enviado a dictamen | Sin el no hay bandeja de aprobacion ni bloqueo de edicion |
 | Rechazo devuelve a `BORRADOR` con motivo en bitacora | Estatus `RECHAZADA` | Menos estados; el motivo ya queda trazado |

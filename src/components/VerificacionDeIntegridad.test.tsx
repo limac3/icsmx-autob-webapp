@@ -14,6 +14,7 @@ const CUMPLE: ComprobacionDeIntegridad[] = [
     clave: "ordenDeAdjudicacion",
     veredicto: "cumple",
     saltosSinJustificar: [],
+    decisionesManualesSinFirma: [],
   },
   { clave: "unaAdjudicacionVigente", veredicto: "cumple", conflictos: [] },
   {
@@ -79,6 +80,7 @@ describe("VerificacionDeIntegridad", () => {
         clave: "ordenDeAdjudicacion",
         veredicto: "incumple",
         saltosSinJustificar: [{ turnoSaltado: 1, turnoAdjudicado: 3 }],
+        decisionesManualesSinFirma: [],
       },
     ]);
 

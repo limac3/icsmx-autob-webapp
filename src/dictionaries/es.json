@@ -28,6 +28,7 @@
     "convocatoriasAdmin": "Administrar convocatorias",
     "aprobaciones": "Aprobaciones",
     "tesoreria": "Tesorería",
+    "adjudicacion": "Adjudicación",
     "auditoria": "Auditoría"
   },
   "desarrollo": {
@@ -50,7 +51,12 @@
     "Autob_Venta_a_empleados": "Comprar en venta a empleados",
     "Autob_Venta_en_general": "Comprar en venta al público general",
     "Autob_Operar_Tesoreria": "Operar tesorería",
+    "Autob_Adjudicar_Convocatorias": "Adjudicar convocatorias",
     "Autob_Auditar": "Auditar"
+  },
+  "modalidadesAdjudicacion": {
+    "AUTOMATICA": "Automática: gana el turno más bajo",
+    "MANUAL": "Manual: una persona decide"
   },
   "tiposConvocatoria": {
     "EMPLEADOS": "De empleados",
@@ -65,6 +71,7 @@
     "already_in_queue": "Ya estás en la fila de este vehículo",
     "lote_no_disponible": "El vehículo ya fue adjudicado",
     "adjudicacion_activa": "Ya tienes un vehículo adjudicado",
+    "limite_alcanzado": "Alcanzaste el límite de vehículos de esta convocatoria",
     "plazo_vencido": "El plazo de pago venció",
     "conflicto_concurrencia": "Alguien más actuó al mismo tiempo; inténtalo de nuevo",
     "dependencia_no_disponible": "Un servicio no responde; inténtalo más tarde"
@@ -100,6 +107,7 @@
     "CANCELADA_POR_VENCIMIENTO": "Cancelada por vencimiento",
     "RECHAZADA_POR_TESORERIA": "Rechazada por tesorería",
     "CANCELADA_POR_PARTICIPANTE": "Cancelada por ti",
+    "CANCELADA_POR_LIMITE": "Cancelada por exceder el límite de solicitudes",
     "NO_ADJUDICADA": "No adjudicada"
   },
   "faseDeVenta": {
@@ -127,6 +135,7 @@
     "CONVOCATORIA_CONCLUIDA": "Convocatoria concluida",
     "SOLICITUD_CREADA": "Solicitud de compra registrada",
     "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Solicitud cancelada por el participante",
+    "SOLICITUD_CANCELADA_POR_LIMITE": "Solicitud cancelada por exceder el límite",
     "LOTE_ADJUDICADO": "Vehículo adjudicado",
     "SOLICITUD_CONGELADA": "Solicitud congelada",
     "SOLICITUD_DESCONGELADA": "Solicitud descongelada",
@@ -246,6 +255,11 @@
     "campoFinVenta": "Fin de venta",
     "campoHorasLiquidacion": "Horas para liquidar el pago",
     "horasLiquidacionAyuda": "Horas naturales desde la adjudicación, no días hábiles.",
+    "campoModalidad": "Cómo se decide al ganador",
+    "campoLimiteAdjudicaciones": "Vehículos que puede adjudicarse un participante",
+    "limiteAdjudicacionesAyuda": "Máximo por participante en esta convocatoria. Se libera si el plazo vence o tesorería rechaza el pago; una compra concluida lo consume de forma definitiva.",
+    "campoLimiteSolicitudes": "Solicitudes que puede hacer un participante",
+    "limiteSolicitudesAyuda": "Máximo por participante en esta convocatoria. Cuenta intentos: las canceladas, vencidas y rechazadas siguen contando. Las que excedan se registran y se cancelan enseguida.",
     "subcampoFecha": "Fecha",
     "subcampoHora": "Hora",
     "seccionLotes": "Vehículos incluidos",
@@ -316,6 +330,37 @@
     "cancelar": "Cancelar",
     "titulo": "Acciones",
     "noApruebasLoTuyo": "No puedes aprobar una convocatoria que tú creaste."
+  },
+  "adjudicacion": {
+    "titulo": "Adjudicación",
+    "descripcion": "Lotes que esperan una decisión. Los que llevan más tiempo esperando aparecen primero.",
+    "sinPendientes": "No hay lotes esperando decisión.",
+    "columnaLote": "Vehículo",
+    "columnaConvocatoria": "Convocatoria",
+    "columnaTamanoFila": "En la fila",
+    "columnaEspera": "Esperando desde",
+    "ventaAbiertaAviso": "La venta sigue abierta.",
+    "tituloDetalle": "Decidir el ganador",
+    "ventaAbiertaDetalle": "La venta sigue abierta: la fila puede crecer después de que decidas. Puedes decidir de todos modos; queda registrado que la fila no estaba cerrada.",
+    "filaVacia": "Nadie está formado en este lote.",
+    "columnaTurno": "Turno",
+    "columnaParticipante": "Participante",
+    "columnaSolicitadoEn": "Hora de llegada",
+    "columnaParticipacion": "Participación en la convocatoria",
+    "columnaOtrasSolicitudes": "Sus otras solicitudes",
+    "columnaAccion": "Decisión",
+    "adjudicacionesQueLleva": "Vehículos adjudicados:",
+    "ordenEnConvocatoria": "Solicitud número",
+    "sinCupo": "Sin cupo disponible: adjudicarle fallará.",
+    "sinOtrasSolicitudes": "Ninguna otra en esta convocatoria.",
+    "turnoAbreviado": "turno",
+    "adjudicar": "Adjudicar a este participante",
+    "motivo": "Motivo de la decisión",
+    "motivoAyuda": "Obligatorio. Queda en la bitácora con tu nombre y es lo que explica la decisión a quien audite.",
+    "confirmarAdjudicar": "El lote queda adjudicado a este participante, que recibirá por correo los datos de pago y su plazo. Si no paga, el lote vuelve a esta bandeja.",
+    "continuarDecision": "Confirmar",
+    "cancelarDecision": "Cancelar",
+    "hechoAdjudicar": "Lote adjudicado. El participante recibirá el aviso con su plazo."
   },
   "aprobaciones": {
     "titulo": "Aprobaciones",

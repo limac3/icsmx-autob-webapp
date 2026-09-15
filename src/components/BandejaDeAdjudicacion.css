@@ -1,0 +1,6 @@
+/* Bandeja del adjudicador. Solo layout; la apariencia la ponen los componentes
+   de Eden (regla 10). */
+
+.bandeja-adjudicacion {
+  width: 100%;
+}

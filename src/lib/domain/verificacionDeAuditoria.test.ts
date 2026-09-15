@@ -64,12 +64,40 @@ const congelada = (turno: number, correlacionId: string) =>
     datos: { turno, loteQueGano: "OTRO-LOTE" },
   });
 
+/** La omision de antes de la Etapa 14: siempre venia con un congelamiento. */
 const omitida = (turno: number, correlacionId: string) =>
   evento({
     tipo: "SOLICITUD_OMITIDA",
     correlacionId,
     solicitudId: `L1-${String(turno)}`,
     datos: { turno, razonOmision: "ADJUDICACION_ACTIVA" },
+  });
+
+/** La omision de hoy: el saltado se queda `EN_FILA` y no hay nada mas. */
+const omitidaPorCupo = (turno: number, correlacionId: string) =>
+  evento({
+    tipo: "SOLICITUD_OMITIDA",
+    correlacionId,
+    solicitudId: `L1-${String(turno)}`,
+    datos: { turno, razonOmision: "LIMITE_ALCANZADO", limiteAdjudicaciones: 1 },
+  });
+
+/** La decision del adjudicador: firmada por una persona y con su motivo (R-23). */
+const adjudicadoAMano = (
+  turno: number,
+  correlacionId: string,
+  motivo: string,
+) =>
+  evento({
+    tipo: "LOTE_ADJUDICADO",
+    correlacionId,
+    actorTipo: "USUARIO",
+    actorId: "ADJ1",
+    solicitudId: `L1-${String(turno)}`,
+    estadoAnterior: "EN_FILA",
+    estadoNuevo: "ADJUDICADA",
+    motivo,
+    datos: { turno, motivoAdjudicacion: "DECISION_MANUAL" },
   });
 
 const pagoAvalado = (turno: number, correlacionId: string) =>
@@ -152,6 +180,38 @@ describe("verificarIntegridadDeLote", () => {
       eventos,
       estatusActual: new Map([
         [1, "CONGELADA"],
+        [2, "ADJUDICADA"],
+      ]),
+    });
+
+    expect(
+      resultado.comprobaciones.find((c) => c.clave === "ordenDeAdjudicacion"),
+    ).toMatchObject({ veredicto: "cumple", saltosSinJustificar: [] });
+  });
+
+  it("ordenDeAdjudicacion: un salto por cupo agotado se justifica con el evento solo", () => {
+    // **El caso que la Etapa 14 introdujo y que estuvo a punto de romper esta
+    // comprobacion.** Al sustituir R-09 por el cupo por convocatoria, a quien
+    // agota su cupo ya no se le congela: se le **omite** y se queda `EN_FILA`
+    // con su turno, para recuperar su lugar si el cupo se libera.
+    //
+    // La condicion original exigia ademas que el turno saltado hubiera cambiado
+    // de estado — una redundancia valida mientras omitir implicara congelar.
+    // Con ella puesta, **cada salto legitimo por cupo apareceria como
+    // `saltosSinJustificar`**: la pantalla de auditoria acusaria de fraude al
+    // comportamiento que el negocio pidio.
+    const eventos = [
+      creada(1, "A"),
+      creada(2, "B"),
+      omitidaPorCupo(1, "C"),
+      adjudicado(2, "D"),
+    ];
+
+    const resultado = verificarIntegridadDeLote({
+      loteId: "L1",
+      eventos,
+      estatusActual: new Map([
+        [1, "EN_FILA"],
         [2, "ADJUDICADA"],
       ]),
     });
@@ -350,5 +410,96 @@ describe("verificarIntegridadDeLote", () => {
     expect(
       resultado.comprobaciones.find((c) => c.clave === "motivosObligatorios"),
     ).toMatchObject({ veredicto: "cumple", eventosSinMotivo: [] });
+  });
+
+  it("ordenDeAdjudicacion: una decision manual firmada no produce saltos (R-23)", () => {
+    // **Saltarse turnos menores es el proposito de la modalidad, no una
+    // anomalia.** Exigir el orden FIFO aqui marcaria `incumple` en cada
+    // decision humana legitima — el mismo error que la clausula de estado
+    // producia con los cupos.
+    const eventos = [
+      creada(1, "A"),
+      creada(2, "B"),
+      creada(3, "C"),
+      adjudicadoAMano(3, "D", "mejor documentacion"),
+    ];
+
+    const resultado = verificarIntegridadDeLote({
+      loteId: "L1",
+      eventos,
+      estatusActual: new Map([
+        [1, "EN_FILA"],
+        [2, "EN_FILA"],
+        [3, "ADJUDICADA"],
+      ]),
+    });
+
+    expect(
+      resultado.comprobaciones.find((c) => c.clave === "ordenDeAdjudicacion"),
+    ).toMatchObject({
+      veredicto: "cumple",
+      saltosSinJustificar: [],
+      decisionesManualesSinFirma: [],
+    });
+  });
+
+  it("ordenDeAdjudicacion: una decision manual SIN actor humano si incumple", () => {
+    // Lo contrario de lo que dice ser: un automatismo que decidio donde debia
+    // decidir alguien. Es la senal que la modalidad manual necesita que exista.
+    const eventos = [
+      creada(1, "A"),
+      creada(2, "B"),
+      evento({
+        tipo: "LOTE_ADJUDICADO",
+        correlacionId: "C",
+        solicitudId: "L1-2",
+        estadoAnterior: "EN_FILA",
+        estadoNuevo: "ADJUDICADA",
+        motivo: "criterio",
+        datos: { turno: 2, motivoAdjudicacion: "DECISION_MANUAL" },
+      }),
+    ];
+
+    const resultado = verificarIntegridadDeLote({
+      loteId: "L1",
+      eventos,
+      estatusActual: new Map([
+        [1, "EN_FILA"],
+        [2, "ADJUDICADA"],
+      ]),
+    });
+
+    expect(
+      resultado.comprobaciones.find((c) => c.clave === "ordenDeAdjudicacion"),
+    ).toMatchObject({
+      veredicto: "incumple",
+      decisionesManualesSinFirma: [2],
+    });
+  });
+
+  it("ordenDeAdjudicacion: una decision manual SIN motivo tambien incumple", () => {
+    // Una decision humana sin razon escrita es tan opaca para el auditor como
+    // un salto de turno sin evento.
+    const eventos = [
+      creada(1, "A"),
+      creada(2, "B"),
+      adjudicadoAMano(2, "C", "   "),
+    ];
+
+    const resultado = verificarIntegridadDeLote({
+      loteId: "L1",
+      eventos,
+      estatusActual: new Map([
+        [1, "EN_FILA"],
+        [2, "ADJUDICADA"],
+      ]),
+    });
+
+    expect(
+      resultado.comprobaciones.find((c) => c.clave === "ordenDeAdjudicacion"),
+    ).toMatchObject({
+      veredicto: "incumple",
+      decisionesManualesSinFirma: [2],
+    });
   });
 });

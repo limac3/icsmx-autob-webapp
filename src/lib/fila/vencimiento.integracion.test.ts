@@ -130,7 +130,7 @@ describe.skipIf(!hayBackend)(
 
     const participante = (nombre: string): string => {
       const id = `e10-${nombre}-${CORRIDA}-${randomUUID().slice(0, 6)}`;
-      particionesCreadas.add(clave.centinelaAdjudicacion(id).PK);
+      particionesCreadas.add(clave.participante(id).PK);
       return id;
     };
 
@@ -194,6 +194,9 @@ describe.skipIf(!hayBackend)(
         tipoConvocatoria: "EMPLEADOS",
         estatusConvocatoria: "PUBLICADA",
         horasLiquidacion: HORAS_LIQUIDACION,
+        limiteAdjudicaciones: 1,
+        limiteSolicitudes: 3,
+        modalidadAdjudicacion: "AUTOMATICA",
         creadoEn: ventana.publicadaEn,
         creadoPor: "ADMIN",
       };

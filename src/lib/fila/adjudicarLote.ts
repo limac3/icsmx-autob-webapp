@@ -16,7 +16,7 @@
 // La abstencion por reservas (R18) es lo unico que se decide leyendo, y solo
 // puede **detener**: una lectura que nunca concede no puede autorizar de mas.
 
-import { GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
 import {
   clave,
@@ -26,22 +26,22 @@ import {
   turnoDesdeClave,
 } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
-import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
+import { resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import { itemsDeQuery } from "@/lib/data/paginacion";
 import {
-  CONDICION_CENTINELA_NUEVO,
   CONDICION_LOTE_LIBRE,
   ejecutarTransaccion,
-  type ItemDeTransaccion,
 } from "@/lib/data/transacciones";
 import { diaDeNegocio } from "@/lib/domain/fechas";
 import { calcularVenceEn } from "@/lib/domain/plazos";
 import { conTraza } from "@/lib/observabilidad/traza";
 import { itemsDeEncoladoAdjudicacion } from "@/lib/correo/outbox";
+import type { ActorDeEvento } from "@/types/auditoria";
 import type { MotivoDeAdjudicacion } from "@/types/fila";
 import type { Lote } from "@/types/lote";
 import type { CodigoError } from "@/types/resultado";
+import { itemDeConsumoDeCupo } from "./cupo";
 import { depurarYContarReservas } from "./reservas";
 
 /**
@@ -78,6 +78,11 @@ export type ResultadoDeAdjudicacion =
   | { estado: "no_adjudicable" }
   /** Ningun candidato vivo pudo tomarlo (R-17). */
   | { estado: "fila_agotada"; turnosRevisados: number }
+  /**
+   * El lote se adjudica a mano (R-23): aqui no se decide nada. No es un error
+   * ni una carrera perdida — es que este lote no le corresponde a esta funcion.
+   */
+  | { estado: "modalidad_manual" }
   /** Contencion sostenida sobre el item del lote. Reintentable. */
   | { estado: "en_conflicto" };
 
@@ -87,6 +92,20 @@ export type EntradaDeAdjudicacion = {
   motivo: MotivoDeAdjudicacion;
   umbralDeReservaMs?: number;
   intentos?: number;
+  /**
+   * Quien firma el `LOTE_ADJUDICADO`. Omitido es `SISTEMA`, que es el caso de
+   * los cuatro disparadores automaticos; lo llena `adjudicarManualmente` con el
+   * adjudicador (R-23).
+   */
+  actor?: ActorDeEvento;
+  /** El criterio del adjudicador. Obligatorio en modalidad manual. */
+  motivoDelAdjudicador?: string;
+  /**
+   * Si la venta seguia abierta al decidir. Informativo y solo manual: el
+   * adjudicador puede dictaminar con la fila todavia creciendo, y quien audite
+   * tiene que poder verlo sin reconstruir fechas.
+   */
+  ventaAbiertaAlDecidir?: boolean;
 };
 
 export type Candidato = {
@@ -138,6 +157,22 @@ const ejecutarAdjudicacion = async (
   entrada: EntradaDeAdjudicacion,
   deps: DepsDeServicio,
 ): Promise<ResultadoDeAdjudicacion> => {
+  // **La compuerta de la modalidad manual (R-23), y esta puesta aqui a
+  // proposito.**
+  //
+  // Tres de los cuatro disparadores de adjudicacion automatica —crear
+  // solicitud, rechazar pago y cancelar— llegan por esta funcion. Comprobar la
+  // modalidad en cada uno seria tres oportunidades de olvidarla, y olvidarla
+  // significa que el lote se adjudica solo pasando por encima del adjudicador.
+  // Una sola compuerta en la puerta del motor no se puede saltar.
+  //
+  // El cuarto, `vencerYReasignar`, no pasa por aqui porque hace su propia
+  // transaccion: se bifurca en su sitio, hacia la variante reducida. El quinto
+  // —el barrido— se excluye en `barridoDeVencimientos`, que ni siquiera llama.
+  if (entrada.lote.modalidadAdjudicacion === "MANUAL") {
+    return { estado: "modalidad_manual" };
+  }
+
   const intentos = entrada.intentos ?? INTENTOS_DE_ADJUDICACION;
 
   for (let intento = 0; intento < intentos; intento += 1) {
@@ -210,10 +245,17 @@ const intentarRonda = async (
     if (intento.error === "conflicto_concurrencia")
       return { estado: "en_conflicto" };
 
-    // Fallo el item 3: el candidato ya sostiene otra adjudicacion (R-09). Se
-    // congela **con su evento** y se sigue con el turno siguiente.
-    if (intento.error === "adjudicacion_activa") {
-      await congelar(candidato, lote, deps);
+    // Fallo el item 3: el candidato agoto su cupo en esta convocatoria (R-09).
+    // Se **omite** —dejando el evento que lo explica— y se sigue con el turno
+    // siguiente.
+    //
+    // Omitir, y no congelar como hacia la version anterior de R-09: el cupo se
+    // libera si esa adjudicacion vence o la rechazan, asi que la solicitud
+    // saltada se queda `EN_FILA` con su turno intacto y vuelve a ser candidata
+    // por delante de quien llego despues. Congelarla le costaria su lugar por
+    // una condicion reversible.
+    if (intento.error === "limite_alcanzado") {
+      await omitirPorLimite(candidato, lote, deps);
       continue;
     }
 
@@ -375,25 +417,11 @@ const intentarAdjudicar = async (
         siFalla: "invalid_state",
         descripcion: `solicitud turno ${String(candidato.turno)} sigue EN_FILA`,
       },
-      {
-        item: {
-          Put: {
-            TableName: tabla,
-            Item: {
-              ...clave.centinelaAdjudicacion(candidato.participanteId),
-              loteId: lote.loteId,
-              convocatoriaId: lote.convocatoriaId,
-              solicitudId,
-              turno: candidato.turno,
-              adjudicadoEn,
-              venceEn,
-            },
-            ConditionExpression: CONDICION_CENTINELA_NUEVO,
-          },
-        },
-        siFalla: "adjudicacion_activa",
-        descripcion: "centinela de adjudicacion activa (R-09)",
-      },
+      itemDeConsumoDeCupo({
+        participanteId: candidato.participanteId,
+        convocatoriaId: lote.convocatoriaId,
+        limite: lote.limiteAdjudicaciones,
+      }),
       {
         item: {
           Update: {
@@ -420,7 +448,11 @@ const intentarAdjudicar = async (
         tipo: "LOTE_ADJUDICADO",
         agregado: "LOTE",
         agregadoId: lote.loteId,
-        actor: { tipo: "SISTEMA" },
+        // **`SISTEMA` salvo que decida una persona.** En modalidad manual el
+        // actor es el adjudicador, con sus permisos del momento, y es lo unico
+        // que distingue una decision humana legitima de un automatismo que
+        // actuo donde no debia (R-23, trazabilidad 5.1).
+        actor: entrada.actor ?? { tipo: "SISTEMA" },
         ocurridoEn: ahora,
         correlacionId,
         convocatoriaId: lote.convocatoriaId,
@@ -429,11 +461,17 @@ const intentarAdjudicar = async (
         vehiculoId: lote.vehiculoId,
         estadoAnterior: "EN_FILA",
         estadoNuevo: "ADJUDICADA",
+        ...(entrada.motivoDelAdjudicador
+          ? { motivo: entrada.motivoDelAdjudicador }
+          : {}),
         datos: {
           turno: candidato.turno,
           adjudicadoEn,
           venceEn,
           motivoAdjudicacion: entrada.motivo,
+          ...(entrada.ventaAbiertaAlDecidir === undefined
+            ? {}
+            : { ventaAbiertaAlDecidir: entrada.ventaAbiertaAlDecidir }),
         },
       }),
       // Outbox (D-6, riesgo R8): "exito -> encolar correo en outbox"
@@ -464,95 +502,53 @@ const intentarAdjudicar = async (
 };
 
 /**
- * Congela al candidato que ya sostiene otra adjudicacion (R-09) y **deja
- * escrito por que se le salto**.
+ * Deja escrito **por que** la adjudicacion se salto este turno: su titular
+ * agoto el cupo de la convocatoria (R-09).
  *
- * Dos eventos y no uno, porque responden preguntas distintas y viven en sitios
- * distintos de la bitacora: `SOLICITUD_CONGELADA` explica el cambio de estado
- * de esa solicitud, y `SOLICITUD_OMITIDA` explica, en la historia del lote, por
- * que la adjudicacion siguio de largo con un turno mayor. Sin el segundo, el
- * auditor veria una adjudicacion al turno 5 con los turnos 3 y 4 vivos, que es
- * exactamente lo que la comprobacion 2 de integridad marca como sospechoso.
+ * Un solo evento, y **ningun cambio de estado**. Hasta la Etapa 14 esto eran
+ * dos eventos porque omitir implicaba congelar, y `SOLICITUD_CONGELADA`
+ * explicaba la transicion mientras `SOLICITUD_OMITIDA` explicaba el salto. Ya
+ * no hay transicion que explicar: la solicitud sigue `EN_FILA` con su turno, y
+ * volvera a ser candidata en cuanto su titular recupere cupo.
  *
- * De mejor esfuerzo: si falla, el candidato sigue `EN_FILA` y la proxima
- * adjudicacion volvera a intentarlo y a congelarlo. No adelanta a nadie.
+ * **Eso convierte a este evento en la unica explicacion del salto**, y por eso
+ * `comprobarOrdenDeAdjudicacion` tiene que darlo por suficiente sin exigir
+ * ademas un cambio de estado. Sin el, el auditor veria una adjudicacion al
+ * turno 5 con los turnos 3 y 4 vivos — que es exactamente la senal de fraude
+ * que la comprobacion 2 existe para dar.
+ *
+ * De mejor esfuerzo: si falla, el candidato sigue `EN_FILA` y la proxima ronda
+ * volvera a intentarlo y a omitirlo. No adelanta a nadie.
  */
-export const congelar = async (
+export const omitirPorLimite = async (
   candidato: Candidato,
   lote: Lote,
   deps: DepsDeServicio,
 ): Promise<void> => {
   const { ahora } = resolver(deps);
-  const correlacionId = nuevaCorrelacion(ahora);
   const solicitudId = identificadorDeSolicitud(lote.loteId, candidato.turno);
-  const loteQueGano = await loteDeLaAdjudicacionActiva(
-    candidato.participanteId,
+
+  await ejecutarTransaccion(
+    [
+      eventoParaTransaccion({
+        tipo: "SOLICITUD_OMITIDA",
+        agregado: "LOTE",
+        agregadoId: lote.loteId,
+        actor: { tipo: "SISTEMA" },
+        ocurridoEn: ahora,
+        correlacionId: nuevaCorrelacion(ahora),
+        convocatoriaId: lote.convocatoriaId,
+        loteId: lote.loteId,
+        solicitudId,
+        datos: {
+          turno: candidato.turno,
+          razonOmision: "LIMITE_ALCANZADO",
+          limiteAdjudicaciones: lote.limiteAdjudicaciones,
+        },
+      }),
+    ],
     deps,
   );
-
-  const items: ItemDeTransaccion[] = [
-    {
-      item: {
-        Update: {
-          TableName: nombreDeTabla(),
-          Key: clave.solicitud(lote.loteId, candidato.turno),
-          UpdateExpression: "SET #estatus = :congelada",
-          ConditionExpression: "#estatus = :enFila",
-          ExpressionAttributeNames: { "#estatus": "estatus" },
-          ExpressionAttributeValues: {
-            ":congelada": "CONGELADA",
-            ":enFila": "EN_FILA",
-          },
-        },
-      },
-      siFalla: "invalid_state",
-      descripcion: `congelar turno ${String(candidato.turno)}`,
-    },
-    eventoParaTransaccion({
-      tipo: "SOLICITUD_CONGELADA",
-      agregado: "LOTE",
-      agregadoId: lote.loteId,
-      actor: { tipo: "SISTEMA" },
-      ocurridoEn: ahora,
-      correlacionId,
-      convocatoriaId: lote.convocatoriaId,
-      loteId: lote.loteId,
-      solicitudId,
-      estadoAnterior: "EN_FILA",
-      estadoNuevo: "CONGELADA",
-      datos: { turno: candidato.turno, loteQueGano },
-    }),
-    eventoParaTransaccion({
-      tipo: "SOLICITUD_OMITIDA",
-      agregado: "LOTE",
-      agregadoId: lote.loteId,
-      actor: { tipo: "SISTEMA" },
-      ocurridoEn: ahora,
-      correlacionId,
-      convocatoriaId: lote.convocatoriaId,
-      loteId: lote.loteId,
-      solicitudId,
-      datos: { turno: candidato.turno, razonOmision: "ADJUDICACION_ACTIVA" },
-    }),
-  ];
-
-  await ejecutarTransaccion(items, deps);
-};
-
-/** Que lote gano el participante, para que el evento lo diga. */
-const loteDeLaAdjudicacionActiva = async (
-  participanteId: string,
-  deps: DepsDeServicio,
-): Promise<string | undefined> => {
-  const salida = await clienteDe(deps).send(
-    new GetCommand({
-      TableName: nombreDeTabla(),
-      Key: clave.centinelaAdjudicacion(participanteId),
-      ConsistentRead: true,
-    }),
-  );
-  const loteId = salida.Item?.loteId;
-  return typeof loteId === "string" ? loteId : undefined;
 };
 
 /**
@@ -589,4 +585,16 @@ const registrarFilaAgotada = async (
   );
 };
 
-export const __test__ = { leerFila, congelar, registrarFilaAgotada };
+export const __test__ = { leerFila, omitirPorLimite, registrarFilaAgotada };
+
+/**
+ * La transaccion de T2 para **un candidato concreto**, expuesta para que
+ * `adjudicarManualmente` la reuse sin duplicarla (R-23).
+ *
+ * Es la pieza que hace honesta la frase "la modalidad manual cambia solo como
+ * se elige al candidato": las cinco condiciones —lote libre y `EN_OFERTA`,
+ * solicitud `EN_FILA`, cupo disponible, vehiculo `EN_CONVOCATORIA`, evento
+ * append-only— son literalmente las mismas, porque la regla 6 aplica igual
+ * cuando quien decide es una persona.
+ */
+export const intentarAdjudicarA = intentarAdjudicar;

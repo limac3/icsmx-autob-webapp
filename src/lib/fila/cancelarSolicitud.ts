@@ -6,16 +6,16 @@ import "server-only";
 //
 //  - Desde `EN_FILA` o `CONGELADA` solo se retira de la fila. Nadie mas se ve
 //    afectado.
-//  - Desde `ADJUDICADA` **libera el lote**: se retira el centinela de
-//    adjudicacion (R-09), el lote vuelve a `EN_OFERTA`, el vehiculo a
-//    `EN_CONVOCATORIA`, y el siguiente turno vivo recibe el vehiculo.
+//  - Desde `ADJUDICADA` **libera el lote**: se devuelve la unidad de cupo
+//    (R-09), el lote vuelve a `EN_OFERTA`, el vehiculo a `EN_CONVOCATORIA`, y
+//    el siguiente turno vivo recibe el vehiculo.
 //
 // **La liberacion y la reasignacion no van en la misma transaccion**, a
 // diferencia de T5. Es deliberado: T5 tiene que ser atomico porque el barrido
 // actua sobre un plazo vencido y no puede dejar el lote libre sin dueno si se
 // cae a la mitad; aqui, en cambio, la reasignacion es exactamente el mismo acto
 // que dispara cualquier solicitud nueva, y reutilizar `adjudicarLote` —con su
-// abstencion por reservas, su congelamiento por R-09 y sus reintentos— vale
+// abstencion por reservas, su manejo del cupo por R-09 y sus reintentos— vale
 // mas que replicar esa logica dentro de una transaccion. La ventana que abre
 // —lote libre con fila viva— ya existe en el diseno: T1 tampoco puede adjudicar
 // dentro de su propia transaccion.
@@ -35,7 +35,7 @@ import type { Lote } from "@/types/lote";
 import type { EstatusSolicitud } from "@/types/solicitud";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 import { adjudicarLote, type ResultadoDeAdjudicacion } from "./adjudicarLote";
-import { descongelarSolicitudes } from "./descongelarSolicitudes";
+import { itemDeLiberacionDeCupo } from "./cupo";
 
 export type EntradaCancelarSolicitud = {
   /** El lote ya leido por quien invoca, el mismo que evaluo el permiso. */
@@ -52,8 +52,6 @@ export type ResultadoDeCancelacion = {
   liberoElLote: boolean;
   /** Presente solo si libero el lote: que paso al reasignarlo. */
   reasignacion?: ResultadoDeAdjudicacion;
-  /** Cuantas solicitudes congeladas del participante volvieron a la fila. */
-  descongeladas: number;
 };
 
 export const cancelarSolicitud = async (
@@ -140,18 +138,14 @@ export const cancelarSolicitud = async (
   if (!resultado.ok) return fallo(resultado.error);
 
   if (!liberaElLote) {
-    return exito({ estatus: destino, liberoElLote: false, descongeladas: 0 });
+    return exito({ estatus: destino, liberoElLote: false });
   }
 
-  // Perdio su adjudicacion, asi que sus congeladas vuelven a la fila (R-09).
-  // Va **antes** de reasignar: si una de ellas fuera candidata a este mismo
-  // lote —hoy imposible por R-07, manana quiza no— tendria que estar viva
-  // cuando la adjudicacion recorra los turnos.
-  const descongeladas = await descongelarSolicitudes(
-    { participanteId: solicitud.participanteId },
-    deps,
-  );
-
+  // Aqui iba `descongelarSolicitudes`. Ya no hace falta: con el cupo por
+  // convocatoria nada se congelo nunca, y el decremento del item de cupo —que
+  // viajo dentro de la transaccion de arriba— ya devolvio la unidad. Sus demas
+  // solicitudes siguen `EN_FILA` y vuelven a ser candidatas con su turno
+  // original en la reasignacion que sigue.
   const reasignacion = await adjudicarLote(
     {
       // El lote acaba de volver a `EN_OFERTA` y sin adjudicacion; se refleja en
@@ -163,12 +157,7 @@ export const cancelarSolicitud = async (
     deps,
   );
 
-  return exito({
-    estatus: destino,
-    liberoElLote: true,
-    reasignacion,
-    descongeladas,
-  });
+  return exito({ estatus: destino, liberoElLote: true, reasignacion });
 };
 
 /**
@@ -188,7 +177,7 @@ const liberado = (lote: Lote): Lote => {
 };
 
 /**
- * Los tres items que devuelven el lote a la oferta.
+ * Los tres items que devuelven el lote a la oferta, y con el la unidad de cupo.
  *
  * La condicion del lote (`adjudicacionActual = :solicitudId`) es lo que hace
  * segura la operacion frente a concurrencia: si otro proceso ya reasigno el
@@ -216,17 +205,10 @@ const itemsDeLiberacion = (entrada: {
   }
 
   return [
-    {
-      item: {
-        Delete: {
-          TableName: tabla,
-          Key: clave.centinelaAdjudicacion(solicitud.participanteId),
-          ConditionExpression: "attribute_exists(SK)",
-        },
-      },
-      siFalla: "conflicto_concurrencia",
-      descripcion: "centinela de adjudicacion activa (R-09)",
-    },
+    itemDeLiberacionDeCupo({
+      participanteId: solicitud.participanteId,
+      convocatoriaId: lote.convocatoriaId,
+    }),
     {
       item: {
         Update: {

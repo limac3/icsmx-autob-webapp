@@ -125,12 +125,15 @@ Motivo obligatorio marcado con **M**.
 | `SOLICITUD_CREADA` | Entrada a la fila | `turno`, `solicitadoEn`, `tamanoFilaAlMomento` |
 | `SOLICITUD_CANCELADA_POR_PARTICIPANTE` | Retiro voluntario | `turno` |
 | `LOTE_ADJUDICADO` | Adjudicacion | `turno`, `adjudicadoEn`, `venceEn`, `motivoAdjudicacion` |
-| `SOLICITUD_CONGELADA` | El titular gano otro lote (R-09) | `turno`, `loteQueGano` |
-| `SOLICITUD_DESCONGELADA` | Perdio su adjudicacion | `turno` |
+| `SOLICITUD_CANCELADA_POR_LIMITE` | Excedio el tope de solicitudes de la convocatoria (R-22) | `turno`, `ordenEnConvocatoria`, `limiteSolicitudes` |
+| ~~`SOLICITUD_CONGELADA`~~ | *Ya no se escribe* — el titular gano otro lote (R-09 anterior) | `turno`, `loteQueGano` |
+| ~~`SOLICITUD_DESCONGELADA`~~ | *Ya no se escribe* — perdio su adjudicacion | `turno` |
 | `SOLICITUD_OMITIDA` | Se salto un turno al adjudicar | `turno`, `razonOmision` |
 | `SOLICITUD_VENCIDA` | Plazo agotado | `turno`, `venceEn`, `detectadoEn`, `detectadoPor` |
 | `SOLICITUD_NO_ADJUDICADA` | Fila cerrada sin alcanzarle | `turno` |
 | `FILA_AGOTADA` | Sin candidatos vivos (R-17) | `turnosRevisados` |
+
+| `LOTE_LIBERADO_A_ADJUDICADOR` | El ganador manual no pago: el lote vuelve a la bandeja (R-23) | `turnoLiberado`, `causa` |
 
 `motivoAdjudicacion` distingue `PRIMERA_ADJUDICACION`, `REASIGNACION_POR_VENCIMIENTO`,
 `REASIGNACION_POR_RECHAZO`, `REASIGNACION_POR_CANCELACION` y `RECUPERACION_POR_BARRIDO` — este
@@ -139,13 +142,29 @@ nadie llego a adjudicar (un proceso murio entre dos escrituras que no pueden ir 
 transaccion, `modelo-datos-dynamodb.md` T5b), y no es ni la primera vez ni una reasignacion con
 causa conocida.
 
+**`DECISION_MANUAL`** se suma en la Etapa 15, y es el unico motivo cuyo `actor` **no** es
+`SISTEMA`: lo firma la persona que decidio, con sus permisos del momento y su `motivo`. Sus
+`datos` llevan ademas `ventaAbiertaAlDecidir`, porque el adjudicador puede dictaminar con la fila
+todavia creciendo y quien audite tiene que poder verlo sin reconstruir fechas.
+
 > **`SOLICITUD_OMITIDA` es el evento que hace auditable la regla R-09.** Sin el, la bitacora
 > mostraria una adjudicacion al turno 5 mientras los turnos 3 y 4 seguian vivos, y pareceria una
-> violacion del orden. Con el, queda registrado por que se les salto — tenian una adjudicacion
-> activa en otro lote — y `razonOmision` lo nombra explicitamente.
+> violacion del orden. Con el, queda registrado por que se les salto y `razonOmision` lo nombra
+> explicitamente.
 >
 > Es el ejemplo de la regla general: **toda desviacion aparente del orden debe tener su propio
 > evento explicativo.** Un salto sin registro es indistinguible de un fraude.
+>
+> `razonOmision` vale hoy `LIMITE_ALCANZADO` — el candidato agoto su cupo de adjudicaciones en
+> esta convocatoria — y conserva `ADJUDICACION_ACTIVA`, la razon de la version anterior de R-09,
+> **solo para poder leer historias ya escritas**: la bitacora es append-only y un evento no se
+> reinterpreta retroactivamente.
+>
+> **Con la Etapa 14, el turno omitido sigue `EN_FILA`.** Antes se le congelaba, asi que el salto
+> quedaba explicado por partida doble —el evento y el cambio de estado— y la comprobacion de
+> integridad podia apoyarse en cualquiera de los dos. Ya no: **el evento es la unica explicacion
+> que queda**, y `comprobarOrdenDeAdjudicacion` tiene que tratarlo como suficiente por si solo.
+> Ver la seccion 5.1.
 
 `detectadoPor` vale `BARRIDO` o `VERIFICACION_PEREZOSA`, y permite medir si el barrido esta
 cumpliendo su funcion (riesgo R6).
@@ -264,6 +283,24 @@ esperar a que alguien las haga a mano:
 6. Todo evento con motivo obligatorio lo tiene y no esta vacio.
 
 La comprobacion 2 es la que responde la pregunta central del auditor: **¿se respeto el orden?**
+
+> **Que exige y que no exige la comprobacion 2.** Exige un `SOLICITUD_OMITIDA` por cada turno
+> vivo menor que el adjudicado. **No** exige, ademas, que el turno saltado haya cambiado de
+> estado. Lo exigia hasta la Etapa 14, cuando omitir implicaba congelar y las dos senales
+> llegaban siempre juntas; con el cupo por convocatoria el saltado sigue `EN_FILA` a proposito
+> —el cupo se libera y quiere recuperar su lugar—, asi que esa exigencia extra **acusaria de
+> fraude a cada salto legitimo**. El evento es la explicacion; el estado nunca lo fue.
+>
+> Lo que la comprobacion sigue detectando, que es para lo que existe: una adjudicacion a un turno
+> mayor con turnos vivos menores **sin ningun evento que lo explique**.
+
+> **En modalidad `MANUAL` la invariante es otra, y la comprobacion tiene que saberlo (R-23).**
+> Saltarse turnos menores no es una anomalia ahi: es el proposito. Exigir el orden FIFO marcaria
+> `incumple` en **cada decision humana legitima**, que es el mismo error que la nota anterior
+> corrige para los cupos. En un lote manual lo que se comprueba es que exista un `LOTE_ADJUDICADO`
+> con `motivoAdjudicacion = DECISION_MANUAL`, firmado por una persona —`actorTipo = USUARIO`— y
+> con su `motivo` no vacio. Una adjudicacion **sin firma** sobre un lote manual si es la senal de
+> alarma: significa que algo automatico decidio donde debia decidir alguien.
 
 ---
 

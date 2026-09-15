@@ -20,6 +20,9 @@ export const PERMISOS = [
   "Autob_Venta_a_empleados",
   "Autob_Venta_en_general",
   "Autob_Operar_Tesoreria",
+  // Etapa 15 (R-23). **Por confirmar con EAS**, igual que los demas: el nombre
+  // es una propuesta a granularidad de capacidad (riesgo R19).
+  "Autob_Adjudicar_Convocatorias",
   "Autob_Auditar",
 ] as const;
 

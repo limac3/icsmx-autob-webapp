@@ -43,6 +43,25 @@ export const ESTATUS_CONVOCATORIA = [
 ] as const satisfies readonly EstatusConvocatoria[];
 
 /**
+ * Como se decide al ganador de cada lote de la convocatoria (R-23).
+ *
+ * `AUTOMATICA` es el motor de fila: gana el turno vivo menor con cupo
+ * disponible, sin intervencion humana. `MANUAL` deja los lotes `EN_OFERTA` con
+ * su fila creciendo hasta que una persona con `Autob_Adjudicar_Convocatorias`
+ * dictamina.
+ *
+ * **Se decide al capturar la convocatoria y queda congelada al publicar.**
+ * Cambiarla con la fila ya formada alteraria retroactivamente las reglas bajo
+ * las que la gente se formo.
+ */
+export type ModalidadAdjudicacion = "AUTOMATICA" | "MANUAL";
+
+export const MODALIDADES_ADJUDICACION = [
+  "AUTOMATICA",
+  "MANUAL",
+] as const satisfies readonly ModalidadAdjudicacion[];
+
+/**
  * Lo que captura quien crea o edita una convocatoria (proyecto.md 4.2).
  *
  * Las tres fechas son **cadenas ISO-8601 UTC**, no `Date` (R-04). Persistir y
@@ -76,6 +95,27 @@ export type DatosConvocatoria = {
   inicioVenta: string;
   finVenta: string;
   horasLiquidacion: number;
+  /**
+   * Cuantos vehiculos de esta convocatoria puede adjudicarse un participante
+   * (R-09).
+   *
+   * Lo aplica la condicion del item de cupo dentro de la transaccion de
+   * adjudicacion, con este valor **desnormalizado en el lote** como literal.
+   * Solo se edita en `BORRADOR`, asi que queda congelado al publicar: nadie
+   * cambia las reglas con la fila ya formada.
+   */
+  limiteAdjudicaciones: number;
+  /**
+   * Cuantas solicitudes puede crear un participante en esta convocatoria
+   * (R-22).
+   *
+   * **Cuenta intentos, no solicitudes vivas**: las canceladas, vencidas y
+   * rechazadas siguen contando. Lo que exceda se crea y se cancela a
+   * continuacion, para que quede constancia de la participacion.
+   */
+  limiteSolicitudes: number;
+  /** Como se decide al ganador (R-23). Congelada al publicar. */
+  modalidadAdjudicacion: ModalidadAdjudicacion;
 };
 
 /** Los campos capturables, para recorrerlos sin escribirlos dos veces. */
@@ -88,6 +128,9 @@ export const CAMPOS_CONVOCATORIA = [
   "inicioVenta",
   "finVenta",
   "horasLiquidacion",
+  "limiteAdjudicaciones",
+  "limiteSolicitudes",
+  "modalidadAdjudicacion",
 ] as const satisfies readonly (keyof DatosConvocatoria)[];
 
 /** El registro completo, tal como vive en `CONV#<id> / META`. */

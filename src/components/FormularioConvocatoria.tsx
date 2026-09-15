@@ -25,7 +25,10 @@ import {
   ESTADO_CONVOCATORIA_INICIAL,
   type EstadoFormularioConvocatoria,
 } from "@/types/formularioConvocatoria";
-import { TIPOS_CONVOCATORIA } from "@/types/convocatoria";
+import {
+  MODALIDADES_ADJUDICACION,
+  TIPOS_CONVOCATORIA,
+} from "@/types/convocatoria";
 import "./FormularioConvocatoria.css";
 
 /**
@@ -61,6 +64,9 @@ export type FormularioConvocatoriaProps = {
     inicioVenta?: { fecha: string; hora: string };
     finVenta?: { fecha: string; hora: string };
     horasLiquidacion?: number;
+    modalidadAdjudicacion?: string;
+    limiteAdjudicaciones?: number;
+    limiteSolicitudes?: number;
   };
   /** Con `false` se muestra sin permitir guardar. */
   editable?: boolean;
@@ -334,6 +340,33 @@ const FormularioConvocatoria = ({
             ))}
           </FieldSet>
 
+          {/* Modalidad de adjudicacion (R-23). Va junto al tipo porque es la
+              otra decision estructural de la convocatoria, y como el tipo
+              **queda congelada al publicar**: cambiarla con la fila formada
+              alteraria retroactivamente las reglas bajo las que la gente se
+              formo. */}
+          <FieldSet legend={etiquetas.campoModalidad}>
+            {MODALIDADES_ADJUDICACION.map((modalidad) => (
+              <Fragment key={modalidad}>
+                <Radio
+                  id={`modalidad-${modalidad}`}
+                  name="modalidadAdjudicacion"
+                  value={modalidad}
+                  required
+                  defaultChecked={
+                    (capturado("modalidadAdjudicacion") ??
+                      valores.modalidadAdjudicacion ??
+                      MODALIDADES_ADJUDICACION[0]) === modalidad
+                  }
+                  disabled={!editable}
+                />
+                <Label htmlFor={`modalidad-${modalidad}`}>
+                  {diccionario.modalidadesAdjudicacion[modalidad]}
+                </Label>
+              </Fragment>
+            ))}
+          </FieldSet>
+
           <FormField
             label={etiquetas.campoDescripcion}
             onValidate={validarDescripcionConElServidor}
@@ -462,6 +495,51 @@ const FormularioConvocatoria = ({
               defaultValue={inicial(
                 "horasLiquidacion",
                 valores.horasLiquidacion?.toString() ?? "48",
+              )}
+              disabled={!editable}
+            />
+          </FormField>
+
+          {/* Los dos cupos de participacion (R-09 y R-22). Van juntos y al
+              final porque se leen como un par, aunque se comporten al reves:
+              el de adjudicaciones se recupera al perder un vehiculo, el de
+              solicitudes cuenta intentos y jamas decrece. Las ayudas lo dicen,
+              porque es la clase de asimetria que nadie deduce del nombre. */}
+          <FormField
+            label={etiquetas.campoLimiteAdjudicaciones}
+            description={etiquetas.limiteAdjudicacionesAyuda}
+            onValidate={validarConElServidor}
+          >
+            <Input
+              name="limiteAdjudicaciones"
+              type="number"
+              required
+              min={String(LIMITES_CONVOCATORIA.limiteMinimo)}
+              max={String(LIMITES_CONVOCATORIA.limiteMaximo)}
+              step="1"
+              defaultValue={inicial(
+                "limiteAdjudicaciones",
+                valores.limiteAdjudicaciones?.toString() ?? "1",
+              )}
+              disabled={!editable}
+            />
+          </FormField>
+
+          <FormField
+            label={etiquetas.campoLimiteSolicitudes}
+            description={etiquetas.limiteSolicitudesAyuda}
+            onValidate={validarConElServidor}
+          >
+            <Input
+              name="limiteSolicitudes"
+              type="number"
+              required
+              min={String(LIMITES_CONVOCATORIA.limiteMinimo)}
+              max={String(LIMITES_CONVOCATORIA.limiteMaximo)}
+              step="1"
+              defaultValue={inicial(
+                "limiteSolicitudes",
+                valores.limiteSolicitudes?.toString() ?? "3",
               )}
               disabled={!editable}
             />

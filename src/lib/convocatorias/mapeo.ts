@@ -7,9 +7,11 @@
 
 import {
   ESTATUS_CONVOCATORIA,
+  MODALIDADES_ADJUDICACION,
   TIPOS_CONVOCATORIA,
   type Convocatoria,
   type EstatusConvocatoria,
+  type ModalidadAdjudicacion,
   type TipoConvocatoria,
 } from "@/types/convocatoria";
 import { ESTATUS_LOTE, type EstatusLote, type Lote } from "@/types/lote";
@@ -27,6 +29,10 @@ const esEstatusConvocatoria = (valor: unknown): valor is EstatusConvocatoria =>
 const esTipo = (valor: unknown): valor is TipoConvocatoria =>
   typeof valor === "string" &&
   (TIPOS_CONVOCATORIA as readonly string[]).includes(valor);
+
+const esModalidad = (valor: unknown): valor is ModalidadAdjudicacion =>
+  typeof valor === "string" &&
+  (MODALIDADES_ADJUDICACION as readonly string[]).includes(valor);
 
 const esEstatusLote = (valor: unknown): valor is EstatusLote =>
   typeof valor === "string" &&
@@ -51,6 +57,8 @@ export const aConvocatoria = (
   const inicioVenta = texto(item.inicioVenta);
   const finVenta = texto(item.finVenta);
   const horasLiquidacion = entero(item.horasLiquidacion);
+  const limiteAdjudicaciones = entero(item.limiteAdjudicaciones);
+  const limiteSolicitudes = entero(item.limiteSolicitudes);
   const creadoEn = texto(item.creadoEn);
   const creadoPor = texto(item.creadoPor);
 
@@ -66,10 +74,13 @@ export const aConvocatoria = (
     !inicioVenta ||
     !finVenta ||
     horasLiquidacion === undefined ||
+    limiteAdjudicaciones === undefined ||
+    limiteSolicitudes === undefined ||
     !creadoEn ||
     !creadoPor ||
     !esEstatusConvocatoria(item.estatus) ||
-    !esTipo(item.tipo)
+    !esTipo(item.tipo) ||
+    !esModalidad(item.modalidadAdjudicacion)
   ) {
     return undefined;
   }
@@ -84,6 +95,9 @@ export const aConvocatoria = (
     inicioVenta,
     finVenta,
     horasLiquidacion,
+    limiteAdjudicaciones,
+    limiteSolicitudes,
+    modalidadAdjudicacion: item.modalidadAdjudicacion,
     estatus: item.estatus,
     creadoEn,
     creadoPor,
@@ -109,6 +123,8 @@ export const aLote = (item: Record<string, unknown>): Lote | undefined => {
   const inicioVenta = texto(item.inicioVenta);
   const finVenta = texto(item.finVenta);
   const horasLiquidacion = entero(item.horasLiquidacion);
+  const limiteAdjudicaciones = entero(item.limiteAdjudicaciones);
+  const limiteSolicitudes = entero(item.limiteSolicitudes);
   const creadoEn = texto(item.creadoEn);
   const creadoPor = texto(item.creadoPor);
 
@@ -121,11 +137,17 @@ export const aLote = (item: Record<string, unknown>): Lote | undefined => {
     !inicioVenta ||
     !finVenta ||
     horasLiquidacion === undefined ||
+    // Ver `Lote.limiteAdjudicaciones`: un lote sin sus topes es ilegible a
+    // proposito. La alternativa —leer su ausencia como "sin tope"— dejaria una
+    // propagacion a medias repartiendo vehiculos sin limite, en silencio.
+    limiteAdjudicaciones === undefined ||
+    limiteSolicitudes === undefined ||
     !creadoEn ||
     !creadoPor ||
     !esEstatusLote(item.estatus) ||
     !esTipo(item.tipoConvocatoria) ||
-    !esEstatusConvocatoria(item.estatusConvocatoria)
+    !esEstatusConvocatoria(item.estatusConvocatoria) ||
+    !esModalidad(item.modalidadAdjudicacion)
   ) {
     return undefined;
   }
@@ -142,6 +164,9 @@ export const aLote = (item: Record<string, unknown>): Lote | undefined => {
     tipoConvocatoria: item.tipoConvocatoria,
     estatusConvocatoria: item.estatusConvocatoria,
     horasLiquidacion,
+    limiteAdjudicaciones,
+    limiteSolicitudes,
+    modalidadAdjudicacion: item.modalidadAdjudicacion,
     creadoEn,
     creadoPor,
     ...(texto(item.motivoRetiro)

@@ -44,7 +44,7 @@ participante.
 | **Lote** | `CONV#<convocatoriaId>` | `LOTE#<loteId>` | Contiene el contador y la adjudicacion |
 | **Solicitud** | `LOTE#<loteId>` | `SOL#<turno:010d>` | El relleno de ceros es lo que da el orden |
 | **Centinela de fila** | `LOTE#<loteId>` | `PART#<participanteId>` | Garantiza R-07. Ver 4.2 |
-| **Centinela de adjudicacion** | `PART#<participanteId>` | `ADJUDICACION_ACTIVA` | Garantiza R-09. Ver 4.3 |
+| **Cupo de participacion** | `PART#<participanteId>` | `CUPO#<convocatoriaId>` | Contadores de R-09 y R-22. Ver 4.3 |
 | Evento de auditoria | `AUDIT#<agregado>#<agregadoId>` | `<ocurridoEn>#<eventoId>` | Append-only |
 | Mensaje de correo | `OUTBOX#<mensajeId>` | `META` | |
 
@@ -122,8 +122,16 @@ vehiculoId, precio, estatus            EN_OFERTA | ADJUDICADO | VENDIDO | NO_VEN
 contadorTurnos                         entero, solo crece, objetivo del ADD atomico
 adjudicacionActual                     solicitudId. AUSENTE cuando el lote esta libre
 adjudicadoEn, venceEn, turnoAdjudicado
-inicioVenta, finVenta, tipoConvocatoria, estatusConvocatoria, horasLiquidacion   (desnormalizados)
+inicioVenta, finVenta, tipoConvocatoria, estatusConvocatoria, horasLiquidacion,
+limiteAdjudicaciones, limiteSolicitudes, modalidadAdjudicacion           (desnormalizados)
 ```
+
+**Los dos limites y la modalidad viajan desnormalizados por la misma razon que los otros cinco**:
+el motor decide a partir del lote que ya tiene en la mano. T2 necesita el
+`limiteAdjudicaciones` como literal de la condicion del item 3 y ya tiene el lote en la mano, asi
+que leer la convocatoria seria una lectura de mas en el camino caliente. Como toda copia, pueden
+quedarse **atras** de la convocatoria pero nunca adelantarse; en la practica no se mueven, porque
+solo se editan en `BORRADOR`.
 
 **`adjudicacionActual` se elimina con `REMOVE`, nunca se pone en `null`.** Toda la exclusion
 mutua depende de `attribute_not_exists(adjudicacionActual)`; un `null` es un atributo que
@@ -133,9 +141,13 @@ existe y haria pasar la condicion, adjudicando el mismo lote dos veces.
 
 ```
 solicitudId, loteId, convocatoriaId, participanteId, turno, solicitadoEn
+ordenEnConvocatoria   -- el n-esimo intento de este participante en esta convocatoria
+                      -- (R-22). Ordena entre lotes distintos, que es lo que el turno
+                      -- no puede hacer. Puede faltar en solicitudes anteriores a la
+                      -- Etapa 14
 estatus     EN_FILA | CONGELADA | ADJUDICADA | EN_VERIFICACION | VENDIDA
             | CANCELADA_POR_VENCIMIENTO | RECHAZADA_POR_TESORERIA
-            | CANCELADA_POR_PARTICIPANTE | NO_ADJUDICADA
+            | CANCELADA_POR_PARTICIPANTE | CANCELADA_POR_LIMITE | NO_ADJUDICADA
 adjudicadoEn, venceEn, comprobanteClaveS3, comprobanteSubidoEn, motivoRechazo
 correoTitular   -- copia de la sesion en T1 (Etapa 9). No hay perfil de
                 -- participante persistido; sin esta copia PA-11 no podria
@@ -283,24 +295,58 @@ seguida de una decision — exactamente el antipatron que prohibe la regla 6 de 
 Ademas sirve de acceso directo: "¿ya estoy en esta fila y en que lugar?" es un `GetItem`, no un
 recorrido.
 
-### 4.3 Centinela de adjudicacion activa — R-09
+### 4.3 Item de cupo de participacion — R-09 y R-22
 
-`PART#<participanteId> / ADJUDICACION_ACTIVA`, con `loteId` y `solicitudId`.
+`PART#<participanteId> / CUPO#<convocatoriaId>`, con dos contadores:
 
-- Se crea con `attribute_not_exists(SK)` dentro de la transaccion de adjudicacion.
-- Se elimina al completarse la compra, al vencer, al rechazarse el pago o al cancelar.
+| Atributo | Que mide | Como se mueve |
+| --- | --- | --- |
+| `solicitudesCreadas` | Cuantas veces intento formarse en esta convocatoria | `ADD :uno`. **Monotonico: jamas decrece** |
+| `cupoConsumido` | Cuantos vehiculos de esta convocatoria tiene o tuvo en firme | `ADD :uno` al adjudicar, `ADD :menosUno` al perder la adjudicacion. **No baja al vender** |
 
-**Este centinela, no el estado `CONGELADA`, es lo que garantiza R-09.** El punto es importante:
-congelar las demas solicitudes de un ganador exigiria actualizar una cantidad no acotada de
-items, y `TransactWriteItems` admite 100. Seria imposible de garantizar transaccionalmente.
+**No es un centinela**, aunque viva en esta seccion: un centinela existe o no existe, y estos son
+contadores. Comparten con ellos lo unico que importa aqui — convertir una regla de negocio en una
+garantia atomica sin leer antes de decidir.
 
-El diseno lo invierte. La adjudicacion recorre los turnos en orden e **intenta** la transaccion
-con cada candidato. Si el candidato ya tiene una adjudicacion activa, el `Put` del centinela
-falla, la transaccion completa se cancela sin efectos, y el algoritmo marca esa solicitud como
-`CONGELADA` y prueba con el turno siguiente.
+**El tope de adjudicaciones se aplica con la condicion del propio `ADD`**, dentro de la
+transaccion de T2:
 
-Asi, `CONGELADA` es un estado **derivado y de presentacion** — le explica al participante por
-que no avanza — mientras la garantia real la sostiene la base de datos.
+```
+UpdateExpression:     ADD cupoConsumido :uno
+ConditionExpression:  attribute_not_exists(cupoConsumido) OR cupoConsumido < :limite
+```
+
+La condicion se evalua contra el valor **previo** al `ADD`, en el mismo item y la misma operacion
+atomica: no hay ventana entre comprobar y sumar. El `:limite` llega desnormalizado en el lote, que
+T2 ya tiene en la mano, asi que no cuesta una lectura extra.
+
+**El tope de solicitudes no viaja en la transaccion de T1**, y no por comodidad. Va en un `ADD`
+suelto con `ReturnValues: UPDATED_NEW` —igual que el contador de turnos, porque
+`TransactWriteItems` no devuelve valores— cuyo valor nuevo **es** el `ordenEnConvocatoria` de esa
+solicitud. Si excede el tope, la solicitud se crea igual y se cancela a continuacion a
+`CANCELADA_POR_LIMITE`: queda constancia del intento (R-22).
+
+**Va despues de `pedirTurno`, no antes.** Un `ADD` es atomico y no se puede deshacer, asi que un
+ordinal gastado por una solicitud que despues falla no se recupera — igual que los huecos de
+turno, que el diseno acepta. La diferencia es que este ordinal **cuenta contra un tope**, asi que
+quemarlo le cuesta una participacion a quien no hizo nada mal. Tras `pedirTurno` ya estan
+validados la ventana de venta y el estado del lote, y lo unico que aun puede fallar es una carrera
+genuina.
+
+**El decremento no necesita maquinaria contra el doble conteo.** Viaja dentro de las transacciones
+que ya quitan la adjudicacion (T5, T5b, T6), que ya llevan condiciones que fallan al repetirse
+—`#estatus = :adjudicada`, `adjudicacionActual = :vencida`—: un reintento posterior al exito no
+escribe nada. **T4 (avalar pago) no decrementa**: la venta consume el cupo definitivamente.
+
+**Solo lo escribe su propio participante**, asi que no es una particion caliente compartida. Es lo
+contrario del `ConditionCheck` sobre la convocatoria que T1 tuvo que retirar (seccion 4.4 y
+desafios-implementacion.md 17).
+
+> **Sustituye al centinela de adjudicacion activa.** Hasta la Etapa 14 esta seccion describia
+> `PART#<participanteId> / ADJUDICACION_ACTIVA`, un centinela que garantizaba una sola
+> adjudicacion viva por participante **en todo el sistema** y hacia que la adjudicacion congelara
+> a quien ya la tuviera. Ese item ya no se escribe ni se lee. El cambio de forma no es
+> caprichoso: un centinela responde "¿existe?" y el negocio ahora pregunta "¿cuantos?".
 
 ### 4.4 Reserva de turno — R18
 
@@ -578,12 +624,33 @@ la convocatoria y decidir despues, que es la carrera que el diseno evita.
 Si el paso 1 falla, se borra la reserva del paso 0: no corresponde a ningun turno y solo
 demoraria adjudicaciones ajenas hasta el umbral.
 
+**Paso 1b — `UpdateItem` sobre el item de cupo** (atomico, sin transaccion):
+
+```
+Key:              PART#<participanteId> / CUPO#<convocatoriaId>
+UpdateExpression: ADD solicitudesCreadas :uno
+ReturnValues:     UPDATED_NEW        -> devuelve el ordenEnConvocatoria
+```
+
+**Sin condicion, y es deliberado:** el tope no rechaza, cancela despues (R-22). El valor nuevo se
+persiste en la solicitud como `ordenEnConvocatoria` y es lo unico que permite comparar el orden de
+llegada de un participante **entre lotes distintos** — los turnos son por lote y no se comparan
+entre si.
+
+Va **despues** del paso 1 por la misma razon que el paso 0 va antes: el ordinal cuenta contra un
+tope y quemarlo tiene costo. Ver seccion 4.3.
+
 **Paso 2 — `TransactWriteItems`:**
 
-1. `Put` solicitud con `SK = SOL#<turno:010d>` y estado `EN_FILA`.
+1. `Put` solicitud con `SK = SOL#<turno:010d>`, estado `EN_FILA` y `ordenEnConvocatoria`.
 2. `Put` centinela de fila, con `attribute_not_exists(SK)` — R-07.
 3. `Put` evento `SOLICITUD_CREADA`, con `attribute_not_exists(PK)`.
 4. `Delete` de la reserva del paso 0, con `attribute_exists(SK)`.
+
+**Paso 3 — cancelacion por tope, solo si `ordenEnConvocatoria > limiteSolicitudes`** (R-22). Es
+una transaccion aparte —`Update` de la solicitud a `CANCELADA_POR_LIMITE`, `Delete` del centinela
+de fila y evento `SOLICITUD_CANCELADA_POR_LIMITE`— y **no** un item mas del paso 2: la solicitud
+tiene que existir antes de poder cancelarse, que es exactamente lo que el negocio pidio.
 
 El orden de los items fija la prioridad del diagnostico: `CancellationReasons` es posicional y
 se toma el **primer** motivo distinto de `None`, asi que "ya estabas en la fila" (item 2) gana
@@ -667,6 +734,16 @@ veces**. Una prueba con esa forma habria pasado en verde con el defecto presente
 Una sola `TransactWriteItems`, con bucle de candidatos por fuera.
 Implementada en `src/lib/fila/adjudicarLote.ts` (Etapa 8).
 
+> **T2b — adjudicacion manual (R-23).** `src/lib/fila/adjudicarManualmente.ts` reusa esta
+> transaccion **cambiando solo como se elige al candidato**: en vez de recorrer la fila de menor a
+> mayor, toma el turno que indico el adjudicador. Las cinco condiciones se conservan intactas —lote
+> libre y `EN_OFERTA`, solicitud `EN_FILA`, cupo disponible, vehiculo `EN_CONVOCATORIA`, evento
+> append-only—, porque **la regla 6 aplica igual cuando quien decide es una persona**: el servidor
+> no lee para decidir, escribe condicionalmente y acepta perder la carrera.
+>
+> Si el elegido agota su cupo, la accion **falla con `limite_alcanzado`** y la pantalla lo explica.
+> No prueba con otro: elegir por su cuenta seria volver a la modalidad automatica.
+
 ```
 1. Update lote        SET adjudicacionActual = :solicitudId, adjudicadoEn, venceEn,
                           turnoAdjudicado, estatus = ADJUDICADO
@@ -675,8 +752,10 @@ Implementada en `src/lib/fila/adjudicarLote.ts` (Etapa 8).
 2. Update solicitud   SET estatus = ADJUDICADA, adjudicadoEn, venceEn,
                           GSI4PK = VENCE#<dia>, GSI4SK = <venceEn>
                       CONDITION estatus = EN_FILA
-3. Put centinela      PART#<id> / ADJUDICACION_ACTIVA
-                      CONDITION attribute_not_exists(SK)                      <- R-09
+3. Update cupo        PART#<id> / CUPO#<convocatoriaId>
+                      ADD cupoConsumido :uno
+                      CONDITION attribute_not_exists(cupoConsumido)
+                            OR cupoConsumido < :limite                        <- R-09
 4. Update vehiculo    -> RESERVADO          CONDITION estatus = EN_CONVOCATORIA
 5. Put evento         LOTE_ADJUDICADO
                       CONDITION attribute_not_exists(PK)
@@ -684,6 +763,18 @@ Implementada en `src/lib/fila/adjudicarLote.ts` (Etapa 8).
    evento             ganador tiene correoTitular; lista vacia si no, sin bloquear
                       CONDITION attribute_not_exists(PK)
 ```
+
+**Cuando falla el item 3, la reaccion es omitir, no congelar.** El candidato agoto su cupo en esta
+convocatoria: se deja `SOLICITUD_OMITIDA` con razon `LIMITE_ALCANZADO` y se sigue con el turno
+siguiente. **La solicitud saltada se queda `EN_FILA` con su turno intacto** — el cupo se libera al
+vencer o al ser rechazado, y quien lo recupere vuelve a ser candidato en este lote por delante de
+quien llego despues.
+
+> **Eso obliga a corregir la comprobacion de integridad.** `comprobarOrdenDeAdjudicacion` daba por
+> justificado un salto solo si el turno saltado ademas habia cambiado de estado, porque hasta la
+> Etapa 14 omitir implicaba congelar. Ya no: sin quitar esa clausula, **cada salto por cupo
+> aparece como `saltosSinJustificar`**, es decir, la pantalla de auditoria acusa de fraude al
+> comportamiento que el negocio pidio. Un `SOLICITUD_OMITIDA` justifica el salto por si solo.
 
 #### 6.1 El outbox viaja en la transaccion que adjudica (D-6, riesgo R8)
 
@@ -836,10 +927,15 @@ la solicitud espera dictamen.
                       CONDITION estatus = EN_VERIFICACION
 2. Update lote        -> VENDIDO   CONDITION estatus = ADJUDICADO AND adjudicacionActual = :solicitudId
 3. Update vehiculo    -> VENDIDO   CONDITION estatus = RESERVADO
-4. Delete centinela   PART#<id> / ADJUDICACION_ACTIVA   CONDITION attribute_exists(SK)
-5. Delete centinela   VEH#<id> / ACTIVO                 CONDITION attribute_exists(SK)
-6. Put evento         PAGO_AVALADO          CONDITION attribute_not_exists(PK)
+4. Delete centinela   VEH#<id> / ACTIVO                 CONDITION attribute_exists(SK)
+5. Put evento         PAGO_AVALADO          CONDITION attribute_not_exists(PK)
 ```
+
+> **T4 es la unica salida de una adjudicacion que NO devuelve cupo, y es el punto entero de
+> R-09.** Hasta la Etapa 14 esta transaccion **borraba** el centinela `ADJUDICACION_ACTIVA`, de
+> modo que completar una compra dejaba al participante libre para ganar otro lote de inmediato.
+> Con el cupo ocurre lo contrario: una compra consumada lo gasta para siempre. Es una inversion
+> deliberada del comportamiento anterior — un tope que la compra liberara no seria un tope.
 
 Las solicitudes restantes del lote pasan a `NO_ADJUDICADA` **fuera** de esta transaccion: son
 una cantidad no acotada y no afectan ninguna invariante. `avalarPago.ts` no repite esa logica —
@@ -854,24 +950,35 @@ para decidir que cerrar.
 
 Un solo acto atomico que cierra al vencido y adjudica al siguiente. Implementado en
 `src/lib/fila/vencerYReasignar.ts` (Etapa 10), estructuralmente T2 con dos escrituras del lado
-del vencido intercaladas delante: reusa `leerFila` y `congelar` de `adjudicarLote.ts` en vez de
-duplicar la abstencion por reservas (R18) y el congelamiento por R-09.
+del vencido intercaladas delante: reusa `leerFila` de `adjudicarLote.ts` en vez de duplicar la
+abstencion por reservas (R18) y el manejo del cupo por R-09.
 
 ```
 1. Update solicitud vencida  -> CANCELADA_POR_VENCIMIENTO
                                 REMOVE GSI4PK, GSI4SK
                                 CONDITION estatus = ADJUDICADA AND venceEn <= :ahora
-2. Delete centinela          adjudicacion activa del vencido
+2. Update cupo del vencido   ADD cupoConsumido :menosUno          <- libera su cupo (R-09)
 3. Update lote               SET adjudicacionActual = :solicitudNueva, adjudicadoEn, venceEn
                              CONDITION adjudicacionActual = :solicitudVencida
 4. Update solicitud nueva    -> ADJUDICADA, con claves GSI4
                              CONDITION estatus = EN_FILA
-5. Put centinela             adjudicacion activa del nuevo   CONDITION attribute_not_exists
+5. Update cupo del nuevo     ADD cupoConsumido :uno
+                             CONDITION attribute_not_exists(cupoConsumido)
+                                   OR cupoConsumido < :limite     <- R-09
 6. Put evento                SOLICITUD_VENCIDA   CONDITION attribute_not_exists(PK)
 7. Put evento                LOTE_ADJUDICADO     CONDITION attribute_not_exists(PK)
 8. Put mensaje + evento      outbox del correo de adjudicacion, si el nuevo tiene correoTitular
                              (seccion 6.1) — lista vacia si no lo tiene, nunca bloquea
 ```
+
+> **Los items 2 y 5 tocan el mismo tipo de item, y eso seria fatal si coincidieran.**
+> `TransactWriteItems` rechaza dos operaciones sobre **el mismo item** con `ValidationException`,
+> asi que si el vencido y el candidato fueran el mismo participante la transaccion no fallaria
+> por condicion sino por forma, sin diagnostico util. No pueden coincidir, y la razon es R-07:
+> T5 **no** retira el centinela de fila del vencido —lo deja para que `consultarMiLugar` siga
+> mostrandole `CANCELADA_POR_VENCIMIENTO`—, asi que mientras esa solicitud existio el
+> participante nunca pudo tener una segunda solicitud viva en este lote. La garantia es de R-07,
+> no de esta transaccion; quien toque el centinela de fila de T5 tiene que volver aqui.
 
 La condicion del item 3 (`adjudicacionActual = :solicitudVencida`) es lo que hace segura la
 operacion frente a concurrencia: si otro proceso ya reasigno el lote, esta transaccion se
@@ -923,7 +1030,7 @@ para siempre. La adjudicacion resultante usa el motivo `RECUPERACION_POR_BARRIDO
 
 La cancelacion de una solicitud `ADJUDICADA` (Etapa 8,
 `src/lib/fila/cancelarSolicitud.ts`) no usa la forma de T5. Libera en una transaccion —solicitud
-a `CANCELADA_POR_PARTICIPANTE`, centinela de fila fuera, centinela de adjudicacion fuera, lote a
+a `CANCELADA_POR_PARTICIPANTE`, centinela de fila fuera, decremento del cupo (R-09), lote a
 `EN_OFERTA` con `REMOVE adjudicacionActual`, vehiculo a `EN_CONVOCATORIA`, mas su evento— y
 **despues** llama a T2, el mismo camino que dispara cualquier solicitud nueva.
 
@@ -934,7 +1041,7 @@ en vez de arrebatarle el vehiculo a quien acaba de recibirlo.
 **Por que aqui si y en T5 no.** El barrido de T5 actua sobre un plazo vencido y no puede dejar
 el lote libre sin dueno si el proceso se cae a la mitad. La cancelacion, en cambio, la dispara
 una persona que esta mirando la pantalla, y reutilizar T2 con su abstencion por reservas, su
-congelamiento por R-09 y sus reintentos vale mas que replicar esa logica dentro de una
+manejo del cupo por R-09 y sus reintentos vale mas que replicar esa logica dentro de una
 transaccion. La ventana que abre —lote libre con fila viva— **ya existe en el diseno**: T1
 tampoco puede adjudicar dentro de su propia transaccion, porque `TransactWriteItems` no devuelve
 valores.
@@ -956,14 +1063,14 @@ garantia de negocio en un limite tecnico.
 > la de T5 (un solo acto atomico). El barrido de T5 tiene que ser atomico porque actua sobre un
 > plazo vencido y no puede dejar el lote sin dueno si el proceso se cae a la mitad; rechazar lo
 > dispara una persona de tesoreria mirando la pantalla, y reutilizar T2 —con su abstencion por
-> reservas, su congelamiento por R-09 y sus reintentos— vale mas que replicarlo dentro de una
+> reservas, su manejo del cupo por R-09 y sus reintentos— vale mas que replicarlo dentro de una
 > transaccion (mismo argumento de T5b).
 
 ```
 1. Update solicitud   SET estatus = RECHAZADA_POR_TESORERIA, motivoRechazo, rechazadaEn
                       REMOVE GSI2PK, GSI2SK                   <- ya no es trabajo pendiente
                       CONDITION estatus = EN_VERIFICACION
-2. Delete centinela   PART#<id> / ADJUDICACION_ACTIVA   CONDITION attribute_exists(SK)
+2. Update cupo        PART#<id> / CUPO#<convId>   ADD cupoConsumido :menosUno   <- libera (R-09)
 3. Update lote        SET estatus = EN_OFERTA REMOVE adjudicacionActual, adjudicadoEn, venceEn,
                           turnoAdjudicado
                       CONDITION adjudicacionActual = :solicitudId
@@ -976,9 +1083,11 @@ cancelacion voluntaria de T5b: `RECHAZADA_POR_TESORERIA` tiene que seguir siendo
 `consultarMiLugar`, que es como el titular se entera del motivo (`ui-ux-requerimientos.md`
 seccion 3.4).
 
-**Fuera de esta transaccion**, en ese orden: `descongelarSolicitudes` para el participante
-rechazado (R-09, antes de reasignar) y despues `adjudicarLote` con
-`motivo: REASIGNACION_POR_RECHAZO`, exactamente como hace T5b.
+**Fuera de esta transaccion**: `adjudicarLote` con `motivo: REASIGNACION_POR_RECHAZO`,
+exactamente como hace T5b. El paso intermedio que habia aqui —`descongelarSolicitudes` para el
+participante rechazado— desaparecio con el congelamiento en la Etapa 14: sus demas solicitudes
+nunca dejaron de estar `EN_FILA`, y el decremento del item 2 les devuelve el cupo en la misma
+transaccion.
 
 ### T7 — Incluir vehiculo en convocatoria
 
@@ -1040,8 +1149,10 @@ regla 16.
 3. **Adjudicacion unica.** N intentos simultaneos producen exactamente un ganador.
 4. **El orden manda sobre el tiempo.** Con `solicitadoEn` deliberadamente desordenados respecto
    al turno, gana siempre el turno menor (R-08).
-5. **Una adjudicacion activa.** Nunca existen dos centinelas `ADJUDICACION_ACTIVA` del mismo
-   participante.
+5. **El cupo nunca se excede.** `cupoConsumido` de un participante jamas supera el
+   `limiteAdjudicaciones` de esa convocatoria, ni siquiera con N intentos simultaneos; y nunca
+   queda negativo, porque cada decremento viaja en la transaccion que quita una adjudicacion que
+   el mismo participante sostenia.
 6. **Un vehiculo, una convocatoria activa.** Nunca dos centinelas `VEH#<id> / ACTIVO`.
 7. **Atomicidad de la auditoria.** Si el evento no se puede escribir, la mutacion no ocurre.
 8. **Sin identidades en la fila.** El DTO de PA-08 no contiene `participanteId`, correo ni

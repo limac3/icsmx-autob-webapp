@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { crearClienteFalso } from "@/utils/clienteDynamoFalso";
 import { adjudicarLote } from "@/lib/fila/adjudicarLote";
-import { descongelarSolicitudes } from "@/lib/fila/descongelarSolicitudes";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
@@ -12,12 +11,8 @@ import { rechazarPago } from "./rechazarPago";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/fila/adjudicarLote", () => ({ adjudicarLote: vi.fn() }));
-vi.mock("@/lib/fila/descongelarSolicitudes", () => ({
-  descongelarSolicitudes: vi.fn(),
-}));
 
 const adjudicacion = vi.mocked(adjudicarLote);
-const descongelamiento = vi.mocked(descongelarSolicitudes);
 
 const AHORA = new Date("2026-10-07T15:00:00.000Z");
 
@@ -33,6 +28,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
   adjudicacionActual: "L1-2",
@@ -76,7 +74,6 @@ beforeEach(() => {
     estado: "fila_agotada",
     turnosRevisados: 0,
   });
-  descongelamiento.mockResolvedValue(0);
 });
 
 afterEach(() => {
@@ -142,9 +139,11 @@ describe("rechazarPago — R-16", () => {
       ":motivo": "El comprobante no corresponde al monto",
     });
 
-    expect(items[1]?.Delete?.Key).toEqual({
-      PK: "PART#P1",
-      SK: "ADJUDICACION_ACTIVA",
+    // Rechazar libera el cupo, igual que vencer. Solo la venta lo consume
+    // definitivamente (R-09).
+    expect(items[1]?.Update).toMatchObject({
+      Key: { PK: "PART#P1", SK: "CUPO#C1" },
+      UpdateExpression: "ADD cupoConsumido :menosUno",
     });
     expect(items[2]?.Update).toMatchObject({
       Key: { PK: "CONV#C1", SK: "LOTE#L1" },
@@ -181,8 +180,7 @@ describe("rechazarPago — R-16", () => {
     expect(borraCentinelaDeFila).toBe(false);
   });
 
-  it("descongela antes de reasignar, y reasigna con el motivo correcto", async () => {
-    descongelamiento.mockResolvedValue(1);
+  it("reasigna con el motivo correcto, sobre el lote ya liberado", async () => {
     adjudicacion.mockResolvedValue({
       estado: "adjudicado",
       turno: 3,
@@ -198,15 +196,10 @@ describe("rechazarPago — R-16", () => {
     );
 
     if (!resultado.ok) throw new Error("se esperaba exito");
-    expect(resultado.data.descongeladas).toBe(1);
     expect(resultado.data.reasignacion).toMatchObject({
       estado: "adjudicado",
       turno: 3,
     });
-    expect(descongelamiento).toHaveBeenCalledWith(
-      { participanteId: "P1" },
-      expect.anything(),
-    );
     expect(adjudicacion.mock.calls[0]?.[0]).toMatchObject({
       motivo: "REASIGNACION_POR_RECHAZO",
       lote: expect.objectContaining({ estatus: "EN_OFERTA" }),
@@ -214,9 +207,6 @@ describe("rechazarPago — R-16", () => {
     expect(
       adjudicacion.mock.calls[0]?.[0].lote.adjudicacionActual,
     ).toBeUndefined();
-    expect(descongelamiento.mock.invocationCallOrder[0]).toBeLessThan(
-      adjudicacion.mock.invocationCallOrder[0]!,
-    );
   });
 
   it("si otro proceso ya reasigno el lote, el rechazo falla entero", async () => {
@@ -241,6 +231,5 @@ describe("rechazarPago — R-16", () => {
 
     expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
     expect(adjudicacion).not.toHaveBeenCalled();
-    expect(descongelamiento).not.toHaveBeenCalled();
   });
 });

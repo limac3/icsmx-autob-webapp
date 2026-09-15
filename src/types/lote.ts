@@ -1,6 +1,10 @@
 // Fuente: agent_files/proyecto.md secciones 4.3 y 5.3.
 
-import type { EstatusConvocatoria, TipoConvocatoria } from "./convocatoria";
+import type {
+  EstatusConvocatoria,
+  ModalidadAdjudicacion,
+  TipoConvocatoria,
+} from "./convocatoria";
 
 /**
  * Estatus del lote — *un vehiculo dentro de una convocatoria concreta*.
@@ -47,6 +51,35 @@ export type Lote = {
   tipoConvocatoria: TipoConvocatoria;
   estatusConvocatoria: EstatusConvocatoria;
   horasLiquidacion: number;
+  /**
+   * Cupo de adjudicaciones de la convocatoria (R-09), desnormalizado por la
+   * misma razon que los otros cinco: T2 lo necesita como **literal de la
+   * condicion** del item de cupo y ya tiene el lote en la mano, asi que leer la
+   * convocatoria seria una lectura de mas en el camino caliente.
+   *
+   * **Obligatorio, y esa decision tiene una razon precisa.** Como toda copia,
+   * puede quedarse atras de la convocatoria; pero el invariante de la
+   * desnormalizacion es que "atras" signifique siempre *menos permisivo*
+   * (`propagarALotes.ts`). Un limite opcional lo rompe: la unica lectura
+   * sensata de su ausencia seria "sin tope", que es la direccion **mas**
+   * permisiva — media propagacion interrumpida repartiria vehiculos sin
+   * limite, en silencio. Exigirlo convierte ese caso en un lote ilegible, que
+   * es ruidoso y detectable.
+   */
+  limiteAdjudicaciones: number;
+  /** Tope de solicitudes de la convocatoria (R-22). Misma nota que el anterior. */
+  limiteSolicitudes: number;
+  /**
+   * Modalidad de adjudicacion de la convocatoria (R-23), desnormalizada porque
+   * **el motor decide a partir del lote que ya tiene en la mano**: los cinco
+   * disparadores automaticos se bifurcan leyendo este atributo, sin una lectura
+   * extra de la convocatoria.
+   *
+   * Obligatoria por la misma razon que los dos limites: su ausencia solo podria
+   * leerse como `AUTOMATICA`, y eso haria que una propagacion a medias
+   * adjudicara sola los lotes que esperaban una decision humana.
+   */
+  modalidadAdjudicacion: ModalidadAdjudicacion;
   creadoEn: string;
   creadoPor: string;
   /** Presente solo si se retiro de la convocatoria. */

@@ -331,6 +331,20 @@ const reconciliarLotesPublicados = async (
         continue;
       }
 
+      // **Los lotes manuales no se recuperan, y esto es R21** (R-23).
+      //
+      // Un lote esperando la decision del adjudicador es, para el resto de esta
+      // funcion, **indistinguible** de uno automatico que se quedo sin
+      // adjudicar: `EN_OFERTA`, con fila viva y sin `adjudicacionActual`. Sin
+      // esta linea el barrido nocturno adjudicaria al turno menor por su cuenta
+      // y desharia la modalidad entera — en silencio, de madrugada, y con un
+      // `LOTE_ADJUDICADO` que diria `RECUPERACION_POR_BARRIDO`.
+      //
+      // Va aqui y no antes de `hayFilaViva` a proposito: un lote manual cuya
+      // convocatoria ya cerro **si** debe pasar por el cierre de fila de arriba,
+      // que es lo que deja a los que no alcanzaron en `NO_ADJUDICADA`.
+      if (lote.modalidadAdjudicacion === "MANUAL") continue;
+
       const desenlace = await adjudicarLote(
         { lote, motivo: "RECUPERACION_POR_BARRIDO" },
         deps,

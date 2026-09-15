@@ -22,6 +22,7 @@ export const ROLES = [
   "EMPLEADO",
   "OTRO_USUARIO",
   "OPERADOR_TESORERIA",
+  "ADJUDICADOR",
   "AUDITOR_CUMPLIMIENTO",
 ] as const;
 
@@ -44,6 +45,9 @@ export const PERMISOS_POR_ROL: Readonly<Record<Rol, readonly Permiso[]>> = {
   EMPLEADO: ["Autob_Venta_a_empleados", "Autob_Venta_en_general"],
   OTRO_USUARIO: ["Autob_Venta_en_general"],
   OPERADOR_TESORERIA: ["Autob_Operar_Tesoreria"],
+  // Sin permisos de venta, por la misma conveniencia que el administrador:
+  // quien decide quien gana no compite por lo que reparte (R-23).
+  ADJUDICADOR: ["Autob_Adjudicar_Convocatorias"],
   AUDITOR_CUMPLIMIENTO: ["Autob_Auditar"],
 };
 

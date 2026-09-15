@@ -32,6 +32,7 @@ const APROBAR = "Autob_Aprobar_Convocatorias" as const;
 const VENTA_EMP = "Autob_Venta_a_empleados" as const;
 const VENTA_GEN = "Autob_Venta_en_general" as const;
 const TESORERIA = "Autob_Operar_Tesoreria" as const;
+const ADJUDICAR = "Autob_Adjudicar_Convocatorias" as const;
 const AUDITAR = "Autob_Auditar" as const;
 
 // Re-derivado a mano de agent_files/permission-matrix.md, no leido desde
@@ -221,6 +222,26 @@ const CATALOGO_ESPERADO: CasoAccion[] = [
     accion: "tesoreria:ver-bandeja",
     permisosQuePermiten: [TESORERIA, AUDITAR],
   },
+  // 5b. Adjudicacion manual (R-23)
+  {
+    accion: "adjudicacion:ver-bandeja",
+    permisosQuePermiten: [ADJUDICAR, AUDITAR],
+  },
+  {
+    accion: "adjudicacion:ver-fila-identificada",
+    permisosQuePermiten: [ADJUDICAR, AUDITAR],
+    contexto: { modalidadManual: true },
+  },
+  {
+    accion: "adjudicacion:adjudicar",
+    permisosQuePermiten: [ADJUDICAR],
+    contexto: {
+      modalidadManual: true,
+      estatusConvocatoria: "PUBLICADA",
+      estatusLote: "EN_OFERTA",
+      motivoProvisto: true,
+    },
+  },
   {
     accion: "pago:avalar",
     permisosQuePermiten: [TESORERIA],
@@ -283,6 +304,8 @@ describe("puedeEjecutar — invariantes de la seccion 9 de permission-matrix.md"
     "fila:ver-completa",
     "comprobante:descargar",
     "tesoreria:ver-bandeja",
+    "adjudicacion:ver-bandeja",
+    "adjudicacion:ver-fila-identificada",
     "auditoria:ver-bitacora",
     "auditoria:ver-fila-historica",
     "auditoria:exportar",

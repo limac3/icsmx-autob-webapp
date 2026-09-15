@@ -66,6 +66,31 @@ export type Variante = (typeof VARIANTES)[number];
 export const ATRIBUTO_RESERVAS = "reservas";
 
 /**
+ * El centinela de adjudicacion activa, **congelado aqui como registro
+ * historico**.
+ *
+ * Este prototipo reproduce T1 y T2 **tal como eran cuando se decidio R18**, y
+ * entonces R-09 era "una sola adjudicacion activa en todo el sistema",
+ * garantizada por un `PART#<id> / ADJUDICACION_ACTIVA`. La Etapa 14 sustituyo
+ * esa regla por el cupo por convocatoria y retiro el constructor de
+ * `claves.ts`.
+ *
+ * Se copia la forma de la clave en vez de migrar el prototipo al cupo, y es
+ * deliberado: **este archivo no es codigo de produccion, es la evidencia de una
+ * decision ya tomada.** Actualizarlo para seguir al motor lo convertiria en una
+ * segunda implementacion que mantener, y peor, invalidaria lo que demuestra —
+ * la comparacion entre las tres variantes solo significa algo si las tres son
+ * las que se midieron. La prueba que lo ejerce vive en el sandbox y limpia sus
+ * propias particiones.
+ */
+const centinelaAdjudicacionDelPrototipo = (
+  participanteId: string,
+): { PK: string; SK: string } => ({
+  PK: `PART#${participanteId}`,
+  SK: "ADJUDICACION_ACTIVA",
+});
+
+/**
  * La reserva sigue viva en el momento de retirarla.
  *
  * Es la condicion que convierte el umbral en un compromiso de **espera** y no
@@ -680,7 +705,7 @@ const intentarAdjudicar = async (
           Put: {
             TableName: tabla,
             Item: {
-              ...clave.centinelaAdjudicacion(candidato.participanteId),
+              ...centinelaAdjudicacionDelPrototipo(candidato.participanteId),
               loteId: entrada.loteId,
               turno: candidato.turno,
             },

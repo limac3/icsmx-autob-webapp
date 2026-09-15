@@ -94,6 +94,13 @@ export const PERSONAS_SIMULADAS: readonly PersonaSimulada[] = [
     roles: ["OPERADOR_TESORERIA"],
   },
   {
+    id: "adjudicador",
+    participanteId: "dev-adjudicador",
+    nombre: "Hilda Herrera",
+    correo: "hilda.herrera@autob.invalid",
+    roles: ["ADJUDICADOR"],
+  },
+  {
     id: "auditor",
     participanteId: "dev-auditor",
     nombre: "Gina Gaytan",

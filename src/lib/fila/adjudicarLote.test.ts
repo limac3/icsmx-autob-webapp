@@ -27,6 +27,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
 };
@@ -236,7 +239,7 @@ describe("la transaccion de adjudicacion", () => {
     });
   });
 
-  it("pone el centinela de adjudicacion activa con attribute_not_exists (R-09)", async () => {
+  it("consume una unidad de cupo, condicionada al limite del lote (R-09)", async () => {
     const falso = crearClienteFalso({
       responder: conFila([solicitudEnFila(1, "P1")]),
     });
@@ -246,15 +249,41 @@ describe("la transaccion de adjudicacion", () => {
       deps(falso.cliente),
     );
 
-    expect(items(falso)[2]?.Put).toMatchObject({
-      Item: {
-        PK: "PART#P1",
-        SK: "ADJUDICACION_ACTIVA",
-        loteId: "L1",
-        turno: 1,
-      },
-      ConditionExpression: "attribute_not_exists(SK)",
+    // La condicion se evalua contra el valor **previo** al `ADD`, en el mismo
+    // item y la misma operacion atomica: no hay ventana entre comprobar y
+    // sumar. Es lo que hace que con cupo K, N intentos simultaneos produzcan
+    // exactamente K exitos.
+    expect(items(falso)[2]?.Update).toMatchObject({
+      Key: { PK: "PART#P1", SK: "CUPO#C1" },
+      UpdateExpression: "ADD cupoConsumido :uno",
+      ConditionExpression:
+        "attribute_not_exists(cupoConsumido) OR cupoConsumido < :limite",
+      ExpressionAttributeValues: { ":uno": 1, ":limite": 1 },
     });
+  });
+
+  it("el limite sale del lote desnormalizado, no de una lectura aparte", async () => {
+    // T2 recibe el `Lote` completo y necesita el valor como literal de la
+    // condicion: releer la convocatoria seria una lectura de mas en el camino
+    // caliente, y ademas la carrera que el diseno evita.
+    const falso = crearClienteFalso({
+      responder: conFila([solicitudEnFila(1, "P1")]),
+    });
+
+    await adjudicarLote(
+      {
+        lote: { ...lote, limiteAdjudicaciones: 7 },
+        motivo: "PRIMERA_ADJUDICACION",
+      },
+      deps(falso.cliente),
+    );
+
+    expect(items(falso)[2]?.Update?.ExpressionAttributeValues).toMatchObject({
+      ":limite": 7,
+    });
+    expect(
+      falso.comandos.filter((c) => c.nombre === "GetCommand"),
+    ).toHaveLength(0);
   });
 
   it("reserva el vehiculo, que es lo que hace alcanzable RESERVADO", async () => {
@@ -401,18 +430,15 @@ describe("cuando la transaccion se cancela", () => {
     ).toHaveLength(1);
   });
 
-  it("si el candidato ya tiene adjudicacion activa, lo congela y sigue (R-09)", async () => {
+  it("si el candidato agoto su cupo, lo omite y sigue con el siguiente (R-09)", async () => {
     let intentos = 0;
     const falso = crearClienteFalso({
       responder: (comando) => {
-        if (comando.nombre === "GetCommand") {
-          return { Item: { loteId: "OTRO-LOTE" } };
-        }
         if (comando.nombre === "TransactWriteCommand") {
           const transaccion = comando.input.TransactItems as unknown[];
-          // La transaccion de congelamiento tiene tres items; la de
+          // La transaccion de omision tiene un solo item —el evento—; la de
           // adjudicacion, cinco.
-          if (transaccion.length === 3) return {};
+          if (transaccion.length === 1) return {};
           intentos += 1;
           if (intentos === 1) throw canceladaEn(2);
           return {};
@@ -430,40 +456,37 @@ describe("cuando la transaccion se cancela", () => {
 
     expect(resultado).toMatchObject({ estado: "adjudicado", turno: 2 });
 
-    const congelamiento = falso.comandos
+    const omision = falso.comandos
       .filter((c) => c.nombre === "TransactWriteCommand")
       .map(
         (c) =>
           c.input.TransactItems as Record<string, Record<string, unknown>>[],
       )
-      .find((transaccion) => transaccion.length === 3);
+      .find((transaccion) => transaccion.length === 1);
 
-    expect(congelamiento?.[0]?.Update).toMatchObject({
-      Key: { PK: "LOTE#L1", SK: "SOL#0000000001" },
-      ConditionExpression: "#estatus = :enFila",
-    });
-    expect(congelamiento?.[1]?.Put?.Item).toMatchObject({
-      tipo: "SOLICITUD_CONGELADA",
-      datos: { turno: 1, loteQueGano: "OTRO-LOTE" },
-    });
-    // El segundo evento es el que hace auditable el salto: sin el, la bitacora
-    // mostraria una adjudicacion al turno 2 con el turno 1 vivo.
-    expect(congelamiento?.[2]?.Put?.Item).toMatchObject({
+    // Un solo evento, y **ningun cambio de estado**: el saltado se queda
+    // `EN_FILA` con su turno intacto para recuperar su lugar si libera cupo.
+    // Esto es lo que hace que el evento sea la unica explicacion del salto.
+    expect(omision?.[0]?.Put?.Item).toMatchObject({
       tipo: "SOLICITUD_OMITIDA",
-      datos: { turno: 1, razonOmision: "ADJUDICACION_ACTIVA" },
+      datos: { turno: 1, razonOmision: "LIMITE_ALCANZADO" },
     });
   });
 
-  it("los dos eventos del congelamiento comparten correlacionId", async () => {
+  it("omitir no congela: el saltado conserva su turno y su estado", async () => {
+    let intentos = 0;
     const falso = crearClienteFalso({
       responder: (comando) => {
-        if (comando.nombre === "GetCommand") return { Item: { loteId: "L9" } };
         if (comando.nombre === "TransactWriteCommand") {
           const transaccion = comando.input.TransactItems as unknown[];
-          if (transaccion.length === 5) throw canceladaEn(2);
+          if (transaccion.length === 1) return {};
+          intentos += 1;
+          if (intentos === 1) throw canceladaEn(2);
           return {};
         }
-        return conFila([solicitudEnFila(1, "P1")])(comando);
+        return conFila([solicitudEnFila(1, "P1"), solicitudEnFila(2, "P2")])(
+          comando,
+        );
       },
     });
 
@@ -472,17 +495,16 @@ describe("cuando la transaccion se cancela", () => {
       deps(falso.cliente),
     );
 
-    const congelamiento = falso.comandos
-      .filter((c) => c.nombre === "TransactWriteCommand")
-      .map(
-        (c) =>
-          c.input.TransactItems as Record<string, Record<string, unknown>>[],
-      )
-      .find((transaccion) => transaccion.length === 3);
-
-    const primero = congelamiento?.[1]?.Put?.Item as Record<string, string>;
-    const segundo = congelamiento?.[2]?.Put?.Item as Record<string, string>;
-    expect(primero.correlacionId).toBe(segundo.correlacionId);
+    // Ninguna escritura toca el estatus del turno saltado. Congelarlo le
+    // costaria su lugar por una condicion reversible — el cupo se libera al
+    // vencer o al ser rechazado.
+    const escrituras = JSON.stringify(
+      falso.comandos
+        .filter((c) => c.nombre === "TransactWriteCommand")
+        .map((c) => c.input.TransactItems),
+    );
+    expect(escrituras).not.toContain("CONGELADA");
+    expect(escrituras).not.toContain('SOL#0000000001","UpdateExpression');
   });
 
   it("si la solicitud dejo de estar EN_FILA, sigue sin congelar ni registrar nada", async () => {
@@ -708,5 +730,62 @@ describe("el corte de 1 MB no puede declarar agotada una fila viva", () => {
       PK: "LOTE#L1",
       SK: "corte",
     });
+  });
+});
+
+describe("modalidad manual — nada adjudica solo (R-23)", () => {
+  const manual: Lote = { ...lote, modalidadAdjudicacion: "MANUAL" };
+
+  it("no toca DynamoDB siquiera: se detiene en la puerta", async () => {
+    // La compuerta esta en `ejecutarAdjudicacion`, antes de leer reservas y
+    // antes de leer la fila. Tres de los cuatro disparadores automaticos llegan
+    // por aqui, y comprobarlo en cada uno serian tres oportunidades de
+    // olvidarlo.
+    const falso = crearClienteFalso({
+      responder: conFila([solicitudEnFila(1, "P1")]),
+    });
+
+    const resultado = await adjudicarLote(
+      { lote: manual, motivo: "PRIMERA_ADJUDICACION" },
+      deps(falso.cliente),
+    );
+
+    expect(resultado).toEqual({ estado: "modalidad_manual" });
+    expect(falso.comandos).toHaveLength(0);
+  });
+
+  it("ni siquiera con la fila llena y el lote libre", async () => {
+    const falso = crearClienteFalso({
+      responder: conFila([
+        solicitudEnFila(1, "P1"),
+        solicitudEnFila(2, "P2"),
+        solicitudEnFila(3, "P3"),
+      ]),
+    });
+
+    await adjudicarLote(
+      { lote: manual, motivo: "REASIGNACION_POR_CANCELACION" },
+      deps(falso.cliente),
+    );
+
+    expect(
+      falso.comandos.some((c) => c.nombre === "TransactWriteCommand"),
+    ).toBe(false);
+  });
+
+  it("una convocatoria automatica sigue adjudicando igual", async () => {
+    // La compuerta no puede volverse un freno para la modalidad que si decide
+    // sola: es la comprobacion inversa, sin la cual "no adjudica nunca" pasaria
+    // en verde.
+    const falso = crearClienteFalso({
+      responder: conFila([solicitudEnFila(1, "P1")]),
+    });
+
+    const resultado = await adjudicarLote(
+      { lote, motivo: "PRIMERA_ADJUDICACION" },
+      deps(falso.cliente),
+    );
+
+    expect(resultado.estado).toBe("adjudicado");
   });
 });

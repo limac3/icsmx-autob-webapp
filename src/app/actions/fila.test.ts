@@ -54,6 +54,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
 };
@@ -68,6 +71,9 @@ const convocatoria: ConvocatoriaConLotes = {
   inicioVenta: enHoras(-1),
   finVenta: enHoras(48),
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   estatus: "PUBLICADA",
   creadoEn: "2026-09-01T10:00:00.000Z",
   creadoPor: "P9",
@@ -105,6 +111,8 @@ beforeEach(() => {
     data: {
       solicitudId: "L1-1",
       turno: 1,
+      ordenEnConvocatoria: 1,
+      canceladaPorLimite: false,
       adjudicacion: { estado: "fila_agotada", turnosRevisados: 0 },
     },
   });
@@ -124,7 +132,6 @@ beforeEach(() => {
     data: {
       estatus: "CANCELADA_POR_PARTICIPANTE",
       liberoElLote: false,
-      descongeladas: 0,
     },
   });
 });

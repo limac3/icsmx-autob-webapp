@@ -7,7 +7,10 @@
 import { desdeIso } from "./fechas";
 import { revisarHtmlDeDescripcion } from "./htmlDeDescripcion";
 import type { DatosConvocatoria } from "@/types/convocatoria";
-import { TIPOS_CONVOCATORIA } from "@/types/convocatoria";
+import {
+  MODALIDADES_ADJUDICACION,
+  TIPOS_CONVOCATORIA,
+} from "@/types/convocatoria";
 import {
   normalizarIdentificadorDeNegocio,
   prepararIdentificadorDeNegocio,
@@ -29,6 +32,21 @@ export const LIMITES_CONVOCATORIA = {
    */
   horasLiquidacionMinimo: 1,
   horasLiquidacionMaximo: 24 * 30,
+  /**
+   * Cupo de adjudicaciones por participante (R-09) y tope de solicitudes
+   * (R-22). Los dos comparten rango porque los dos responden la misma clase de
+   * pregunta —"cuantas veces"— y ninguno tiene sentido en cero.
+   *
+   * **El minimo es 1, y eso es una decision de negocio, no de cordura.** Con
+   * cero, ningun participante podria adjudicarse nada y la convocatoria entera
+   * seria inutil: se publicaria, se formaria la fila y no se entregaria un solo
+   * vehiculo. Quien quiera una convocatoria sin adjudicaciones tiene la
+   * herramienta correcta, que es no publicarla.
+   *
+   * El maximo es un tope de cordura contra un cero de mas al teclear.
+   */
+  limiteMinimo: 1,
+  limiteMaximo: 999,
 } as const;
 
 export const MOTIVOS_INVALIDEZ_CONVOCATORIA = [
@@ -79,6 +97,14 @@ export const revisarDatosConvocatoria = (
 
   if (!(TIPOS_CONVOCATORIA as readonly string[]).includes(datos.tipo)) {
     errores.tipo = "requerido";
+  }
+
+  if (
+    !(MODALIDADES_ADJUDICACION as readonly string[]).includes(
+      datos.modalidadAdjudicacion,
+    )
+  ) {
+    errores.modalidadAdjudicacion = "requerido";
   }
 
   // El folio se revisa **sobre su forma normalizada**, que es lo que se va a
@@ -149,7 +175,34 @@ export const revisarDatosConvocatoria = (
     errores.horasLiquidacion = "fuera_de_rango";
   }
 
+  // Los dos cupos se revisan igual, y es correcto que compartan codigo: lo que
+  // los distingue es que uno se recupera y el otro no, y eso no es un asunto de
+  // validacion sino del motor.
+  for (const campo of CAMPOS_DE_CUPO) {
+    const motivo = revisarCupo(datos[campo]);
+    if (motivo) errores[campo] = motivo;
+  }
+
   return errores;
+};
+
+const CAMPOS_DE_CUPO = ["limiteAdjudicaciones", "limiteSolicitudes"] as const;
+
+/**
+ * Un cupo valido es un entero dentro del rango. Se comprueba aparte para que
+ * el formulario y la validacion usen exactamente el mismo criterio.
+ */
+export const revisarCupo = (
+  valor: number,
+): MotivoInvalidezConvocatoria | undefined => {
+  if (!Number.isInteger(valor)) return "no_es_entero";
+  if (
+    valor < LIMITES_CONVOCATORIA.limiteMinimo ||
+    valor > LIMITES_CONVOCATORIA.limiteMaximo
+  ) {
+    return "fuera_de_rango";
+  }
+  return undefined;
 };
 
 /**
@@ -179,6 +232,9 @@ export const normalizarDatosConvocatoria = (
     inicioVenta: enIso(datos.inicioVenta),
     finVenta: enIso(datos.finVenta),
     horasLiquidacion: datos.horasLiquidacion,
+    limiteAdjudicaciones: datos.limiteAdjudicaciones,
+    limiteSolicitudes: datos.limiteSolicitudes,
+    modalidadAdjudicacion: datos.modalidadAdjudicacion,
   };
 };
 

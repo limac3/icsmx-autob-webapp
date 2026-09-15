@@ -41,6 +41,10 @@ export type Nivel = (typeof NIVELES)[number];
 export const OPERACIONES = [
   "solicitarCompra",
   "adjudicarLote",
+  // La decision humana de R-23. Se traza aparte de `adjudicarLote` porque
+  // responde otra pregunta operativa: cuanto tarda el adjudicador en dictaminar
+  // y cuantas veces pierde la carrera contra un estado que ya cambio.
+  "adjudicarManualmente",
   "vencerYReasignar",
   "barridoDeVencimientos",
   "procesarOutbox",

@@ -163,7 +163,7 @@ describe.skipIf(!hayBackend)("tesoreria contra DynamoDB y S3 reales", () => {
 
   const participante = (nombre: string): string => {
     const id = `e9-${nombre}-${CORRIDA}`;
-    particionesCreadas.add(clave.centinelaAdjudicacion(id).PK);
+    particionesCreadas.add(clave.participante(id).PK);
     return id;
   };
 
@@ -232,6 +232,9 @@ describe.skipIf(!hayBackend)("tesoreria contra DynamoDB y S3 reales", () => {
       tipoConvocatoria: "EMPLEADOS",
       estatusConvocatoria: "PUBLICADA",
       horasLiquidacion: HORAS_LIQUIDACION,
+      limiteAdjudicaciones: 1,
+      limiteSolicitudes: 3,
+      modalidadAdjudicacion: "AUTOMATICA",
       creadoEn: ventana.publicadaEn,
       creadoPor: "ADMIN",
     };
@@ -317,7 +320,7 @@ describe.skipIf(!hayBackend)("tesoreria contra DynamoDB y S3 reales", () => {
       deps,
     );
     if (!registro.ok) throw new Error("se esperaba entrar a la fila");
-    expect(registro.data.adjudicacion.estado).toBe("adjudicado");
+    expect(registro.data.adjudicacion?.estado).toBe("adjudicado");
 
     const itemAdjudicada = await leerSolicitud(
       lote.loteId,
@@ -422,7 +425,7 @@ describe.skipIf(!hayBackend)("tesoreria contra DynamoDB y S3 reales", () => {
       deps,
     );
     if (!primero.ok) throw new Error("se esperaba entrar a la fila");
-    expect(primero.data.adjudicacion.estado).toBe("adjudicado");
+    expect(primero.data.adjudicacion?.estado).toBe("adjudicado");
 
     const segundo = await solicitarCompra(
       { lote, participanteId: siguiente, actor: actorDe(siguiente) },
@@ -430,7 +433,7 @@ describe.skipIf(!hayBackend)("tesoreria contra DynamoDB y S3 reales", () => {
     );
     if (!segundo.ok) throw new Error("se esperaba entrar a la fila");
     // El lote ya esta adjudicado al primero; el segundo se forma detras.
-    expect(segundo.data.adjudicacion.estado).not.toBe("adjudicado");
+    expect(segundo.data.adjudicacion?.estado).not.toBe("adjudicado");
 
     const itemGanador = await leerSolicitud(lote.loteId, primero.data.turno);
 

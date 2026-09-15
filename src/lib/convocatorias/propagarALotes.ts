@@ -78,11 +78,18 @@ export const propagarALotes = async (
             Update: {
               TableName: tabla,
               Key: clave.lote(convocatoria.convocatoriaId, lote.loteId),
+              // El `SET` enumera los desnormalizados **a mano**, asi que un
+              // atributo nuevo en la convocatoria que no se agregue aqui se
+              // guarda pero nunca llega a los lotes ya creados — en silencio, y
+              // sin que el compilador diga nada.
               UpdateExpression:
                 "SET #estatusConvocatoria = :estatusConvocatoria," +
                 " #inicioVenta = :inicioVenta, #finVenta = :finVenta," +
                 " #tipoConvocatoria = :tipoConvocatoria," +
-                " #horasLiquidacion = :horasLiquidacion",
+                " #horasLiquidacion = :horasLiquidacion," +
+                " #limiteAdjudicaciones = :limiteAdjudicaciones," +
+                " #limiteSolicitudes = :limiteSolicitudes," +
+                " #modalidadAdjudicacion = :modalidadAdjudicacion",
               // Sin condicion de estatus a proposito: la propagacion tiene que
               // poder reanudarse sobre lotes que ya la recibieron. Solo se
               // exige que el lote exista, para no resucitar uno borrado.
@@ -93,6 +100,9 @@ export const propagarALotes = async (
                 "#finVenta": "finVenta",
                 "#tipoConvocatoria": "tipoConvocatoria",
                 "#horasLiquidacion": "horasLiquidacion",
+                "#limiteAdjudicaciones": "limiteAdjudicaciones",
+                "#limiteSolicitudes": "limiteSolicitudes",
+                "#modalidadAdjudicacion": "modalidadAdjudicacion",
               },
               ExpressionAttributeValues: {
                 ":estatusConvocatoria": estatusConvocatoria,
@@ -100,6 +110,9 @@ export const propagarALotes = async (
                 ":finVenta": convocatoria.finVenta,
                 ":tipoConvocatoria": convocatoria.tipo,
                 ":horasLiquidacion": convocatoria.horasLiquidacion,
+                ":limiteAdjudicaciones": convocatoria.limiteAdjudicaciones,
+                ":limiteSolicitudes": convocatoria.limiteSolicitudes,
+                ":modalidadAdjudicacion": convocatoria.modalidadAdjudicacion,
               },
             },
           })),

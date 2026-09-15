@@ -44,10 +44,10 @@ describe("claves de la tabla base", () => {
       "PART#P1",
     ],
     [
-      "centinela de adjudicacion",
-      clave.centinelaAdjudicacion("P1"),
+      "item de cupo de participacion",
+      clave.cupoDeParticipante("P1", "C1"),
       "PART#P1",
-      "ADJUDICACION_ACTIVA",
+      "CUPO#C1",
     ],
     [
       "evento",

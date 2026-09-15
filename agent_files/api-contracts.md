@@ -255,6 +255,32 @@ Errores especificos:
 Si la solicitud estaba `ADJUDICADA`, cancelar **libera el lote y dispara la reasignacion al
 siguiente turno vivo** en el mismo acto. Si estaba `CONGELADA` o `EN_FILA`, solo la retira.
 
+En modalidad `MANUAL` la liberacion ocurre igual pero **no hay reasignacion**: el lote vuelve a la
+bandeja del adjudicador (R-23).
+
+---
+
+## 4.4 `src/app/actions/adjudicacion.ts` — modalidad manual
+
+| Action | Entrada | Salida | Permiso | Errores | Eventos |
+| --- | --- | --- | --- | --- | --- |
+| `adjudicarManualmente` | `{ convocatoriaId, loteId, turno, motivo }` | `AdjudicacionManual` | `Autob_Adjudicar_Convocatorias` | `unauthorized`, `not_found`, `forbidden`, `invalid_state`, `validation_failed`, `lote_no_disponible`, **`limite_alcanzado`**, `conflicto_concurrencia` | `LOTE_ADJUDICADO` con `motivoAdjudicacion = DECISION_MANUAL` |
+
+**`turno` viene del cliente, y eso es correcto aqui**, al contrario que el identificador del actor:
+es la eleccion del adjudicador, el dato que esta action existe para recibir. Lo que jamas viene del
+cliente es **quien** eligio.
+
+**No reusa el `conLote` de `fila.ts`.** Aquel resuelve el gating triple porque sirve a un
+participante; el adjudicador no participa, asi que exigirle un permiso de venta lo dejaria fuera
+de las convocatorias que tiene que dictaminar.
+
+**`limite_alcanzado` es un desenlace normal, no un fallo del sistema**: el elegido agoto su cupo
+(R-09). La accion falla y la pantalla lo explica; el servidor **no** elige a otro por su cuenta.
+
+Lecturas asociadas, en Server Components y no como actions: `leerFilaParaAdjudicar`, que devuelve
+la fila **con identidades** mas el cruce de las otras solicitudes del participante en esa
+convocatoria.
+
 ---
 
 ## 5. `src/app/actions/tesoreria.ts`

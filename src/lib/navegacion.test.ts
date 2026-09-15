@@ -64,6 +64,9 @@ describe("entradasVisibles", () => {
       "vehiculos",
       "convocatoriasAdmin",
       "tesoreria",
+      // La bandeja del adjudicador tambien: quien fiscaliza una decision tiene
+      // que poder verla, aunque no la tome (R-23).
+      "adjudicacion",
       "auditoria",
     ]);
   });

@@ -21,6 +21,9 @@ const VALIDA: DatosConvocatoria = {
   inicioVenta: "2026-03-05T15:00:00.000Z",
   finVenta: "2026-03-12T15:00:00.000Z",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
 };
 
 const con = (cambios: Partial<DatosConvocatoria>): DatosConvocatoria => ({
@@ -41,6 +44,9 @@ describe("revisarDatosConvocatoria", () => {
         descripcionParticipacion: "   ",
         finVenta: "",
         horasLiquidacion: 0,
+        limiteAdjudicaciones: 1,
+        limiteSolicitudes: 3,
+        modalidadAdjudicacion: "AUTOMATICA",
       }),
     );
 

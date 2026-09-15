@@ -28,6 +28,7 @@
     "convocatoriasAdmin": "Manage sale announcements",
     "aprobaciones": "Approvals",
     "tesoreria": "Treasury",
+    "adjudicacion": "Awarding",
     "auditoria": "Auditing"
   },
   "desarrollo": {
@@ -50,7 +51,12 @@
     "Autob_Venta_a_empleados": "Buy in employee sales",
     "Autob_Venta_en_general": "Buy in general public sales",
     "Autob_Operar_Tesoreria": "Operate treasury",
+    "Autob_Adjudicar_Convocatorias": "Award calls for bids",
     "Autob_Auditar": "Audit"
+  },
+  "modalidadesAdjudicacion": {
+    "AUTOMATICA": "Automatic: lowest turn wins",
+    "MANUAL": "Manual: a person decides"
   },
   "tiposConvocatoria": {
     "EMPLEADOS": "Employee",
@@ -65,6 +71,7 @@
     "already_in_queue": "You are already in line for this vehicle",
     "lote_no_disponible": "The vehicle has already been awarded",
     "adjudicacion_activa": "You already have a vehicle awarded",
+    "limite_alcanzado": "You reached this call for bids vehicle limit",
     "plazo_vencido": "The payment deadline has passed",
     "conflicto_concurrencia": "Someone else acted at the same time; please try again",
     "dependencia_no_disponible": "A service is not responding; please try later"
@@ -100,6 +107,7 @@
     "CANCELADA_POR_VENCIMIENTO": "Canceled, deadline passed",
     "RECHAZADA_POR_TESORERIA": "Rejected by treasury",
     "CANCELADA_POR_PARTICIPANTE": "Canceled by you",
+    "CANCELADA_POR_LIMITE": "Canceled for exceeding the request limit",
     "NO_ADJUDICADA": "Not awarded"
   },
   "faseDeVenta": {
@@ -127,6 +135,7 @@
     "CONVOCATORIA_CONCLUIDA": "Sale announcement closed",
     "SOLICITUD_CREADA": "Purchase request placed",
     "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Request canceled by the participant",
+    "SOLICITUD_CANCELADA_POR_LIMITE": "Request canceled for exceeding the limit",
     "LOTE_ADJUDICADO": "Vehicle awarded",
     "SOLICITUD_CONGELADA": "Request frozen",
     "SOLICITUD_DESCONGELADA": "Request unfrozen",
@@ -246,6 +255,11 @@
     "campoFinVenta": "Sale end",
     "campoHorasLiquidacion": "Hours to settle payment",
     "horasLiquidacionAyuda": "Calendar hours from the award, not business days.",
+    "campoModalidad": "How the winner is decided",
+    "campoLimiteAdjudicaciones": "Vehicles a participant may be awarded",
+    "limiteAdjudicacionesAyuda": "Maximum per participant in this call for bids. It is released if the deadline passes or treasury rejects the payment; a completed purchase consumes it permanently.",
+    "campoLimiteSolicitudes": "Requests a participant may submit",
+    "limiteSolicitudesAyuda": "Maximum per participant in this call for bids. It counts attempts: canceled, expired and rejected requests still count. Those beyond the limit are recorded and canceled right away.",
     "subcampoFecha": "Date",
     "subcampoHora": "Time",
     "seccionLotes": "Included vehicles",
@@ -316,6 +330,37 @@
     "cancelar": "Cancel",
     "titulo": "Actions",
     "noApruebasLoTuyo": "You cannot approve a sale announcement that you created."
+  },
+  "adjudicacion": {
+    "titulo": "Awarding",
+    "descripcion": "Lots awaiting a decision. Those waiting longest appear first.",
+    "sinPendientes": "No lots are awaiting a decision.",
+    "columnaLote": "Vehicle",
+    "columnaConvocatoria": "Call for bids",
+    "columnaTamanoFila": "In queue",
+    "columnaEspera": "Waiting since",
+    "ventaAbiertaAviso": "Sales are still open.",
+    "tituloDetalle": "Decide the winner",
+    "ventaAbiertaDetalle": "Sales are still open: the queue may grow after you decide. You may decide anyway; the record will show the queue was not closed.",
+    "filaVacia": "No one is queued for this lot.",
+    "columnaTurno": "Turn",
+    "columnaParticipante": "Participant",
+    "columnaSolicitadoEn": "Arrival time",
+    "columnaParticipacion": "Participation in this call",
+    "columnaOtrasSolicitudes": "Their other requests",
+    "columnaAccion": "Decision",
+    "adjudicacionesQueLleva": "Vehicles awarded:",
+    "ordenEnConvocatoria": "Request number",
+    "sinCupo": "No quota left: awarding will fail.",
+    "sinOtrasSolicitudes": "None other in this call.",
+    "turnoAbreviado": "turn",
+    "adjudicar": "Award to this participant",
+    "motivo": "Reason for the decision",
+    "motivoAyuda": "Required. It is recorded in the audit log under your name and is what explains the decision to an auditor.",
+    "confirmarAdjudicar": "The lot will be awarded to this participant, who will receive payment details and a deadline by email. If they do not pay, the lot returns to this inbox.",
+    "continuarDecision": "Confirm",
+    "cancelarDecision": "Cancel",
+    "hechoAdjudicar": "Lot awarded. The participant will receive the notice with their deadline."
   },
   "aprobaciones": {
     "titulo": "Approvals",

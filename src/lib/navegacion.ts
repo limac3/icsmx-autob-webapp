@@ -26,6 +26,7 @@ export type IdDeNavegacion =
   | "convocatoriasAdmin"
   | "aprobaciones"
   | "tesoreria"
+  | "adjudicacion"
   | "auditoria";
 
 export type EntradaDeNavegacion = {
@@ -75,6 +76,13 @@ export const ENTRADAS_DE_NAVEGACION: readonly EntradaDeNavegacion[] = [
     id: "tesoreria",
     href: "/tesoreria/verificacion",
     accion: "tesoreria:ver-bandeja",
+  },
+
+  // Adjudicacion manual (R-23).
+  {
+    id: "adjudicacion",
+    href: "/adjudicacion",
+    accion: "adjudicacion:ver-bandeja",
   },
 
   // Auditoria.

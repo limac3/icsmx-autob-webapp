@@ -28,6 +28,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
   adjudicacionActual: "L1-1",
@@ -238,9 +241,10 @@ describe("reasigna al siguiente turno vivo", () => {
       "REMOVE GSI4PK, GSI4SK",
     );
 
-    expect(transaccion[1]?.Delete).toMatchObject({
-      Key: { PK: "PART#P1", SK: "ADJUDICACION_ACTIVA" },
-      ConditionExpression: "attribute_exists(SK)",
+    // El vencido recupera su unidad de cupo (R-09): vencer libera, vender no.
+    expect(transaccion[1]?.Update).toMatchObject({
+      Key: { PK: "PART#P1", SK: "CUPO#C1" },
+      UpdateExpression: "ADD cupoConsumido :menosUno",
     });
 
     expect(transaccion[2]?.Update).toMatchObject({
@@ -257,9 +261,14 @@ describe("reasigna al siguiente turno vivo", () => {
       ConditionExpression: "#estatus = :enFila",
     });
 
-    expect(transaccion[4]?.Put).toMatchObject({
-      Item: { PK: "PART#P2", SK: "ADJUDICACION_ACTIVA", solicitudId: "L1-2" },
-      ConditionExpression: "attribute_not_exists(SK)",
+    // Y el nuevo consume la suya, con la condicion del limite del lote. Los
+    // items 1 y 4 nunca pueden ser el mismo item: R-07 lo impide, porque T5 no
+    // retira el centinela de fila del vencido.
+    expect(transaccion[4]?.Update).toMatchObject({
+      Key: { PK: "PART#P2", SK: "CUPO#C1" },
+      UpdateExpression: "ADD cupoConsumido :uno",
+      ConditionExpression:
+        "attribute_not_exists(cupoConsumido) OR cupoConsumido < :limite",
     });
 
     const eventoVencido = transaccion[5]?.Put?.Item as Record<string, unknown>;
@@ -342,20 +351,17 @@ describe("reasigna al siguiente turno vivo", () => {
     });
   });
 
-  it("si el candidato ya tiene adjudicacion activa, lo congela y sigue (R-09)", async () => {
+  it("si el candidato agoto su cupo, lo omite y sigue con el siguiente (R-09)", async () => {
     // El primer intento (turno 2) falla en el item 4 (centinela, R-09); el
     // segundo intento (turno 3) tiene que tener exito.
     let intentosDeAdjudicacion = 0;
     const falso = crearClienteFalso({
       responder: (comando) => {
-        if (comando.nombre === "GetCommand") {
-          return { Item: { loteId: "OTRO-LOTE" } };
-        }
         if (comando.nombre === "TransactWriteCommand") {
           const transaccion = comando.input.TransactItems as unknown[];
-          // La transaccion de congelamiento tiene tres items; la de
-          // reasignacion, seis.
-          if (transaccion.length === 3) return {};
+          // La transaccion de omision tiene un solo item —el evento—; la de
+          // reasignacion, siete.
+          if (transaccion.length === 1) return {};
           intentosDeAdjudicacion += 1;
           if (intentosDeAdjudicacion === 1) throw canceladaEn(4, 6);
           return {};
@@ -373,20 +379,18 @@ describe("reasigna al siguiente turno vivo", () => {
 
     expect(resultado).toMatchObject({ estado: "reasignado", turno: 3 });
 
-    const congelamiento = falso.comandos
+    const omision = falso.comandos
       .filter((c) => c.nombre === "TransactWriteCommand")
       .map(
         (c) =>
           c.input.TransactItems as Record<string, Record<string, unknown>>[],
       )
-      .find((transaccion) => transaccion.length === 3);
-    expect(congelamiento?.[0]?.Update).toMatchObject({
-      Key: { PK: "LOTE#L1", SK: "SOL#0000000002" },
-      ConditionExpression: "#estatus = :enFila",
-    });
-    expect(congelamiento?.[1]?.Put?.Item).toMatchObject({
-      tipo: "SOLICITUD_CONGELADA",
-      datos: { turno: 2, loteQueGano: "OTRO-LOTE" },
+      .find((transaccion) => transaccion.length === 1);
+    // Un evento y nada mas: el saltado sigue `EN_FILA` con su turno, igual que
+    // en T2. Es la unica explicacion que queda del salto.
+    expect(omision?.[0]?.Put?.Item).toMatchObject({
+      tipo: "SOLICITUD_OMITIDA",
+      datos: { turno: 2, razonOmision: "LIMITE_ALCANZADO" },
     });
   });
 });
@@ -411,8 +415,9 @@ describe("fila agotada — variante reducida", () => {
     expect(transaccion[0]?.Update).toMatchObject({
       Key: { PK: "LOTE#L1", SK: "SOL#0000000001" },
     });
-    expect(transaccion[1]?.Delete).toMatchObject({
-      Key: { PK: "PART#P1", SK: "ADJUDICACION_ACTIVA" },
+    expect(transaccion[1]?.Update).toMatchObject({
+      Key: { PK: "PART#P1", SK: "CUPO#C1" },
+      UpdateExpression: "ADD cupoConsumido :menosUno",
     });
     expect(transaccion[2]?.Update).toMatchObject({
       Key: { PK: "CONV#C1", SK: "LOTE#L1" },
@@ -499,5 +504,76 @@ describe("carreras e idempotencia (D-7)", () => {
 
     expect(resultado).toMatchObject({ estado: "reasignado", turno: 2 });
     expect(intentos).toBe(2);
+  });
+});
+
+describe("modalidad manual — vence sin reasignar (R-23)", () => {
+  const manual: Lote = { ...lote, modalidadAdjudicacion: "MANUAL" };
+
+  const items = (falso: ReturnType<typeof crearClienteFalso>) =>
+    falso.comandos.find((c) => c.nombre === "TransactWriteCommand")?.input
+      .TransactItems as Record<string, Record<string, unknown>>[];
+
+  it("cierra al vencido y devuelve el lote a la bandeja, sin elegir a nadie", async () => {
+    // Se decidio que si el ganador elegido no paga, el lote vuelve al
+    // adjudicador. Reasignar al siguiente turno contradiria la modalidad
+    // entera: en manual el orden no decide.
+    const falso = crearClienteFalso({
+      responder: conFila([solicitudEnFila(2, "P2"), solicitudEnFila(3, "P3")]),
+    });
+
+    const resultado = await vencerYReasignar(
+      { lote: manual, solicitudVencida, detectadoPor: "BARRIDO" },
+      deps(falso.cliente),
+    );
+
+    // `fila_agotada` es el desenlace de la variante reducida: cierra al
+    // vencido, libera lote y vehiculo, y se detiene.
+    expect(resultado).toEqual({ estado: "fila_agotada" });
+
+    const transaccion = items(falso);
+    expect(transaccion).toHaveLength(5);
+    expect(String(transaccion[2]?.Update?.UpdateExpression)).toContain(
+      "REMOVE adjudicacionActual",
+    );
+    // Nadie nuevo quedo adjudicado: ninguna escritura pone `ADJUDICADA`.
+    expect(JSON.stringify(transaccion)).not.toContain("LOTE_ADJUDICADO");
+  });
+
+  it("devuelve el cupo del vencido igual que en modalidad automatica", async () => {
+    // La modalidad cambia quien elige, no las reglas del cupo (R-09).
+    const falso = crearClienteFalso({ responder: conFila([]) });
+
+    await vencerYReasignar(
+      { lote: manual, solicitudVencida, detectadoPor: "BARRIDO" },
+      deps(falso.cliente),
+    );
+
+    expect(items(falso)[1]?.Update).toMatchObject({
+      Key: { PK: "PART#P1", SK: "CUPO#C1" },
+      UpdateExpression: "ADD cupoConsumido :menosUno",
+    });
+  });
+
+  it("ni siquiera lee la fila: no hay candidato que buscar", async () => {
+    const falso = crearClienteFalso({
+      responder: conFila([solicitudEnFila(2, "P2")]),
+    });
+
+    await vencerYReasignar(
+      { lote: manual, solicitudVencida, detectadoPor: "BARRIDO" },
+      deps(falso.cliente),
+    );
+
+    const consultas = falso.comandos
+      .filter((c) => c.nombre === "QueryCommand")
+      .map(
+        (c) =>
+          (c.input.ExpressionAttributeValues as Record<string, string>)[
+            ":prefijo"
+          ],
+      );
+    // Solo la de reservas, que es la abstencion de R18; nunca la de la fila.
+    expect(consultas).not.toContain("SOL#");
   });
 });

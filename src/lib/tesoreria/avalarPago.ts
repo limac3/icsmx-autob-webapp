@@ -147,17 +147,17 @@ export const avalarPago = async (
         siFalla: "invalid_state",
         descripcion: "vehiculo RESERVADO pasa a VENDIDO",
       },
-      {
-        item: {
-          Delete: {
-            TableName: tabla,
-            Key: clave.centinelaAdjudicacion(solicitud.participanteId),
-            ConditionExpression: "attribute_exists(SK)",
-          },
-        },
-        siFalla: "conflicto_concurrencia",
-        descripcion: "centinela de adjudicacion activa (R-09)",
-      },
+      // **Aqui no hay nada que liberar, y es el punto entero del cupo.**
+      //
+      // Hasta la Etapa 14 esta transaccion borraba el centinela
+      // `ADJUDICACION_ACTIVA`, de modo que completar una compra dejaba al
+      // participante libre para ganar otro lote de inmediato. Con R-09 medido
+      // por convocatoria ocurre lo contrario: un vehiculo comprado gasta cupo
+      // **para siempre**. Es una inversion deliberada del comportamiento
+      // anterior — un tope que la compra liberara no seria un tope.
+      //
+      // Por eso `avalarPago` es el unico camino de salida de una adjudicacion
+      // que no llama a `itemDeLiberacionDeCupo`.
       {
         item: {
           Delete: {

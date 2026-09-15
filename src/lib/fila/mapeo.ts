@@ -53,6 +53,13 @@ export const aSolicitud = (
     turno,
     estatus: item.estatus,
     solicitadoEn,
+    // Ausente en las solicitudes anteriores a la Etapa 14 (R-22). Es lo unico
+    // que permite comparar el orden de llegada de un participante **entre
+    // lotes** de la misma convocatoria, y lo que consume la pantalla del
+    // adjudicador.
+    ...(typeof item.ordenEnConvocatoria === "number"
+      ? { ordenEnConvocatoria: item.ordenEnConvocatoria }
+      : {}),
     ...(texto(item.adjudicadoEn)
       ? { adjudicadoEn: texto(item.adjudicadoEn) }
       : {}),

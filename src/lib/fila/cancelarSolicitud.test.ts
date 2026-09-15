@@ -8,16 +8,11 @@ import type { Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
 import { adjudicarLote } from "./adjudicarLote";
 import { cancelarSolicitud } from "./cancelarSolicitud";
-import { descongelarSolicitudes } from "./descongelarSolicitudes";
 
 vi.mock("server-only", () => ({}));
 vi.mock("./adjudicarLote", () => ({ adjudicarLote: vi.fn() }));
-vi.mock("./descongelarSolicitudes", () => ({
-  descongelarSolicitudes: vi.fn(),
-}));
 
 const adjudicacion = vi.mocked(adjudicarLote);
-const descongelamiento = vi.mocked(descongelarSolicitudes);
 
 const AHORA = new Date("2026-10-07T15:00:00.000Z");
 
@@ -33,6 +28,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
   adjudicacionActual: "L1-2",
@@ -71,7 +69,6 @@ beforeEach(() => {
     estado: "fila_agotada",
     turnosRevisados: 0,
   });
-  descongelamiento.mockResolvedValue(0);
 });
 
 afterEach(() => {
@@ -97,7 +94,6 @@ describe("cancelar desde la fila", () => {
       data: {
         estatus: "CANCELADA_POR_PARTICIPANTE",
         liberoElLote: false,
-        descongeladas: 0,
       },
     });
 
@@ -131,10 +127,9 @@ describe("cancelar desde la fila", () => {
     );
 
     expect(adjudicacion).not.toHaveBeenCalled();
-    expect(descongelamiento).not.toHaveBeenCalled();
   });
 
-  it("tambien se puede cancelar una congelada (R-09)", async () => {
+  it("tambien se puede cancelar una congelada de antes de la Etapa 14", async () => {
     const falso = crearClienteFalso();
 
     const resultado = await cancelarSolicitud(
@@ -163,7 +158,7 @@ describe("cancelar desde la fila", () => {
 });
 
 describe("cancelar una adjudicacion libera el lote", () => {
-  it("retira el centinela de adjudicacion, libera el lote y el vehiculo", async () => {
+  it("devuelve el cupo, libera el lote y el vehiculo", async () => {
     const falso = crearClienteFalso();
 
     await cancelarSolicitud(
@@ -173,10 +168,7 @@ describe("cancelar una adjudicacion libera el lote", () => {
 
     const items = itemsDe(falso);
     expect(items).toHaveLength(6);
-    expect(items[2]?.Delete?.Key).toEqual({
-      PK: "PART#P1",
-      SK: "ADJUDICACION_ACTIVA",
-    });
+    expect(items[2]?.Update?.Key).toEqual({ PK: "PART#P1", SK: "CUPO#C1" });
     expect(items[3]?.Update).toMatchObject({
       Key: { PK: "CONV#C1", SK: "LOTE#L1" },
       ConditionExpression: "adjudicacionActual = :solicitudId",
@@ -216,24 +208,44 @@ describe("cancelar una adjudicacion libera el lote", () => {
     );
   });
 
-  it("descongela lo del participante antes de reasignar (R-09)", async () => {
-    descongelamiento.mockResolvedValue(2);
+  it("devuelve la unidad de cupo en la misma transaccion (R-09)", async () => {
     const falso = crearClienteFalso();
 
-    const resultado = await cancelarSolicitud(
+    await cancelarSolicitud(
       { lote, solicitud: solicitud("ADJUDICADA"), actor },
       deps(falso.cliente),
     );
 
-    expect(descongelamiento).toHaveBeenCalledWith(
-      { participanteId: "P1" },
-      expect.anything(),
+    // Dentro de la transaccion, no despues: asi el decremento hereda las
+    // condiciones de sus hermanos —que fallan al repetirse— y no hace falta
+    // maquinaria propia contra el doble conteo.
+    const cupo = itemsDe(falso).find(
+      (item) =>
+        (item.Update?.Key as Record<string, unknown> | undefined)?.SK ===
+        "CUPO#C1",
     );
-    if (!resultado.ok) throw new Error("se esperaba exito");
-    expect(resultado.data.descongeladas).toBe(2);
-    expect(descongelamiento.mock.invocationCallOrder[0]).toBeLessThan(
-      adjudicacion.mock.invocationCallOrder[0]!,
+    expect(cupo?.Update?.Key).toEqual({ PK: "PART#P1", SK: "CUPO#C1" });
+    expect(String(cupo?.Update?.UpdateExpression)).toBe(
+      "ADD cupoConsumido :menosUno",
     );
+    expect(cupo?.Update?.ExpressionAttributeValues).toEqual({
+      ":menosUno": -1,
+    });
+  });
+
+  it("no congela ni descongela nada: el saltado nunca dejo la fila", async () => {
+    const falso = crearClienteFalso();
+
+    await cancelarSolicitud(
+      { lote, solicitud: solicitud("ADJUDICADA"), actor },
+      deps(falso.cliente),
+    );
+
+    // La version anterior de R-09 congelaba las demas solicitudes del ganador y
+    // las descongelaba aqui. Con el cupo por convocatoria nunca dejaron de
+    // estar `EN_FILA`, asi que ninguna escritura debe mencionar `CONGELADA`.
+    const escrituras = JSON.stringify(itemsDe(falso));
+    expect(escrituras).not.toContain("CONGELADA");
   });
 
   it("reasigna al siguiente turno vivo, reusando el camino de siempre", async () => {
@@ -292,6 +304,5 @@ describe("cancelar una adjudicacion libera el lote", () => {
 
     expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
     expect(adjudicacion).not.toHaveBeenCalled();
-    expect(descongelamiento).not.toHaveBeenCalled();
   });
 });

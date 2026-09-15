@@ -80,14 +80,18 @@ export const incluirVehiculo = async (
     // reparte turnos en la Etapa 8; escribirlo aqui evita que el primer `ADD`
     // tenga que crear el atributo.
     contadorTurnos: 0,
-    // Los cinco desnormalizados de la convocatoria, para que el paso 1 de T1
-    // condicione sobre un solo item. Se copian con el estatus **de hoy**
-    // —`BORRADOR`—, y T8 los propaga al publicar.
+    // Los ocho desnormalizados de la convocatoria, para que el paso 1 de T1
+    // condicione sobre un solo item y para que T2 tenga el cupo como literal de
+    // su condicion. Se copian con el estatus **de hoy** —`BORRADOR`—, y T8 los
+    // propaga al publicar.
     inicioVenta: convocatoria.inicioVenta,
     finVenta: convocatoria.finVenta,
     tipoConvocatoria: convocatoria.tipo,
     estatusConvocatoria: convocatoria.estatus,
     horasLiquidacion: convocatoria.horasLiquidacion,
+    limiteAdjudicaciones: convocatoria.limiteAdjudicaciones,
+    limiteSolicitudes: convocatoria.limiteSolicitudes,
+    modalidadAdjudicacion: convocatoria.modalidadAdjudicacion,
     creadoEn: momento,
     creadoPor: entrada.actor.id,
   };

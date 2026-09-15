@@ -22,7 +22,15 @@ export const CODIGOS_ERROR = [
   "invalid_state",
   "already_in_queue",
   "lote_no_disponible",
+  /**
+   * Quedo en el catalogo aunque nada lo produce ya: era el fallo del centinela
+   * de R-09 antes de la Etapa 14. Los codigos se traducen y se prueban, y
+   * quitarlo solo ahorraria dos lineas de diccionario a cambio de romper
+   * cualquier resultado persistido o registrado que lo mencione.
+   */
   "adjudicacion_activa",
+  /** El participante agoto su cupo de adjudicaciones en la convocatoria (R-09). */
+  "limite_alcanzado",
   "plazo_vencido",
   "conflicto_concurrencia",
   "dependencia_no_disponible",

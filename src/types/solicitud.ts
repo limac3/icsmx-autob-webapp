@@ -6,12 +6,20 @@
  * No existe un `COMPROBANTE_CARGADO`: subir el comprobante y entrar en
  * verificacion son el mismo evento (proyecto.md 5.4).
  *
- * `CONGELADA` es un estado **derivado y de presentacion**: le explica al
- * participante por que no avanza. La garantia de "una sola adjudicacion
- * activa" (R-09) no la sostiene este estado sino el centinela
- * `PART#<id> / ADJUDICACION_ACTIVA` (modelo-datos 4.3) — congelar las demas
- * solicitudes de un ganador exigiria actualizar una cantidad no acotada de
- * items, y `TransactWriteItems` admite 100.
+ * **`CONGELADA` ya no se escribe.** Hasta la Etapa 14 lo producia el
+ * congelamiento de R-09 —"una sola adjudicacion activa en todo el sistema"—,
+ * que se sustituyo por el cupo por convocatoria: a quien agota su cupo se le
+ * **omite** dejando su evento, y sigue `EN_FILA` con su turno intacto, porque
+ * el cupo se libera al vencer o al ser rechazado.
+ *
+ * Se conserva en el catalogo, con sus dos transiciones de salida, porque la
+ * bitacora es append-only (R-20) y `reconstruirFila` y `verificarIntegridad`
+ * tienen que seguir leyendo historias ya escritas. Borrarlo de aqui haria que
+ * esas historias dejaran de tipar.
+ *
+ * `CANCELADA_POR_LIMITE` es su contrario en un sentido util: se escribe
+ * **despues** de crear la solicitud, a proposito, para que quede constancia de
+ * la participacion aunque exceda el tope (R-22).
  */
 export type EstatusSolicitud =
   | "EN_FILA"
@@ -22,6 +30,7 @@ export type EstatusSolicitud =
   | "CANCELADA_POR_VENCIMIENTO"
   | "RECHAZADA_POR_TESORERIA"
   | "CANCELADA_POR_PARTICIPANTE"
+  | "CANCELADA_POR_LIMITE"
   | "NO_ADJUDICADA";
 
 export const ESTATUS_SOLICITUD = [
@@ -33,6 +42,7 @@ export const ESTATUS_SOLICITUD = [
   "CANCELADA_POR_VENCIMIENTO",
   "RECHAZADA_POR_TESORERIA",
   "CANCELADA_POR_PARTICIPANTE",
+  "CANCELADA_POR_LIMITE",
   "NO_ADJUDICADA",
 ] as const satisfies readonly EstatusSolicitud[];
 

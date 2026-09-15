@@ -92,12 +92,12 @@ const actorDe = (participanteId: string): ActorUsuario => ({
 
 /**
  * Sufijo de la corrida. **Ningun identificador de participante se repite entre
- * ejecuciones**, y no es cosmetico: el centinela
- * `PART#<id> / ADJUDICACION_ACTIVA` sobrevive al lote —tiene que hacerlo, es lo
- * que garantiza R-09— asi que reutilizar un identificador hace que la corrida
- * siguiente encuentre a ese participante con una adjudicacion activa y lo
- * congele. Paso: la prueba fallaba con `fila_agotada` mientras el sistema hacia
- * exactamente lo correcto.
+ * ejecuciones**, y no es cosmetico: el item de cupo `PART#<id> / CUPO#<convId>`
+ * sobrevive al lote —tiene que hacerlo, es lo que garantiza R-09 y R-22— asi que
+ * reutilizar un identificador haria que la corrida siguiente encontrara a ese
+ * participante con el cupo ya gastado y lo omitiera. Con el centinela anterior
+ * paso exactamente eso: la prueba fallaba con `fila_agotada` mientras el sistema
+ * hacia lo correcto.
  */
 const CORRIDA = randomUUID().slice(0, 8);
 
@@ -206,7 +206,7 @@ describe.skipIf(!hayBackend)("motor de fila contra DynamoDB real", () => {
    */
   const participante = (nombre: string): string => {
     const id = `e8-${nombre}-${CORRIDA}`;
-    particionesCreadas.add(clave.centinelaAdjudicacion(id).PK);
+    particionesCreadas.add(clave.participante(id).PK);
     return id;
   };
 
@@ -219,10 +219,23 @@ describe.skipIf(!hayBackend)("motor de fila contra DynamoDB real", () => {
    * los que mira la condicion del paso 1 de T1: leer la convocatoria y decidir
    * despues seria la carrera que el diseno evita (modelo-datos 1).
    */
-  const crearEscenario = async (): Promise<Lote> => {
+  const crearEscenario = async (
+    opciones: {
+      /**
+       * Para poner **varios lotes en la misma convocatoria**, que es lo unico
+       * que ejerce de verdad los cupos: son por participante y convocatoria, no
+       * por lote.
+       */
+      convocatoriaId?: string;
+      limiteAdjudicaciones?: number;
+      limiteSolicitudes?: number;
+      /** Para probar que en modalidad manual nada adjudica solo (R-23). */
+      modalidadAdjudicacion?: Lote["modalidadAdjudicacion"];
+    } = {},
+  ): Promise<Lote> => {
     const tabla = process.env.AUTOB_TABLE_NAME;
     const sufijo = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
-    const convocatoriaId = `e8-conv-${sufijo}`;
+    const convocatoriaId = opciones.convocatoriaId ?? `e8-conv-${sufijo}`;
     const loteId = `e8-lote-${sufijo}`;
     const vehiculoId = `e8-veh-${sufijo}`;
     const ahora = new Date();
@@ -274,6 +287,9 @@ describe.skipIf(!hayBackend)("motor de fila contra DynamoDB real", () => {
       tipoConvocatoria: "EMPLEADOS",
       estatusConvocatoria: "PUBLICADA",
       horasLiquidacion: HORAS_LIQUIDACION,
+      limiteAdjudicaciones: opciones.limiteAdjudicaciones ?? 99,
+      limiteSolicitudes: opciones.limiteSolicitudes ?? 99,
+      modalidadAdjudicacion: opciones.modalidadAdjudicacion ?? "AUTOMATICA",
       creadoEn: ventana.publicadaEn,
       creadoPor: "ADMIN",
     };
@@ -397,7 +413,7 @@ describe.skipIf(!hayBackend)("motor de fila contra DynamoDB real", () => {
 
       it("exactamente un participante gana el lote", async () => {
         const ganadores = resultados.filter(
-          (r) => r.ok && r.data.adjudicacion.estado === "adjudicado",
+          (r) => r.ok && r.data.adjudicacion?.estado === "adjudicado",
         );
         expect(ganadores).toHaveLength(1);
 
@@ -504,7 +520,7 @@ describe.skipIf(!hayBackend)("motor de fila contra DynamoDB real", () => {
 
     // Que el rapido se **abstuviera** es la prueba de que el mecanismo actuo, y
     // no de que la carrera simplemente no ocurrio esta vez.
-    expect(segundoRapido.data.adjudicacion.estado).toBe("abstenido");
+    expect(segundoRapido.data.adjudicacion?.estado).toBe("abstenido");
 
     // Y el vehiculo termina en el turno menor, que es lo que R-08 promete.
     const item = await leerLote(lote);
@@ -522,7 +538,7 @@ describe.skipIf(!hayBackend)("motor de fila contra DynamoDB real", () => {
       deps,
     );
     if (!ganador.ok) throw new Error("se esperaba turno");
-    expect(ganador.data.adjudicacion.estado).toBe("adjudicado");
+    expect(ganador.data.adjudicacion?.estado).toBe("adjudicado");
 
     // Con `estatus = EN_OFERTA` a secas en la condicion del paso 1, esto
     // fallaria: la fila se habria cerrado en la primera adjudicacion y
@@ -704,5 +720,246 @@ describe.skipIf(!hayBackend)("motor de fila contra DynamoDB real", () => {
     const porTurno = new Map(fila.map((s) => [s.turno, s.estatus]));
     expect(porTurno.get(ganador.data.turno)).toBe("ADJUDICADA");
     expect(porTurno.get(espera.data.turno)).toBe("NO_ADJUDICADA");
+  });
+
+  // --- Cupos de participacion — Etapa 14 -------------------------------------
+
+  /** El item de cupo tal como quedo, para afirmar sobre sus dos contadores. */
+  const leerCupo = async (participanteId: string, convocatoriaId: string) => {
+    const salida = await cliente.send(
+      new GetCommand({
+        TableName: process.env.AUTOB_TABLE_NAME,
+        Key: clave.cupoDeParticipante(participanteId, convocatoriaId),
+        ConsistentRead: true,
+      }),
+    );
+    return salida.Item as
+      { solicitudesCreadas?: number; cupoConsumido?: number } | undefined;
+  };
+
+  /** Si el lote quedo adjudicado a alguien, sin importar a quien. */
+  const estaAdjudicado = async (lote: Lote): Promise<boolean> => {
+    const item = await cliente.send(
+      new GetCommand({
+        TableName: process.env.AUTOB_TABLE_NAME,
+        Key: clave.lote(lote.convocatoriaId, lote.loteId),
+        ConsistentRead: true,
+      }),
+    );
+    return item.Item?.turnoAdjudicado !== undefined;
+  };
+
+  it("con cupo K, N intentos simultaneos del mismo participante dan exactamente K adjudicaciones (R-09)", async () => {
+    // **La afirmacion central de la Etapa 14**, y la que solo se puede sostener
+    // contra DynamoDB real: la condicion del `ADD` se evalua sobre el valor
+    // previo, en el mismo item y la misma operacion atomica. Un doble solo
+    // comprobaria que el doble coincide consigo mismo.
+    const CUPO = 2;
+    const LOTES = 5;
+    const convocatoriaId = `e8-conv-cupo-${randomUUID().slice(0, 8)}`;
+    const quien = participante("acaparador");
+
+    const lotes: Lote[] = [];
+    for (let i = 0; i < LOTES; i += 1) {
+      lotes.push(
+        await crearEscenario({ convocatoriaId, limiteAdjudicaciones: CUPO }),
+      );
+    }
+
+    // Todos a la vez, no en serie: en serie el segundo veria el efecto del
+    // primero y la carrera nunca ocurriria.
+    const resultados = await Promise.all(
+      lotes.map(async (lote) =>
+        solicitarCompra(
+          { lote, participanteId: quien, actor: actorDe(quien) },
+          deps,
+        ),
+      ),
+    );
+
+    for (const r of resultados) {
+      if (!r.ok) throw new Error(`se esperaba turno: ${r.error}`);
+    }
+
+    // Se cuenta sobre el estado final de los lotes y no sobre el desenlace que
+    // devolvio cada llamada: `adjudicarLote` se dispara desde varios caminos y
+    // el ultimo en aterrizar cierra la ronda.
+    const adjudicados = await Promise.all(lotes.map(estaAdjudicado));
+    expect(adjudicados.filter(Boolean)).toHaveLength(CUPO);
+
+    const cupo = await leerCupo(quien, convocatoriaId);
+    expect(cupo?.cupoConsumido).toBe(CUPO);
+    expect(cupo?.solicitudesCreadas).toBe(LOTES);
+  });
+
+  it("al saltar por cupo agotado, el saltado conserva su turno y su lugar", async () => {
+    // Se decidio omitir en vez de congelar justamente por esto: el cupo se
+    // libera al vencer o al ser rechazado, asi que quitarle el lugar a quien lo
+    // agoto seria cobrarle por una condicion reversible.
+    const convocatoriaId = `e8-conv-salto-${randomUUID().slice(0, 8)}`;
+    const conCupo = participante("concupo");
+    const otro = participante("otro");
+
+    const primero = await crearEscenario({
+      convocatoriaId,
+      limiteAdjudicaciones: 1,
+    });
+    const segundo = await crearEscenario({
+      convocatoriaId,
+      limiteAdjudicaciones: 1,
+    });
+
+    // Gasta su unico cupo en el primer lote.
+    const gana = await solicitarCompra(
+      { lote: primero, participanteId: conCupo, actor: actorDe(conCupo) },
+      deps,
+    );
+    if (!gana.ok) throw new Error("se esperaba turno");
+    expect(gana.data.adjudicacion?.estado).toBe("adjudicado");
+
+    // Se forma primero en el segundo lote, y otro llega despues.
+    const saltado = await solicitarCompra(
+      { lote: segundo, participanteId: conCupo, actor: actorDe(conCupo) },
+      deps,
+    );
+    const ganadorReal = await solicitarCompra(
+      { lote: segundo, participanteId: otro, actor: actorDe(otro) },
+      deps,
+    );
+    if (!saltado.ok || !ganadorReal.ok) throw new Error("se esperaban turnos");
+    expect(saltado.data.turno).toBeLessThan(ganadorReal.data.turno);
+
+    // El turno menor no gano —no le quedaba cupo— pero **sigue EN_FILA**, con
+    // su turno intacto, listo para volver a competir si libera cupo.
+    const fila = await leerFila(segundo.loteId);
+    const porTurno = new Map(fila.map((s) => [s.turno, s.estatus]));
+    expect(porTurno.get(saltado.data.turno)).toBe("EN_FILA");
+    expect(porTurno.get(ganadorReal.data.turno)).toBe("ADJUDICADA");
+  });
+
+  it("cancelar devuelve cupo de adjudicacion pero NO ordinal de solicitud", async () => {
+    // Los dos contadores miden cosas distintas y se comportan al reves. Es la
+    // asimetria mas facil de romper sin darse cuenta.
+    const convocatoriaId = `e8-conv-libera-${randomUUID().slice(0, 8)}`;
+    const quien = participante("liberador");
+    const lote = await crearEscenario({
+      convocatoriaId,
+      limiteAdjudicaciones: 1,
+    });
+
+    const gana = await solicitarCompra(
+      { lote, participanteId: quien, actor: actorDe(quien) },
+      deps,
+    );
+    if (!gana.ok) throw new Error("se esperaba turno");
+    expect((await leerCupo(quien, convocatoriaId))?.cupoConsumido).toBe(1);
+
+    const solicitud = await leerMiSolicitud(
+      { loteId: lote.loteId, participanteId: quien },
+      deps,
+    );
+    if (!solicitud.ok || !solicitud.data) throw new Error("se esperaba leerla");
+
+    const cancelacion = await cancelarSolicitud(
+      {
+        lote: {
+          ...lote,
+          estatus: "ADJUDICADO",
+          adjudicacionActual: solicitud.data.solicitudId,
+        },
+        solicitud: solicitud.data,
+        actor: actorDe(quien),
+      },
+      deps,
+    );
+    if (!cancelacion.ok) {
+      throw new Error(`se esperaba cancelar: ${cancelacion.error}`);
+    }
+
+    const despues = await leerCupo(quien, convocatoriaId);
+    // Recupera el cupo de adjudicaciones...
+    expect(despues?.cupoConsumido).toBe(0);
+    // ...pero no el ordinal de solicitudes: el tope mide intentos.
+    expect(despues?.solicitudesCreadas).toBe(1);
+  });
+
+  it("el tope de solicitudes cancela las que exceden, dejando constancia (R-22)", async () => {
+    const convocatoriaId = `e8-conv-tope-${randomUUID().slice(0, 8)}`;
+    const quien = participante("insistente");
+    const TOPE = 2;
+    const INTENTOS = 4;
+
+    const lotes: Lote[] = [];
+    for (let i = 0; i < INTENTOS; i += 1) {
+      lotes.push(
+        await crearEscenario({ convocatoriaId, limiteSolicitudes: TOPE }),
+      );
+    }
+
+    const resultados = await Promise.all(
+      lotes.map(async (lote) =>
+        solicitarCompra(
+          { lote, participanteId: quien, actor: actorDe(quien) },
+          deps,
+        ),
+      ),
+    );
+
+    // **Todas se crearon**: ninguna se rechazo. Es lo que el requerimiento
+    // pidio — que quede constancia de la participacion aunque exceda.
+    for (const r of resultados) {
+      if (!r.ok)
+        throw new Error(`se esperaba que todas se crearan: ${r.error}`);
+    }
+
+    const ordinales = resultados.map((r) =>
+      r.ok ? r.data.ordenEnConvocatoria : -1,
+    );
+    // Ordinales unicos bajo rafaga: es un `ADD` atomico, igual que el turno.
+    expect(new Set(ordinales).size).toBe(INTENTOS);
+
+    const canceladas = resultados.filter(
+      (r) => r.ok && r.data.canceladaPorLimite,
+    );
+    expect(canceladas).toHaveLength(INTENTOS - TOPE);
+    expect((await leerCupo(quien, convocatoriaId))?.solicitudesCreadas).toBe(
+      INTENTOS,
+    );
+  });
+
+  it("agotado el tope, no puede volver a formarse aunque no tenga ninguna viva", async () => {
+    // La consecuencia directa de que el conteo no decrezca, y la que conviene
+    // tener probada porque es contraintuitiva.
+    const convocatoriaId = `e8-conv-agotado-${randomUUID().slice(0, 8)}`;
+    const quien = participante("agotado");
+
+    const primero = await crearEscenario({
+      convocatoriaId,
+      limiteSolicitudes: 1,
+      modalidadAdjudicacion: "AUTOMATICA",
+    });
+    const segundo = await crearEscenario({
+      convocatoriaId,
+      limiteSolicitudes: 1,
+      modalidadAdjudicacion: "AUTOMATICA",
+    });
+
+    const uno = await solicitarCompra(
+      { lote: primero, participanteId: quien, actor: actorDe(quien) },
+      deps,
+    );
+    if (!uno.ok) throw new Error("se esperaba turno");
+    expect(uno.data.canceladaPorLimite).toBe(false);
+
+    const dos = await solicitarCompra(
+      { lote: segundo, participanteId: quien, actor: actorDe(quien) },
+      deps,
+    );
+    if (!dos.ok) throw new Error("se esperaba turno");
+    expect(dos.data.canceladaPorLimite).toBe(true);
+
+    const fila = await leerFila(segundo.loteId);
+    const suya = fila.find((s) => s.turno === dos.data.turno);
+    expect(suya?.estatus).toBe("CANCELADA_POR_LIMITE");
   });
 });

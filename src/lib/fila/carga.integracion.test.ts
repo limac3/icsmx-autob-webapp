@@ -314,6 +314,9 @@ describe.skipIf(!hayBackend || !seSolicito)(
           tipoConvocatoria: "EMPLEADOS",
           estatusConvocatoria: "PUBLICADA",
           horasLiquidacion: HORAS_LIQUIDACION,
+          limiteAdjudicaciones: 1,
+          limiteSolicitudes: 3,
+          modalidadAdjudicacion: "AUTOMATICA",
           creadoEn: ventana.publicadaEn,
           creadoPor: "ADMIN",
         };
@@ -348,9 +351,7 @@ describe.skipIf(!hayBackend || !seSolicito)(
         lotes.flatMap((lote, l) =>
           Array.from({ length: PARTICIPANTES }, async (_, p) => {
             const participanteId = `carga-p-${CORRIDA}-${String(l)}-${String(p)}`;
-            particionesCreadas.add(
-              clave.centinelaAdjudicacion(participanteId).PK,
-            );
+            particionesCreadas.add(clave.participante(participanteId).PK);
 
             const inicio = performance.now();
             const resultado = await solicitarCompra(
@@ -368,7 +369,11 @@ describe.skipIf(!hayBackend || !seSolicito)(
               };
             }
 
-            const adjudicacion = resultado.data.adjudicacion;
+            // Ausente solo si la solicitud se cancelo por tope (R-22), que esta
+            // prueba no ejerce: cada participante solicita una sola vez.
+            const adjudicacion = resultado.data.adjudicacion ?? {
+              estado: "cancelada_por_limite" as const,
+            };
             return {
               loteId: lote.loteId,
               ok: true,

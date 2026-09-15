@@ -11,7 +11,10 @@
 > motor de fila— se verifica leyendo el archivo antes de afirmarlo o de editarlo. Ver
 > `CLAUDE.md`, seccion "Grafo de Codigo — Consulta, No Evidencia".
 >
-> Sincronizado con: rama `main`, 2026-09-10, Etapas 7 a 11.2 confirmadas (`5d746e7`, `496d98e`,
+> Sincronizado con: rama `main`, 2026-09-15 — **Etapas 14 y 15 implementadas pero sin commit**,
+> asi que sus anclas de codigo todavia no estan en el grafo (`index_repository` se ancla al
+> `head_sha` y no ve el trabajo sin confirmar). Antes de eso: 2026-09-10, Etapas 7 a 11.2
+> confirmadas (`5d746e7`, `496d98e`,
 > `6e45c4e`, `58852e2`, sobre `cc5af85`) mas la **Etapa 2.2** (impersonacion de identidad en
 > desarrollo, decision **D-10**), la **Etapa 10.1** (armazon y navegacion por permiso, decision
 > **D-11**), la **Etapa 11** (auditoria: verificacion de integridad recalculada desde el evento
@@ -21,6 +24,30 @@
 > **Etapa 11.2** completa: bitacora consultable por clave (**D-14** reescrito, con la
 > **correccion de D-2**), identificador interno de 12 caracteres (**D-16**) e identificador de
 > negocio renombrable con centinela (**D-17**).
+>
+> **2026-09-14 — decisiones registradas por delante del codigo.** La tabla de decisiones de
+> negocio incorporo las **Etapas 14, 15 y 16** (cupos de participacion por convocatoria en
+> sustitucion de R-09, modalidad manual de adjudicacion, y equidad del instante de apertura),
+> antes de existir su codigo. Se registraron asi porque son decisiones tomadas, no progreso, y
+> porque dejar R-09 sin marcar haria que este espejo afirmara como vigente una regla ya
+> sustituida. Desglose en `agent_files/plan-ejecucion.md`, "Ampliacion de alcance — 2026-09-14".
+>
+> **2026-09-15 — las Etapas 14 y 15 ya son codigo.** El centinela
+> `PART#<id>/ADJUDICACION_ACTIVA` **ya no existe**: lo sustituye el item de cupo
+> `PART#<id>/CUPO#<convId>` con sus dos contadores (`src/lib/fila/cupo.ts`), y `congelar()` y
+> `descongelarSolicitudes` se retiraron conservando su vocabulario en los catalogos, porque la
+> bitacora es append-only. La modalidad manual entrega `adjudicarManualmente.ts`, la pantalla del
+> adjudicador y el permiso `Autob_Adjudicar_Convocatorias` (**por confirmar con EAS**, R19). Las
+> dos quedan **parciales**: lo que falta no es codigo sino ejecutarlo —las cinco pruebas de
+> concurrencia del cupo exigen sandbox, y el recorrido de punta a punta de la modalidad manual
+> exige sandbox y navegador—.
+>
+> Un hallazgo que el plan no preveia y que si es decision nueva: **la verificacion de integridad
+> comprueba la firma de la decision manual.** Deduce la modalidad del propio evento y no del
+> registro del lote —el auditor verifica contra la bitacora, no contra un atributo que alguien
+> pudo cambiar—, y reporta aparte `decisionesManualesSinFirma`. Sin eso, declarar "es manual"
+> habria bastado para que cualquier salto de turno quedara exento de revision.
+> **La Etapa 16 sigue sin implementar.**
 >
 > **2026-09-10, dentro de la Etapa 12:** siguiendo la alarma `barrido-con-errores` contra un
 > sandbox real se encontro que el barrido fallaba en el 100% de sus invocaciones desde la Etapa 10
@@ -719,7 +746,17 @@ Fuente: `agent_files/proyecto.md` seccion 8 (linea 373).
 
 | Decision | Descartado | Razon |
 | --- | --- | --- |
-| Varias filas simultaneas, una sola adjudicacion activa (R-09) | Sin limite; una sola solicitud por convocatoria | Equilibra participacion amplia con evitar acaparamiento |
+| ~~Varias filas simultaneas, una sola adjudicacion activa (R-09)~~ — **sustituida y retirada del codigo en la Etapa 14 (2026-09-15)**: el centinela `PART#<id>/ADJUDICACION_ACTIVA` ya no existe | Sin limite; una sola solicitud por convocatoria | Equilibra participacion amplia con evitar acaparamiento |
+| **Cupo por convocatoria** en sustitucion de R-09: un item `PART#<pid>/CUPO#<convId>` con dos contadores, uno de solicitudes que solo crece y otro de adjudicaciones que sube y baja | Conservar R-09 ademas del cupo; un cupo global entre convocatorias | R-09 limita la *simultaneidad*, no el *total*, y no distingue una convocatoria de otra, que es lo que el negocio necesita topar. Superponerlas dejaria dos reglas de acaparamiento que hay que explicar juntas y mantendria viva la maquinaria de `CONGELADA` para una invariante que el cupo ya cubre |
+| El tope de adjudicaciones se evalua **dentro** de la transaccion que adjudica; el de solicitudes, **despues** de crear | Diferir los dos, que es como se enuncio el requerimiento | Cancelar una solicitud no deshace nada irreversible; adjudicar deja el lote `ADJUDICADO`, el vehiculo `RESERVADO`, el plazo corriendo y el correo encolado. Revisarlo despues obligaria a compensar contra alguien que ya recibio el aviso de que gano |
+| Quien es saltado por cupo agotado sigue `EN_FILA` con su turno intacto | Un estado terminal `LIMITE_ALCANZADO` | El cupo se libera al vencer o al ser rechazado; un estado terminal castigaria de forma permanente por una situacion temporal |
+| Una venta consumada gasta el cupo para siempre | Liberarlo al vender, que es lo que hace hoy el centinela de R-09 al borrarse | Daria una segunda oportunidad de acaparar a quien ya se llevo un vehiculo, que es justo lo que el tope existe para evitar |
+| **Modalidad de adjudicacion** por convocatoria: `AUTOMATICA` o `MANUAL`, esta ultima decidida por un adjudicador con permiso propio | Solo la fila automatica | El negocio necesita poder decidir por criterio humano; y de paso vuelve irrelevante la ventaja de automatizar la apertura donde se use |
+| En modalidad manual, perder la adjudicacion devuelve el lote al adjudicador | Reasignar automaticamente al siguiente turno | La segunda adjudicacion la decidiria un proceso, no la persona: la modalidad dejaria de serlo a la primera falta de pago |
+| **La compuerta de la modalidad manual vive en `adjudicarLote`**, no en cada disparador | Comprobar la modalidad en `solicitarCompra`, `rechazarPago` y `cancelarSolicitud` | Tres sitios son tres oportunidades de olvidarla, y olvidarla significa que el lote se adjudica solo pasando por encima del adjudicador. `vencerYReasignar` es la excepcion inevitable —hace su propia transaccion— y el barrido se excluye aparte |
+| **La verificacion de integridad exige la firma de la decision manual**, y deduce la modalidad del evento y no del lote | Confiar en `lote.modalidadAdjudicacion`; dar por buena toda adjudicacion que se declare manual | El auditor verifica contra la bitacora, que es append-only, no contra un atributo que alguien pudo cambiar despues. Y sin comprobar la firma, declararse manual bastaria para quedar exento de revision: una adjudicacion sin actor humano o sin motivo es lo contrario de lo que dice ser |
+| El cupo y la modalidad son **obligatorios** en el lote desnormalizado | Opcionales, tratando su ausencia como "sin tope" y `AUTOMATICA` | El invariante de la desnormalizacion es que quedarse atras signifique siempre *menos* permisivo. Esas dos lecturas son las **mas** permisivas: una propagacion a medias repartiria vehiculos sin limite y adjudicaria sola lotes que esperaban decision humana. Exigirlos convierte ese caso en un lote ilegible, que es ruidoso |
+| Contra la automatizacion de la apertura: medir, limitar la tasa y registrar la evidencia | Token de participacion; prueba de trabajo; cancelar la participacion por sospecha de trampa | El token verifica autorizacion —lo que la sesion ya hace— sin hacer a nadie mas lento, y todo paso previo lo paga mejor el script que la persona. La prueba de trabajo grava tambien al usuario honesto. La sancion automatica es indistinguible de un doble clic o un reintento de red, y la regla 17 la prohibe: a quien se sanciona lo decide la organizacion |
 | Plazo en horas naturales (R-13) | Horas habiles con calendario de festivos | Auditabilidad y simplicidad de dominio |
 | `EN_APROBACION` como estatus adicional | Reusar `BORRADOR` para lo enviado a dictamen | Sin el no hay bandeja de aprobacion ni bloqueo de edicion |
 | Rechazo devuelve a `BORRADOR` con motivo en bitacora | Estatus `RECHAZADA` | Menos estados; el motivo ya queda trazado |

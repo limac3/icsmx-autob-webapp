@@ -47,6 +47,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-01T00:00:00.000Z",
   creadoPor: "P9",
 };
@@ -304,6 +307,40 @@ describe("barridoDeVencimientos — recuperacion de lotes libres", () => {
       expect.anything(),
     );
     expect(resultado.lotesRecuperados).toBe(1);
+  });
+
+  it("NO adjudica un lote manual, ni con fila viva y el lote libre (R21)", async () => {
+    // **El riesgo mas silencioso de la Etapa 15.** Un lote esperando la
+    // decision del adjudicador es, para el resto de esta funcion,
+    // indistinguible de uno automatico que se quedo sin adjudicar:
+    // `EN_OFERTA`, con fila viva y sin `adjudicacionActual`. Sin la exclusion,
+    // el barrido nocturno adjudicaria al turno menor por su cuenta y desharia
+    // la modalidad entera — de madrugada, y con un evento que diria
+    // `RECUPERACION_POR_BARRIDO`.
+    const { deps } = escenario({ filaViva: true });
+    listar.mockResolvedValue({
+      ok: true,
+      data: [{ convocatoriaId: "C1" } as never],
+    });
+    obtener.mockResolvedValue({
+      ok: true,
+      data: {
+        convocatoriaId: "C1",
+        lotes: [
+          {
+            ...lote,
+            estatus: "EN_OFERTA",
+            contadorTurnos: 3,
+            modalidadAdjudicacion: "MANUAL",
+          },
+        ],
+      } as never,
+    });
+
+    const resultado = await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
+
+    expect(adjudicar).not.toHaveBeenCalled();
+    expect(resultado.lotesRecuperados).toBe(0);
   });
 
   it("no adjudica lotes ADJUDICADO, VENDIDO ni RETIRADO", async () => {

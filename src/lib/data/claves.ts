@@ -215,13 +215,28 @@ export const clave = {
   }),
 
   /**
-   * Centinela de adjudicacion activa — R-09. **Este centinela, y no el estado
-   * `CONGELADA`, es lo que garantiza una sola adjudicacion por participante**
-   * (modelo-datos 4.3).
+   * Item de cupo de participacion — R-09 y R-22 (modelo-datos 4.3).
+   *
+   * Lleva los dos contadores de un participante **en una convocatoria**:
+   * `solicitudesCreadas`, que solo crece y entrega el `ordenEnConvocatoria`, y
+   * `cupoConsumido`, que sube al adjudicar y baja al perder la adjudicacion.
+   *
+   * **No es un centinela**, aunque sustituya a uno: un centinela existe o no
+   * existe, y estos son contadores. Lo que si comparte con ellos es lo que
+   * importa — convierte una regla de negocio en una garantia atomica, con la
+   * condicion del propio `ADD`, sin leer antes de decidir (regla 6).
+   *
+   * **Solo lo escribe su propio participante**, asi que no es una particion
+   * caliente compartida: es lo contrario del `ConditionCheck` sobre la
+   * convocatoria que T1 tuvo que retirar por cancelar entre 5 y 7 de cada 10
+   * solicitudes concurrentes.
    */
-  centinelaAdjudicacion: (participanteId: string): Clave => ({
+  cupoDeParticipante: (
+    participanteId: string,
+    convocatoriaId: string,
+  ): Clave => ({
     PK: `PART#${exigirIdentificador(participanteId, "participanteId")}`,
-    SK: "ADJUDICACION_ACTIVA",
+    SK: `CUPO#${exigirIdentificador(convocatoriaId, "convocatoriaId")}`,
   }),
 
   /**

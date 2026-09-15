@@ -36,7 +36,11 @@ export const TIPOS_DE_EVENTO = [
   // Fila y adjudicacion
   "SOLICITUD_CREADA",
   "SOLICITUD_CANCELADA_POR_PARTICIPANTE",
+  "SOLICITUD_CANCELADA_POR_LIMITE",
   "LOTE_ADJUDICADO",
+  // Los dos siguientes ya no se escriben: los producia el congelamiento de la
+  // version anterior de R-09, retirada en la Etapa 14. Siguen en el catalogo
+  // porque la bitacora es append-only y las historias ya escritas los traen.
   "SOLICITUD_CONGELADA",
   "SOLICITUD_DESCONGELADA",
   "SOLICITUD_OMITIDA",
@@ -214,11 +218,23 @@ export type ComprobacionDeIntegridad =
   | {
       clave: "ordenDeAdjudicacion";
       veredicto: VeredictoDeComprobacion;
-      /** Turnos vivos, mas pequenos que el adjudicado, sin `SOLICITUD_OMITIDA`. */
+      /**
+       * Turnos vivos, mas pequenos que el adjudicado, sin `SOLICITUD_OMITIDA`.
+       *
+       * **Una adjudicacion manual no produce estos saltos** (R-23): saltarse el
+       * orden es su proposito. Lo que si se exige ahi es la firma, y su
+       * ausencia va en el campo siguiente.
+       */
       saltosSinJustificar: readonly {
         turnoSaltado: number;
         turnoAdjudicado: number;
       }[];
+      /**
+       * Turnos adjudicados con `motivoAdjudicacion = DECISION_MANUAL` pero sin
+       * actor humano o sin motivo. Es la senal de que algo automatico decidio
+       * donde debia decidir una persona.
+       */
+      decisionesManualesSinFirma: readonly number[];
     }
   | {
       clave: "unaAdjudicacionVigente";

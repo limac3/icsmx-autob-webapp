@@ -32,6 +32,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
   adjudicacionActual: "L1-2",
@@ -80,7 +83,7 @@ afterEach(() => {
 });
 
 describe("avalarPago — T4", () => {
-  it("vende la solicitud, el lote y el vehiculo, y retira los dos centinelas", async () => {
+  it("vende la solicitud, el lote y el vehiculo, y NO devuelve cupo", async () => {
     const falso = crearClienteFalso();
 
     const resultado = await avalarPago(
@@ -92,7 +95,7 @@ describe("avalarPago — T4", () => {
     expect(resultado.data.estatus).toBe("VENDIDA");
 
     const items = itemsDe(falso);
-    expect(items).toHaveLength(6);
+    expect(items).toHaveLength(5);
     expect(items[0]?.Update).toMatchObject({
       Key: { PK: "LOTE#L1", SK: "SOL#0000000002" },
       ConditionExpression: "#estatus = :enVerificacion",
@@ -109,13 +112,15 @@ describe("avalarPago — T4", () => {
       Key: { PK: "VEH#V1", SK: "META" },
       ConditionExpression: "#estatus = :reservado",
     });
-    expect(items[3]?.Delete?.Key).toEqual({
-      PK: "PART#P1",
-      SK: "ADJUDICACION_ACTIVA",
-    });
-    expect(items[4]?.Delete?.Key).toEqual({ PK: "VEH#V1", SK: "ACTIVO" });
+    expect(items[3]?.Delete?.Key).toEqual({ PK: "VEH#V1", SK: "ACTIVO" });
 
-    const evento = items[5]?.Put?.Item as Record<string, unknown>;
+    // **Nada toca el item de cupo, y es el punto entero de R-09.** Hasta la
+    // Etapa 14 esta transaccion borraba el centinela de adjudicacion activa, de
+    // modo que completar la compra dejaba al participante libre para ganar otro
+    // lote de inmediato. Un tope que la compra liberara no seria un tope.
+    expect(JSON.stringify(items)).not.toContain("CUPO#");
+
+    const evento = items[4]?.Put?.Item as Record<string, unknown>;
     expect(evento).toMatchObject({
       tipo: "PAGO_AVALADO",
       solicitudId: "L1-2",
@@ -132,7 +137,7 @@ describe("avalarPago — T4", () => {
       deps(falso.cliente),
     );
 
-    const evento = itemsDe(falso)[5]?.Put?.Item as Record<string, unknown>;
+    const evento = itemsDe(falso)[4]?.Put?.Item as Record<string, unknown>;
     expect(evento.datos).toEqual({ nota: "Transferencia verificada por SPEI" });
   });
 

@@ -56,6 +56,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "PUBLICADA",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
   adjudicacionActual: "L1-2",
@@ -71,6 +74,9 @@ const convocatoria: ConvocatoriaConLotes = {
   inicioVenta: enHoras(-48),
   finVenta: enHoras(48),
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   estatus: "PUBLICADA",
   creadoEn: "2026-09-01T10:00:00.000Z",
   creadoPor: "P9",
@@ -269,7 +275,6 @@ describe("pago:avalar y pago:rechazar — solo Autob_Operar_Tesoreria", () => {
       data: {
         estatus: "RECHAZADA_POR_TESORERIA",
         reasignacion: { estado: "fila_agotada", turnosRevisados: 0 },
-        descongeladas: 0,
       },
     });
 

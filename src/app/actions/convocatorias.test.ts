@@ -106,6 +106,9 @@ const lote: Lote = {
   tipoConvocatoria: "EMPLEADOS",
   estatusConvocatoria: "BORRADOR",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   creadoEn: "2026-09-02T10:00:00.000Z",
   creadoPor: "P9",
 };
@@ -120,6 +123,9 @@ const convocatoria: ConvocatoriaConLotes = {
   inicioVenta: "2026-10-05T15:00:00.000Z",
   finVenta: "2026-10-12T15:00:00.000Z",
   horasLiquidacion: 48,
+  limiteAdjudicaciones: 1,
+  limiteSolicitudes: 3,
+  modalidadAdjudicacion: "AUTOMATICA",
   estatus: "BORRADOR",
   creadoEn: "2026-09-01T10:00:00.000Z",
   // Distinto de "P1" para que R-05 no interfiera en el barrido.
@@ -162,6 +168,9 @@ const INVOCAR = {
         inicioVenta: "2026-10-05T15:00:00.000Z",
         finVenta: "2026-10-12T15:00:00.000Z",
         horasLiquidacion: 48,
+        limiteAdjudicaciones: 1,
+        limiteSolicitudes: 3,
+        modalidadAdjudicacion: "AUTOMATICA",
       }),
   },
   editarConvocatoria: {

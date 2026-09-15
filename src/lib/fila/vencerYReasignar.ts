@@ -9,9 +9,9 @@
 //
 // Estructuralmente es T2 (`adjudicarLote.ts`) con dos escrituras del lado del
 // vencido intercaladas delante: misma abstencion por reservas (R18), misma
-// lectura de PA-07 en orden de turno, mismo bucle de candidatos con
-// congelamiento por R-09. Reusa `leerFila` y `congelar` de `adjudicarLote.ts`
-// en vez de duplicarlos.
+// lectura de PA-07 en orden de turno, mismo bucle de candidatos con omision
+// por cupo agotado (R-09). Reusa `leerFila` y `omitirPorLimite` de
+// `adjudicarLote.ts` en vez de duplicarlos.
 //
 // **Correccion sobre el documento: la variante reducida tambien libera el
 // vehiculo.** `modelo-datos-dynamodb.md` describia la variante de fila agotada
@@ -29,7 +29,6 @@ import { nombreDeTabla } from "@/lib/data/cliente";
 import { resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import {
-  CONDICION_CENTINELA_NUEVO,
   ejecutarTransaccion,
   type ItemDeTransaccion,
 } from "@/lib/data/transacciones";
@@ -41,7 +40,8 @@ import { itemsDeEncoladoAdjudicacion } from "@/lib/correo/outbox";
 import type { Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
 import type { CodigoError } from "@/types/resultado";
-import { congelar, leerFila, type Candidato } from "./adjudicarLote";
+import { leerFila, omitirPorLimite, type Candidato } from "./adjudicarLote";
+import { itemDeConsumoDeCupo, itemDeLiberacionDeCupo } from "./cupo";
 import { depurarYContarReservas } from "./reservas";
 
 /** Mismo criterio de reintentos que T2 (`INTENTOS_DE_ADJUDICACION`): un
@@ -170,6 +170,17 @@ const intentarRonda = async (
   );
   if (vigentes > 0) return { estado: "abstenido", reservasVigentes: vigentes };
 
+  // **En modalidad manual se vence SIN reasignar** (R-23): la variante reducida
+  // cierra al vencido, devuelve el lote a `EN_OFERTA` y libera el vehiculo, y
+  // ahi se detiene. El lote vuelve a la bandeja del adjudicador, que es lo que
+  // se decidio para el caso "el ganador elegido no paga".
+  //
+  // Este es el unico de los cinco disparadores que no pasa por `adjudicarLote`
+  // —hace su propia transaccion— asi que su compuerta tiene que estar aqui.
+  if (lote.modalidadAdjudicacion === "MANUAL") {
+    return await intentarVarianteReducida(entrada, deps, correlacionId);
+  }
+
   const candidatos = await leerFila(lote.loteId, deps);
 
   for (const candidato of candidatos) {
@@ -196,16 +207,24 @@ const intentarRonda = async (
       return { estado: "en_conflicto" };
     }
 
+    // **Este bloque rutea por POSICION, no por codigo de error.** Insertar,
+    // quitar o mover un item de `intentarVencer` desplaza estos numeros **en
+    // silencio**: no hay error de compilacion y ninguna prueba unitaria lo
+    // nota, porque los indices son datos que devuelve DynamoDB. La Etapa 14
+    // sustituyo dos items de esta transaccion conservando su cantidad y su
+    // orden justamente para no tocarlos.
+    //
     // Item 0 (la vencida ya no aplica) o item 2 (el lote ya no es suyo): el
     // problema no es de este candidato, es de la operacion entera. Abortar.
     if (intento.indice === 0 || intento.indice === 2) {
       return { estado: "no_vigente" };
     }
 
-    // Item 4: el candidato ya sostiene otra adjudicacion (R-09). Se congela
-    // con su evento, igual que T2, y se sigue con el turno siguiente.
+    // Item 4: el candidato agoto su cupo en esta convocatoria (R-09). Se omite
+    // con su evento, igual que T2, y se sigue con el turno siguiente. Su
+    // solicitud se queda `EN_FILA` con el turno intacto.
     if (intento.indice === 4) {
-      await congelar(candidato, lote, deps);
+      await omitirPorLimite(candidato, lote, deps);
       continue;
     }
 
@@ -254,7 +273,10 @@ const intentarVencer = async (
   const resultado = await ejecutarTransaccion(
     [
       itemCancelarVencida({ lote, solicitudVencida, ahora }),
-      itemBorrarCentinelaVencido(solicitudVencida),
+      itemDeLiberacionDeCupo({
+        participanteId: solicitudVencida.participanteId,
+        convocatoriaId: lote.convocatoriaId,
+      }),
       {
         item: {
           Update: {
@@ -299,25 +321,20 @@ const intentarVencer = async (
         siFalla: "invalid_state",
         descripcion: `solicitud turno ${String(candidato.turno)} sigue EN_FILA`,
       },
-      {
-        item: {
-          Put: {
-            TableName: tabla,
-            Item: {
-              ...clave.centinelaAdjudicacion(candidato.participanteId),
-              loteId: lote.loteId,
-              convocatoriaId: lote.convocatoriaId,
-              solicitudId: solicitudNuevaId,
-              turno: candidato.turno,
-              adjudicadoEn,
-              venceEn,
-            },
-            ConditionExpression: CONDICION_CENTINELA_NUEVO,
-          },
-        },
-        siFalla: "adjudicacion_activa",
-        descripcion: "centinela de adjudicacion activa (R-09)",
-      },
+      // El item 5 y el item 1 tocan el **mismo tipo** de item, y coincidir
+      // seria fatal: `TransactWriteItems` rechaza dos operaciones sobre el
+      // mismo item con `ValidationException`, no con un fallo de condicion que
+      // se pueda diagnosticar. No pueden coincidir, y la garantia es de R-07,
+      // no de aqui: T5 **no** retira el centinela de fila del vencido —lo deja
+      // para que `consultarMiLugar` le siga mostrando su
+      // `CANCELADA_POR_VENCIMIENTO`—, asi que mientras esa solicitud existio su
+      // titular nunca pudo tener otra viva en este lote. Quien toque ese
+      // centinela tiene que volver aqui.
+      itemDeConsumoDeCupo({
+        participanteId: candidato.participanteId,
+        convocatoriaId: lote.convocatoriaId,
+        limite: lote.limiteAdjudicaciones,
+      }),
       eventoParaTransaccion({
         tipo: "SOLICITUD_VENCIDA",
         agregado: "LOTE",
@@ -404,7 +421,10 @@ const intentarVarianteReducida = async (
 
   const items: ItemDeTransaccion[] = [
     itemCancelarVencida({ lote, solicitudVencida, ahora }),
-    itemBorrarCentinelaVencido(solicitudVencida),
+    itemDeLiberacionDeCupo({
+      participanteId: solicitudVencida.participanteId,
+      convocatoriaId: lote.convocatoriaId,
+    }),
     {
       item: {
         Update: {
@@ -500,18 +520,4 @@ const itemCancelarVencida = (entrada: {
   };
 };
 
-const itemBorrarCentinelaVencido = (
-  solicitudVencida: Solicitud,
-): ItemDeTransaccion => ({
-  item: {
-    Delete: {
-      TableName: nombreDeTabla(),
-      Key: clave.centinelaAdjudicacion(solicitudVencida.participanteId),
-      ConditionExpression: "attribute_exists(SK)",
-    },
-  },
-  siFalla: "conflicto_concurrencia",
-  descripcion: "centinela de adjudicacion activa del vencido (R-09)",
-});
-
-export const __test__ = { itemCancelarVencida, itemBorrarCentinelaVencido };
+export const __test__ = { itemCancelarVencida };

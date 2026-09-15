@@ -3,6 +3,7 @@ import type {
   EstatusConvocatoria,
   TipoConvocatoria,
 } from "@/types/convocatoria";
+import type { EstatusLote } from "@/types/lote";
 import type { EstatusSolicitud } from "@/types/solicitud";
 import type { EstatusVehiculo } from "@/types/vehiculo";
 
@@ -41,7 +42,16 @@ export type Contexto = {
   estatusVehiculo?: EstatusVehiculo;
   estatusConvocatoria?: EstatusConvocatoria;
   estatusSolicitud?: EstatusSolicitud;
+  estatusLote?: EstatusLote;
   tipoConvocatoria?: TipoConvocatoria;
+  /**
+   * La convocatoria se adjudica a mano (R-23). Booleano y no la modalidad
+   * cruda porque las guardas afirman en positivo y `undefined` deniega
+   * (regla 18): con un `ModalidadAdjudicacion | undefined`, olvidar pasarlo
+   * seria indistinguible de "no es manual", y eso **abriria** la bandeja del
+   * adjudicador en convocatorias automaticas.
+   */
+  modalidadManual?: boolean;
 
   // Ventanas de tiempo y consultas ya resueltas por quien invoca (con
   // src/lib/domain/fechas.ts y el acceso a datos de la Etapa 4/8).
@@ -379,6 +389,37 @@ const CATALOGO_ACCIONES = {
     guarda: (c) => {
       if (c.estatusSolicitud !== "EN_VERIFICACION")
         return denegar("invalid_state");
+      if (!confirmado(c.motivoProvisto)) return denegar("invalid_state");
+      return permitir();
+    },
+  },
+
+  // 5b. Adjudicacion manual (R-23)
+  //
+  // `Autob_Auditar` ve pero no decide, igual que en tesoreria: quien fiscaliza
+  // una decision no la toma.
+  "adjudicacion:ver-bandeja": {
+    permisos: ["Autob_Adjudicar_Convocatorias", "Autob_Auditar"],
+  },
+  "adjudicacion:ver-fila-identificada": {
+    permisos: ["Autob_Adjudicar_Convocatorias", "Autob_Auditar"],
+    // **La segunda accion del sistema que expone identidades de terceros**, y
+    // la primera fuera de auditoria. Se acota a la modalidad que la justifica:
+    // en una convocatoria automatica nadie necesita ver quien es quien, y R-12
+    // vuelve a aplicar entera.
+    guarda: (c) =>
+      confirmado(c.modalidadManual) ? permitir() : denegar("invalid_state"),
+  },
+  "adjudicacion:adjudicar": {
+    permisos: ["Autob_Adjudicar_Convocatorias"],
+    guarda: (c) => {
+      if (!confirmado(c.modalidadManual)) return denegar("invalid_state");
+      if (c.estatusConvocatoria !== "PUBLICADA")
+        return denegar("invalid_state");
+      // El lote tiene que estar libre. Es cortesia, no la garantia: la autoridad
+      // es `attribute_not_exists(adjudicacionActual)` dentro de la transaccion,
+      // porque entre esta decision y la escritura cabe una carrera (regla 6).
+      if (c.estatusLote !== "EN_OFERTA") return denegar("invalid_state");
       if (!confirmado(c.motivoProvisto)) return denegar("invalid_state");
       return permitir();
     },

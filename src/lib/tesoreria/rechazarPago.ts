@@ -11,7 +11,7 @@ import "server-only";
 // solicitud nueva. La razon es la misma que alli — quien dispara esto es una
 // persona mirando una pantalla, no un barrido sobre un plazo vencido que no
 // puede dejar el lote sin dueno si el proceso se cae a la mitad — asi que
-// replicar la abstencion por reservas, el congelamiento de R-09 y los
+// replicar la abstencion por reservas, el manejo del cupo de R-09 y los
 // reintentos de `adjudicarLote` dentro de una sola transaccion no compra nada.
 //
 // **No retira el centinela de fila.** A diferencia de la cancelacion
@@ -34,7 +34,7 @@ import {
   type ItemDeTransaccion,
 } from "@/lib/data/transacciones";
 import { transicion } from "@/lib/domain/transiciones";
-import { descongelarSolicitudes } from "@/lib/fila/descongelarSolicitudes";
+import { itemDeLiberacionDeCupo } from "@/lib/fila/cupo";
 import {
   adjudicarLote,
   type ResultadoDeAdjudicacion,
@@ -60,7 +60,6 @@ export type EntradaRechazarPago = {
 export type ResultadoDeRechazo = {
   estatus: EstatusSolicitud;
   reasignacion: ResultadoDeAdjudicacion;
-  descongeladas: number;
 };
 
 export const rechazarPago = async (
@@ -106,20 +105,16 @@ export const rechazarPago = async (
   const resultado = await ejecutarTransaccion(items, deps);
   if (!resultado.ok) return fallo(resultado.error);
 
-  // Perdio su adjudicacion: sus CONGELADA vuelven a EN_FILA con el turno
-  // original (R-09), antes de reasignar — si alguna fuera candidata a este
-  // mismo lote, tiene que estar viva cuando `adjudicarLote` recorra los turnos.
-  const descongeladas = await descongelarSolicitudes(
-    { participanteId: solicitud.participanteId },
-    deps,
-  );
-
+  // Aqui iba `descongelarSolicitudes`. Con el cupo por convocatoria nada se
+  // congelo, y el decremento del item de cupo viajo dentro de la transaccion de
+  // arriba: sus demas solicitudes siguen `EN_FILA` y ya tienen cupo otra vez
+  // cuando `adjudicarLote` recorre los turnos.
   const reasignacion = await adjudicarLote(
     { lote: liberado(lote), motivo: "REASIGNACION_POR_RECHAZO" },
     deps,
   );
 
-  return exito({ estatus: destino, reasignacion, descongeladas });
+  return exito({ estatus: destino, reasignacion });
 };
 
 /**
@@ -176,17 +171,10 @@ const itemsDeRechazo = (entrada: {
       siFalla: "invalid_state",
       descripcion: `solicitud ${solicitud.solicitudId} sigue EN_VERIFICACION`,
     },
-    {
-      item: {
-        Delete: {
-          TableName: tabla,
-          Key: clave.centinelaAdjudicacion(solicitud.participanteId),
-          ConditionExpression: "attribute_exists(SK)",
-        },
-      },
-      siFalla: "conflicto_concurrencia",
-      descripcion: "centinela de adjudicacion activa (R-09)",
-    },
+    itemDeLiberacionDeCupo({
+      participanteId: solicitud.participanteId,
+      convocatoriaId: lote.convocatoriaId,
+    }),
     {
       item: {
         Update: {
