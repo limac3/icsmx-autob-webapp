@@ -17,6 +17,8 @@
     "verify:lock": "node scripts/verificar-lock.mjs",
     "prototipo:fila": "node scripts/prototipo-fila.mjs",
     "carga:apertura": "node scripts/carga-apertura.mjs",
+    "adr:subir": "node scripts/adr-grafo.mjs",
+    "adr:verificar": "node scripts/adr-grafo.mjs --verificar",
     "format": "festack-scripts format",
     "typecheck": "tsc --noEmit && tsc --noEmit -p amplify/tsconfig.json",
     "upgrade": "festack-scripts upgrade",

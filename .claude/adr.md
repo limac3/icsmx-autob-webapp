@@ -880,7 +880,8 @@ Procedimiento cuando cambia `agent_files/`, `CLAUDE.md` o `AGENTS.md`:
 1. Editar **este archivo** con la decision nueva o corregida.
 2. `index_repository(repo_path, mode="full")` — refresca los nodos `Section` de los documentos.
    Usar `full`: `fast` excluye `scripts/` y `src/lib/media/` y omite las aristas de similitud.
-3. `manage_adr(project, mode="update", content=<contenido de .claude/adr.md>)`.
+3. `npm run adr:subir` — es `manage_adr(project, mode="update", content=<contenido de
+   .claude/adr.md>)`, pero pasado desde el disco. Cerrar con `npm run adr:verificar`.
 4. Actualizar la linea "Sincronizado con" del encabezado.
 
 Despues de **cualquier** `index_repository`, aunque no haya cambiado la documentacion, repetir
@@ -889,10 +890,11 @@ devuelve `[]`, se borro.
 
 > **El paso 3 no se hace transcribiendo el archivo.** `codebase-memory-mcp` es un servidor
 > **stdio local**, asi que se le puede hablar desde la terminal por JSON-RPC pasandole el contenido
-> **leido del disco**: exacto por construccion y sin los ~40 000 tokens que cuesta leer 68 KB y
-> volver a escribirlos. Reescribir 834 lineas a mano ademas puede perder una linea en silencio, y
-> el espejo corrupto no se nota hasta que alguien lo lee. Cerrar siempre comparando byte a byte con
-> `mode="get"`. Receta completa en `agent_files/desafios-implementacion.md` seccion 63.
+> **leido del disco**: `scripts/adr-grafo.mjs`, o sea `npm run adr:subir`. Exacto por construccion
+> y sin los ~40 000 tokens que cuesta leer 76 KB y volver a escribirlos; reescribir 907 lineas a
+> mano ademas puede perder una en silencio, y el espejo corrupto no se nota hasta que alguien lo
+> lee. Cerrar siempre con `npm run adr:verificar`, que compara byte a byte contra `mode="get"`.
+> Receta completa en `agent_files/desafios-implementacion.md` seccion 63.
 
 > **El reindexado no ve el trabajo sin commit.** El grafo se ancla al `head_sha`, asi que
 > `index_repository` sobre un arbol con cambios sin confirmar devuelve el mismo conteo de nodos

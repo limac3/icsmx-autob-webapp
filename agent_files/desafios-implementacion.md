@@ -3487,14 +3487,29 @@ delimitado por saltos de linea sobre `stdin`/`stdout`. Que el agente sea un clie
 que **toda** llamada pase por su contexto.
 
 ### Solucion aplicada
-Un script que lanza el ejecutable, hace el saludo (`initialize` mas
-`notifications/initialized`) y envia `tools/call` con el contenido **leido del disco**. El texto
-nunca entra ni sale del contexto del agente, asi que no hay transcripcion posible: la carga es
-exacta por construccion, y cuesta una llamada a la terminal en vez de 40 000 tokens.
+`scripts/adr-grafo.mjs`, con `npm run adr:subir` y `npm run adr:verificar`. Lanza el ejecutable,
+hace el saludo (`initialize` mas `notifications/initialized`) y envia `tools/call` con el contenido
+**leido del disco**. El texto nunca entra ni sale del contexto del agente, asi que no hay
+transcripcion posible: la carga es exacta por construccion, y cuesta una llamada a la terminal en
+vez de 40 000 tokens.
 
-El mismo script con `--verificar` pide `mode="get"` y compara **byte a byte** contra
-`.claude/adr.md`. Eso convierte "creo que se subio bien" en un hecho comprobado: 68 547 bytes en los
-dos lados, identicos.
+`--verificar` pide `mode="get"` y compara **byte a byte** contra `.claude/adr.md`: 77 760 bytes en
+los dos lados, identicos.
+
+**Dos cosas que la primera version de esta receta no dijo, y las dos costaron descubrirlas otra
+vez.** La primera es que el script **vivia en un directorio temporal de sesion**: la receta
+describia una herramienta que ya no existia, asi que la etapa siguiente tuvo que reescribirla
+entera. Un procedimiento documentado cuyo unico ejecutable es efimero no esta documentado — por eso
+ahora esta en `scripts/` y en `package.json`.
+
+La segunda es que `mode="get"` **no devuelve markdown crudo**: devuelve un envoltorio JSON
+`{"content": "..."}` con los saltos de linea escapados. Comparar su salida directamente contra el
+archivo acusa una diferencia de ~1 000 bytes —un byte extra por cada `\n`— que parece un
+truncamiento y no lo es. Hay que desenvolver el JSON antes de comparar.
+
+Y **el primer intento despues de un `index_repository` puede fallar con `project not found or not
+indexed`** aunque la lista de proyectos que acompana al error contenga justo el que se pidio: el
+reindexado todavia esta reconstruyendo la base. Es transitorio; se reintenta.
 
 ### Regla para futuro
 **Un servidor MCP de stdio es un proceso, y el contenido grande se le pasa desde el disco.** Cuando

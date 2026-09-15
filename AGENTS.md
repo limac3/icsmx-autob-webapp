@@ -19,6 +19,7 @@ npm run lint       # ESLint + Stylelint
 npm run verify:rapido  # compuerta completa sin el chequeo de desactualizados (~50 s)
 npm run prototipo:fila # prototipo concurrente de la fila contra el sandbox (R18, ~2 min)
 npm run carga:apertura # prueba de carga de la apertura de una convocatoria (Etapa 12, sandbox)
+npm run adr:subir      # recarga .claude/adr.md en el grafo; adr:verificar compara byte a byte
 npm run verify     # lo anterior + chequeo de paquetes desactualizados (~2.5 min)
 npm run build      # build de produccion
 npx ampx sandbox   # backend Amplify Gen2 personal

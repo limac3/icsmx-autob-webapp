@@ -210,7 +210,8 @@ o su razon, regenerar el ADR en la misma conversacion, **en este orden**:
 
 1. Editar `.claude/adr.md`.
 2. `index_repository(repo_path, mode="full")` — refresca los nodos `Section` de los documentos.
-3. `manage_adr(project, mode="update", content=<contenido de .claude/adr.md>)`.
+3. `npm run adr:subir` — hace `manage_adr(mode="update")` pasandole el archivo desde el disco, en
+   vez de transcribirlo; cerrar con `npm run adr:verificar`, que compara byte a byte.
 
 El orden importa: **`index_repository` borra el ADR del grafo**, asi que despues de cualquier
 reindexado hay que repetir el paso 3 aunque no haya cambiado la documentacion. Verificar con
