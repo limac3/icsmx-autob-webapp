@@ -40,12 +40,22 @@ entregables estan hechos y su compuerta de calidad pasa en verde.
 > **Etapas 14, 15 y 16** y registrados en la seccion "Ampliacion de alcance": **cupos de
 > participacion por convocatoria** —que sustituyen a R-09, hasta hoy la unica defensa contra el
 > acaparamiento—, una **modalidad manual de adjudicacion** con un perfil nuevo que decide al
-> ganador, y la **equidad del instante de apertura** frente a la automatizacion. Ninguna esta
-> empezada. La 14 vuelve a tocar el motor de fila, asi que hereda el nivel de cuidado de la
-> Etapa 8; la 15 depende de ella; la 16 es ortogonal y puede correr en paralelo.
+> ganador, y la **equidad del instante de apertura** frente a la automatizacion. La 14 vuelve a
+> tocar el motor de fila, asi que hereda el nivel de cuidado de la Etapa 8; la 15 depende de
+> ella; la 16 es ortogonal y puede correr en paralelo.
 >
-> Siguiente: **cerrar los puntos `[OPERADOR]` de la Etapa 12** —ninguno es codigo— y arrancar la
-> **Etapa 14** por su primer entregable, que es documentar antes de codificar.
+> **2026-09-17 — las tres quedan completas en codigo.** La **Etapa 14** cerro con las cinco
+> pruebas de concurrencia de la regla 16 en verde contra DynamoDB real (43/43 en cinco
+> repeticiones) y sin regresion de rendimiento. La **Etapa 15** cerro sus entregables y pruebas;
+> solo queda `[OPERADOR]` el recorrido manual de punta a punta contra el sandbox con navegador
+> (login Okta real), el mismo bloqueo que arrastran las Etapas 5 a 12. La **Etapa 16** ya estaba
+> cerrada. Compuerta de calidad completa verificada en esta conversacion: `typecheck`,
+> `verify:rapido` (2470 pruebas) y `build`, los tres en verde.
+>
+> Siguiente: **cerrar los puntos `[OPERADOR]` de las Etapas 5 a 12 y 15** —ninguno es codigo,
+> todos exigen sandbox desplegado y login Okta real— o, si el operador prefiere seguir
+> avanzando en codigo, definir el proximo frente de alcance: el plan no tiene mas etapas
+> pendientes despues de la 16.
 
 ---
 
@@ -1793,7 +1803,7 @@ aqui **antes de escribir codigo**, desglosado en las Etapas 14, 15 y 16.
 
 ---
 
-## Etapa 14 — Cupos de participacion por convocatoria — **parcial**
+## Etapa 14 — Cupos de participacion por convocatoria ✅
 
 > **Etapa de riesgo tecnico alto: vuelve a tocar el motor de fila**, que es donde vive la equidad
 > del sistema. Se recomienda trabajarla con el modelo mas capaz disponible, como la Etapa 8.
@@ -1923,7 +1933,7 @@ concurrencia. **Cumplida.**
 
 ---
 
-## Etapa 15 — Modalidad manual de adjudicacion — **parcial**
+## Etapa 15 — Modalidad manual de adjudicacion ✅
 
 **Objetivo:** que una persona con permiso pueda decidir al ganador de cada lote, con la
 informacion necesaria para hacerlo y dejando constancia de su criterio.
