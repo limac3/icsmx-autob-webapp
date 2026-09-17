@@ -221,6 +221,39 @@ describe("alarmas (Etapa 12)", () => {
     );
   });
 
+  it("las tres alarmas de filtro de log llevan el entorno en el nombre de la metrica", () => {
+    // Sin esto, dos entornos que comparten cuenta y region —dos sandboxes, o
+    // un sandbox y una rama compartida— leen y escriben la misma metrica: el
+    // barrido de uno dispara la alarma del otro (`desafios-implementacion.md`
+    // 80). Se comprueba en las dos puntas: el filtro tiene que **escribir**
+    // con el nombre prefijado, y la alarma tiene que **leer** ese mismo
+    // nombre. No se resolvio con una dimension de CloudWatch: la API rechaza
+    // un `MetricFilter` con `dimensions` y `defaultValue` a la vez.
+    const plantillaFuncion = Template.fromStack(
+      Stack.of(sandbox.backend.barrido.resources.lambda),
+    );
+    const filtros = plantillaFuncion.findResources("AWS::Logs::MetricFilter");
+    expect(Object.keys(filtros)).toHaveLength(3);
+    for (const filtro of Object.values(filtros)) {
+      const transformacion = filtro.Properties.MetricTransformations[0] as {
+        MetricName: string;
+        MetricNamespace: string;
+      };
+      expect(transformacion.MetricNamespace).toBe("autob");
+      expect(transformacion.MetricName).toMatch(/^autob-prueba-sandbox-/);
+    }
+
+    const plantillaAlarmas = Template.fromStack(sandbox.pilaDeAlarmas);
+    const porFiltroDeLog = Object.values(
+      plantillaAlarmas.findResources("AWS::CloudWatch::Alarm"),
+    ).filter((alarma) => alarma.Properties.Namespace === "autob");
+    expect(porFiltroDeLog).toHaveLength(3);
+    for (const alarma of porFiltroDeLog) {
+      expect(alarma.Properties.MetricName).toMatch(/^autob-prueba-sandbox-/);
+      expect(alarma.Properties.Dimensions).toBeUndefined();
+    }
+  });
+
   it("la contencion se vigila con TransactionConflict y no con condiciones fallidas", () => {
     // `ConditionalCheckFailedRequests` parece la metrica obvia y estaria
     // disparada siempre: la adjudicacion se gana con escritura condicional

@@ -128,6 +128,17 @@ export class AlarmasAutob extends Construct {
       this.tema.addSubscription(new EmailSubscription(opciones.correoDeAvisos));
     }
 
+    // **Los seis ids logicos de mas abajo llevan el sufijo `V2`, y no es
+    // cosmetico.** `AlarmName` es `createOnlyProperty` en CloudFormation: al
+    // cambiar su valor sin cambiar el id logico de la construccion,
+    // CloudFormation intenta un *update in-place* y lo rechaza —
+    // `NotUpdatableException: createOnlyProperties [/properties/AlarmName]
+    // cannot be updated`—, en cada despliegue, sin excepcion. `ampx sandbox`
+    // lo enmascara: al fallar la pila completa cae en *hotswap* y actualiza
+    // el codigo del Lambda igual, asi que el barrido sigue corriendo y el
+    // fallo pasa inadvertido. Cambiar el id logico fuerza a CloudFormation a
+    // crear la alarma nueva y borrar la vieja, en vez de intentar el
+    // reemplazo imposible (`desafios-implementacion.md` 79).
     this.alarmas = [
       this.barridoSinEjecutar(opciones),
       this.barridoConErrores(opciones),
@@ -160,7 +171,7 @@ export class AlarmasAutob extends Construct {
    * el fallo.
    */
   private barridoSinEjecutar(opciones: OpcionesDeAlarmas): Alarm {
-    return new Alarm(this, "BarridoSinEjecutar", {
+    return new Alarm(this, "BarridoSinEjecutarV2", {
       alarmName: `${opciones.prefijoDeNombres}-barrido-sin-ejecutar`,
       alarmDescription:
         "El barrido de vencimientos no se ejecuto en la ultima ventana. Runbook R-1.",
@@ -176,7 +187,7 @@ export class AlarmasAutob extends Construct {
 
   /** El barrido corre pero lanza. Distinto del anterior: aqui si hay datos. */
   private barridoConErrores(opciones: OpcionesDeAlarmas): Alarm {
-    return new Alarm(this, "BarridoConErrores", {
+    return new Alarm(this, "BarridoConErroresV2", {
       alarmName: `${opciones.prefijoDeNombres}-barrido-con-errores`,
       alarmDescription:
         "La funcion de barrido termino con excepcion. Runbook R-1.",
@@ -199,7 +210,7 @@ export class AlarmasAutob extends Construct {
    * encontro y no pudo resolver ni reintentando.
    */
   private vencimientosSinResolver(opciones: OpcionesDeAlarmas): Alarm {
-    const metrica = this.filtro(opciones.logsDelBarrido, {
+    const metrica = this.filtro(opciones.logsDelBarrido, opciones, {
       id: "VencimientosSinResolver",
       nombre: "VencimientosSinResolver",
       patron: FilterPattern.all(
@@ -213,7 +224,7 @@ export class AlarmasAutob extends Construct {
       valor: "$.message.errores",
     });
 
-    return new Alarm(this, "AlarmaVencimientosSinResolver", {
+    return new Alarm(this, "AlarmaVencimientosSinResolverV2", {
       alarmName: `${opciones.prefijoDeNombres}-vencimientos-sin-resolver`,
       alarmDescription:
         "El barrido encontro adjudicaciones vencidas y no pudo resolverlas." +
@@ -228,7 +239,7 @@ export class AlarmasAutob extends Construct {
 
   /** Correos que llevan demasiado tiempo esperando en el outbox. */
   private outboxRetrasado(opciones: OpcionesDeAlarmas): Alarm {
-    const metrica = this.filtro(opciones.logsDelBarrido, {
+    const metrica = this.filtro(opciones.logsDelBarrido, opciones, {
       id: "AntiguedadOutbox",
       nombre: "AntiguedadOutboxMin",
       patron: FilterPattern.stringValue(
@@ -243,7 +254,7 @@ export class AlarmasAutob extends Construct {
       estadistica: "Maximum",
     });
 
-    return new Alarm(this, "AlarmaOutboxRetrasado", {
+    return new Alarm(this, "AlarmaOutboxRetrasadoV2", {
       alarmName: `${opciones.prefijoDeNombres}-outbox-retrasado`,
       alarmDescription:
         `Hay correos sin enviar con mas de ${String(UMBRAL_OUTBOX_MIN)}` +
@@ -261,7 +272,7 @@ export class AlarmasAutob extends Construct {
    * no se entera de que gano y su plazo corre igual (R-13).
    */
   private correosFallidos(opciones: OpcionesDeAlarmas): Alarm {
-    const metrica = this.filtro(opciones.logsDelBarrido, {
+    const metrica = this.filtro(opciones.logsDelBarrido, opciones, {
       id: "CorreosFallidos",
       nombre: "CorreosFallidos",
       patron: FilterPattern.all(
@@ -271,7 +282,7 @@ export class AlarmasAutob extends Construct {
       valor: "$.message.fallidosPermanentes",
     });
 
-    return new Alarm(this, "AlarmaCorreosFallidos", {
+    return new Alarm(this, "AlarmaCorreosFallidosV2", {
       alarmName: `${opciones.prefijoDeNombres}-correos-fallidos`,
       alarmDescription:
         "Uno o mas correos agotaron sus reintentos y no se entregaran." +
@@ -302,7 +313,7 @@ export class AlarmasAutob extends Construct {
    * su condicion **por diseno**. Esa alarma estaria disparada siempre.
    */
   private contencionDeTransacciones(opciones: OpcionesDeAlarmas): Alarm {
-    return new Alarm(this, "ContencionDeTransacciones", {
+    return new Alarm(this, "ContencionDeTransaccionesV2", {
       alarmName: `${opciones.prefijoDeNombres}-contencion-de-transacciones`,
       alarmDescription:
         "Conflictos de transaccion por encima de lo previsto." +
@@ -327,9 +338,25 @@ export class AlarmasAutob extends Construct {
    * que no coincide con el patron no publica ningun punto, y una alarma sobre
    * una serie con huecos oscila entre `OK` e `INSUFFICIENT_DATA` en vez de
    * quedarse en `OK`.
+   *
+   * **El nombre de la metrica lleva el prefijo del entorno, y no es
+   * cosmetico.** `ESPACIO_DE_NOMBRES` es fijo y global por diseno (el
+   * comentario de la clase explica por que), asi que sin distinguir el
+   * entorno en el nombre, el sandbox personal de cualquiera y una rama
+   * compartida —incluida produccion— leen y escriben la misma serie: el
+   * barrido de un sandbox dispara la alarma de otro entorno, y viceversa
+   * (`desafios-implementacion.md` 80).
+   *
+   * **No se resolvio con una dimension de CloudWatch**, que habria sido la
+   * forma mas idiomatica: la API rechaza un `MetricFilter` con `dimensions`
+   * y `defaultValue` a la vez —"dimensions and default value are mutually
+   * exclusive properties"—, y `defaultValue: 0` es lo que evita el hueco de
+   * abajo. El nombre de la metrica no tiene esa restriccion, y ya es el
+   * mismo truco que separa los nombres de alarma (`prefijoDeNombres`).
    */
   private filtro(
     logs: ILogGroup,
+    opciones: OpcionesDeAlarmas,
     definicion: {
       id: string;
       nombre: string;
@@ -338,6 +365,8 @@ export class AlarmasAutob extends Construct {
       estadistica?: string;
     },
   ): Metric {
+    const nombreDeMetrica = `${opciones.prefijoDeNombres}-${definicion.nombre}`;
+
     // Ambito: la pila **del grupo de logs**, no `this`. Un `MetricFilter` en
     // otra pila obligaria a CloudFormation a exportar el nombre del grupo, y
     // el grupo pertenece a la pila de la funcion; el filtro no gana nada por
@@ -345,7 +374,7 @@ export class AlarmasAutob extends Construct {
     new MetricFilter(Stack.of(logs), `Filtro${definicion.id}`, {
       logGroup: logs,
       metricNamespace: ESPACIO_DE_NOMBRES,
-      metricName: definicion.nombre,
+      metricName: nombreDeMetrica,
       filterPattern: definicion.patron,
       metricValue: definicion.valor,
       defaultValue: 0,
@@ -353,7 +382,7 @@ export class AlarmasAutob extends Construct {
 
     return new Metric({
       namespace: ESPACIO_DE_NOMBRES,
-      metricName: definicion.nombre,
+      metricName: nombreDeMetrica,
       statistic: definicion.estadistica ?? "Sum",
       period: Duration.minutes(15),
     });

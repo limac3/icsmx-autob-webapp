@@ -4362,3 +4362,127 @@ rellenarlo o aceptar la perdida por escrito.
 
 Y en general: **descartar un item leido es una decision, y toda decision que borra algo de la vista
 del usuario deja rastro.** El filtro que no registra nada no es prudente, es mudo.
+
+---
+
+## 79) El renombrado de alarmas del 09-11 nunca se desplego, y nadie lo noto
+
+### Problema
+`npx ampx sandbox` debia desplegar en verde. En vez de eso, cada corrida termina con
+`[ERROR] DeployStackFailed` en la pila de alarmas y sigue igual: `[Sandbox] Watching for file
+changes...` y el codigo del Lambda se actualiza. El sandbox sigue funcionando, asi que nadie habia
+mirado el error.
+
+### Sintoma
+```
+NotUpdatableException: Invalid patch update: createOnlyProperties [/properties/AlarmName]
+cannot be updated
+```
+Consultando la cuenta real (`aws cloudwatch describe-alarms`), las seis alarmas del sandbox seguian
+con el nombre `Alarmas-*` — el prefijo `this.node.id` de antes del commit `bf9f79b` (2026-09-11),
+no el prefijo por identidad de backend que ese commit introdujo.
+
+### Causa raiz
+`bf9f79b` cambio el **valor** de `alarmName` de `${this.node.id}-...` a
+`${prefijoDeNombres}-...` para resolver colisiones de nombre entre pilas (seccion 68), pero dejo
+intactos los **ids logicos** de las seis construcciones `Alarm` (`"BarridoSinEjecutar"`, etc.).
+`AlarmName` es `createOnlyProperty` en CloudFormation: cambiar su valor sin cambiar el id logico es
+pedirle a CloudFormation que renombre un recurso existente por actualizacion, y eso no lo permite
+—solo por reemplazo, que exige un id logico distinto—. Cada deploy desde el 09-11 fallo por esto,
+y `ampx sandbox` lo enmascara: al fallar la pila completa cae en *hotswap* para el Lambda, que no
+pasa por esta validacion.
+
+Ninguna prueba de sintesis lo detecta, por la misma razon que la seccion 68 senalo para el caso
+anterior: lo que colisiona es el **estado de la cuenta** —el nombre que ya tiene la alarma
+desplegada—, y eso no esta en la plantilla que `Template.fromStack` sintetiza.
+
+### Solucion aplicada
+Sufijo `V2` en los seis ids logicos (`"BarridoSinEjecutarV2"`, etc.). Fuerza a CloudFormation a
+crear las seis alarmas nuevas con el nombre correcto y borrar las seis viejas `Alarmas-*` —el
+`RemovalPolicy` por omision de `Alarm` ya es borrar el recurso que sale de la plantilla, asi que no
+hizo falta declarar nada—. Ningun cambio de comportamiento: mismas condiciones, mismas metricas,
+mismo tema de SNS.
+
+### Regla para futuro
+**Cambiar el valor de una propiedad `createOnly` sin cambiar el id logico de la construccion no es
+una alternativa mas lenta: es un despliegue que va a fallar siempre**, en todo entorno donde el
+recurso ya exista. La correccion tiene que tocar las dos cosas a la vez, o ninguna prueba de
+sintesis lo va a distinguir de un cambio valido — hace falta consultar la cuenta real, como aqui.
+Y una alarma sobre "el deploy fallo" habria detectado esto en minutos en vez de en seis dias:
+`ampx sandbox` no tiene una, y el hotswap silencioso es exactamente el motivo.
+
+---
+
+## 80) El sandbox personal disparo una alarma de produccion
+
+### Problema
+Arreglada la seccion 79, `npx ampx sandbox` desplegaba en verde. Dos minutos despues llego un
+correo real: `d2i0gloex3vqjp-main-branch-correos-fallidos` paso de `OK` a `ALARM` — la alarma de
+`main-branch`, **una rama de Amplify Hosting en etapa PRODUCTION** (`icsmx-autob-webapp`, creada
+2026-09-10) de la que este documento no tenia registro.
+
+### Sintoma
+El motivo del cambio de estado citaba un datapoint real: `1.0 (17/09/26 14:11:00)`. Revisando los
+logs de **esa** rama, su propio outbox llevaba horas en `fallidosPermanentes: 0` — ningun correo
+real habia fallado ahi. El barrido del **sandbox personal**, en cambio, si habia registrado
+`fallidosPermanentes: 1` a las 14:25:06 UTC (`desenlace: "rechazado"`, CES sin aprobar en el
+sandbox, R17) — dentro del mismo bucket de 15 minutos que cita la alarma de la rama.
+
+### Causa raiz
+Las tres alarmas que se calculan por filtro de log (`vencimientos-sin-resolver`,
+`outbox-retrasado`, `correos-fallidos`) publican su metrica bajo `ESPACIO_DE_NOMBRES = "autob"` y
+un `metricName` fijo, **sin ninguna dimension que distinga el entorno**. CloudWatch no aisla
+metricas personalizadas por pila ni por cuenta de despliegue — solo por namespace, nombre y
+dimensiones. Sandbox y rama comparten los tres, asi que en realidad **leen y escriben la misma
+serie**: el barrido de cualquiera de los dos entornos mueve la alarma del otro.
+
+Es la misma clase de defecto que la seccion 68 encontro en los nombres de alarma —y que la
+seccion 79 acabo de exponer de nuevo por no haber cambiado el id logico a la vez—, un nivel mas
+abajo: ahi colisionaba el **nombre** del recurso; aqui colisiona el **contenido** de la metrica
+que ese recurso lee. Las otras tres alarmas (`barrido-sin-ejecutar`, `barrido-con-errores`,
+`contencion-de-transacciones`) no lo tienen: usan metricas nativas de Lambda y DynamoDB, ya
+dimensionadas por el recurso especifico de cada entorno (`FunctionName`, `TableName`).
+
+Ninguna prueba de sintesis podia haberlo visto, por la misma razon que las secciones 68 y 79:
+lo que colisiona es el **estado de la cuenta** —que otro entorno con el mismo namespace ya este
+publicando datos—, y `Template.fromStack` sintetiza una pila a la vez.
+
+### Primer intento, rechazado por la API
+La forma mas idiomatica de aislar una metrica por entorno es una **dimension** de CloudWatch, y
+fue lo primero que se desplego: `AUTOB_ENTORNO` inyectada al Lambda, `registro.ts` escribiendola
+como campo `entorno` en cada linea, y `MetricFilter` extrayendola como dimension `Entorno` desde
+`$.message.entorno`. Sintetizaba, pasaba `backend.test.ts` y fallaba **desplegando contra AWS
+real**, en los tres filtros a la vez:
+
+```
+Invalid metric transformation: dimensions and default value are
+mutually exclusive properties (Service: CloudWatchLogs, Status Code: 400)
+```
+
+CloudWatch Logs no permite combinar `Dimensions` con `DefaultValue` en la misma
+`MetricTransformation`, y ni el tipo de `aws-cdk-lib` ni `Template.fromStack` lo advierten: es una
+regla de la API, no del esquema de CloudFormation, asi que solo aparece en un deploy de verdad —
+la misma clase de limite que las secciones 68 y 79 ya habian encontrado por el mismo camino.
+Perder `defaultValue: 0` no era aceptable: es lo que evita que la serie oscile entre `OK` e
+`INSUFFICIENT_DATA` cuando el patron no coincide, y con estas tres alarmas eso es *la mayoria del
+tiempo*.
+
+### Solucion aplicada
+El mismo truco que ya separaba los nombres de alarma (`prefijoDeNombres`), aplicado al **nombre de
+la metrica** en vez de a una dimension: `AlarmasAutob.filtro()` arma
+`` `${opciones.prefijoDeNombres}-${definicion.nombre}` `` una sola vez y lo usa como `metricName`
+tanto en el `MetricFilter` como en la `Metric` que lee la alarma. Sin dimension, `defaultValue: 0`
+convive sin problema. No hizo falta tocar `registro.ts` ni pasarle nada nuevo al Lambda: la
+particion ocurre enteramente en sintesis, con un valor que CDK ya conocia.
+
+### Regla para futuro
+**Una metrica personalizada sin nombre por entorno es tan global como un nombre de alarma sin
+prefijo de entorno — el mismo defecto de la seccion 68, en otro recurso.** Cualquier alarma nueva
+que se calcule por filtro de log necesita la misma particion desde el dia uno; cualquiera que use
+metrica nativa (Lambda, DynamoDB, y en general cualquier servicio de AWS) ya viene aislada por el
+ARN o el nombre del recurso y no la necesita. La pregunta a hacerse antes de agregar una: *si dos
+entornos con el mismo codigo corren en la misma cuenta, ¿su actividad se puede confundir?* — para
+una metrica nativa la respuesta ya es no; para una derivada de logs, sin partirla por entorno, es
+siempre si. Y cuando la particion se resuelve, **preferir el nombre de la metrica sobre una
+dimension** si `defaultValue` esta en juego: la combinacion con `dimensions` no es un error de
+CloudFormation, es la API rechazandola, y solo se ve en un deploy real.
