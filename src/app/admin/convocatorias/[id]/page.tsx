@@ -206,6 +206,9 @@ const DetalleDeConvocatoria = async ({
           inicioVenta: enCampos(convocatoria.inicioVenta),
           finVenta: enCampos(convocatoria.finVenta),
           horasLiquidacion: convocatoria.horasLiquidacion,
+          modalidadAdjudicacion: convocatoria.modalidadAdjudicacion,
+          limiteAdjudicaciones: convocatoria.limiteAdjudicaciones,
+          limiteSolicitudes: convocatoria.limiteSolicitudes,
         }}
       />
 

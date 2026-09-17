@@ -4363,6 +4363,21 @@ rellenarlo o aceptar la perdida por escrito.
 Y en general: **descartar un item leido es una decision, y toda decision que borra algo de la vista
 del usuario deja rastro.** El filtro que no registra nada no es prudente, es mudo.
 
+### Addendum (2026-09-17) — el mismo defecto, en `main-branch`
+La migracion de datos de esta seccion solo se aplico contra el **sandbox**. El deploy a produccion
+de las Etapas 14 y 15 (seccion 82) puso el mismo codigo a leer la tabla de `main-branch`, que tenia
+sus propias convocatorias creadas antes de esos tres campos — cuatro, no tres, y con dos vehiculos
+anclados a lotes de las mismas dos convocatorias invisibles. Se detecto por el reporte de un
+administrador ("veo vehiculos en convocatoria y ninguna convocatoria"), y se confirmo leyendo la
+misma traza de `listarConvocatorias` que esta seccion agrego, ahora en el grupo de logs de Amplify
+Hosting (`/aws/amplify/<app-id>`, no en `AutobAlarmas`). Mismo relleno, mismos valores (`1`, `3`,
+`AUTOMATICA`), misma condicion `attribute_not_exists`, sobre la tabla de `main-branch`.
+
+**La regla para futuro se sostiene y se afina:** una migracion de datos aplicada solo a un entorno
+no esta terminada. Cada entorno con su propia tabla —sandbox y cada rama— necesita su propio
+relleno, y el primero en desplegar el codigo nuevo contra datos viejos es el primero en manifestar
+el sintoma, sin que eso diga nada sobre los demas.
+
 ---
 
 ## 79) El renombrado de alarmas del 09-11 nunca se desplego, y nadie lo noto
@@ -4688,3 +4703,41 @@ el conflicto vive en el registro de la pila, no en el proveedor. La salida
 limpia es un nombre intermedio que nunca haya existido, para que el borrado del
 id viejo se complete como parte normal de un `UPDATE_COMPLETE`, y solo despues
 volver al nombre definitivo en un segundo despliegue.
+
+---
+
+## 83) La pantalla de edicion mostraba "Automatica" sin importar el registro
+
+### Problema
+Un administrador reporto: en `/admin/convocatorias/[id]`, el campo "Como se decide al ganador"
+siempre mostraba "Automatica", sin importar la modalidad real de la convocatoria. Al cambiarlo a
+"Manual" y guardar, la pantalla volvia a mostrar "Automatica" — pero al volver al listado, este si
+traia "Manual". Es decir: **se guardaba bien y se mostraba mal.**
+
+### Causa raiz
+`src/app/admin/convocatorias/[id]/page.tsx` construye el `valores` que le pasa a
+`FormularioConvocatoria` a mano, campo por campo, y nunca se le agregaron
+`modalidadAdjudicacion`, `limiteAdjudicaciones` ni `limiteSolicitudes` cuando las Etapas 14 y 15 los
+introdujeron. El componente ya sabia leerlos —`valores.modalidadAdjudicacion ?? MODALIDADES_ADJUDICACION[0]`—,
+asi que con el campo ausente siempre caia al primero de la lista (`AUTOMATICA`) y a los valores por
+omision (`1`, `3`). El defecto **no se nota en `limiteAdjudicaciones`/`limiteSolicitudes`** porque
+sus valores por omision coinciden con los que casi toda convocatoria tiene; con la modalidad, el
+50% de los casos (`MANUAL`) lo delata de inmediato.
+
+Nada en `FormularioConvocatoria.test.tsx` lo cubria: la `VALORES` compartida de la suite tampoco
+llevaba estos tres campos, asi que ninguna prueba ejercia la rama en la que si estan presentes.
+
+### Solucion aplicada
+Los tres campos, agregados al `valores` de la pagina de edicion, leidos directamente de
+`convocatoria` (que `obtenerConvocatoria` ya devuelve completo). Y un caso nuevo en
+`FormularioConvocatoria.test.tsx` — `valores iniciales del registro` — que renderiza con
+`modalidadAdjudicacion: "MANUAL"` y cupos distintos de los valores por omision, y comprueba que el
+marcado los refleja.
+
+### Regla para futuro
+**Un campo obligatorio nuevo en el tipo de dominio tiene que propagarse hasta el ultimo lugar que
+arma el `valores` de un formulario de edicion, y ningun compilador lo va a recordar** si ese lugar
+construye el objeto campo por campo en vez de pasar la entidad completa: `convocatoria.tipo` al
+lado de un `modalidadAdjudicacion` que falta compila igual. Y cuando el valor por omision del
+formulario coincide con el dato mas comun, la ausencia del campo se disfraza de exito — hace falta
+un caso de prueba con un valor **distinto** al por omision para que el hueco se note.

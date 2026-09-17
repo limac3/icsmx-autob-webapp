@@ -41,6 +41,47 @@ genericTests(context, FormularioConvocatoria, {
   valores: VALORES,
 });
 
+describe("valores iniciales del registro", () => {
+  const control = (nombre: string) =>
+    context.container.querySelector<HTMLInputElement>(`[name="${nombre}"]`)!;
+
+  it("muestra la modalidad y los cupos que trae la convocatoria, no el valor por omision", async () => {
+    // El hueco por el que paso el defecto: la pantalla de edicion nunca
+    // pasaba `modalidadAdjudicacion`, `limiteAdjudicaciones` ni
+    // `limiteSolicitudes` en su `valores` (src/app/admin/convocatorias/[id]/
+    // page.tsx), asi que el formulario siempre caia a su valor por omision
+    // — AUTOMATICA, 1 y 3 — sin importar lo que tuviera el registro. Guardar
+    // funcionaba, porque el `FormData` no depende de esto; solo la pantalla
+    // mentia sobre lo que habia.
+    await act(async () => {
+      context.root.render(
+        <FormularioConvocatoria
+          diccionario={diccionario}
+          valores={{
+            ...VALORES,
+            modalidadAdjudicacion: "MANUAL",
+            limiteAdjudicaciones: 5,
+            limiteSolicitudes: 7,
+          }}
+        />,
+      );
+    });
+
+    expect(
+      context.container.querySelector<HTMLInputElement>(
+        '[name="modalidadAdjudicacion"][value="MANUAL"]',
+      )!.checked,
+    ).toBe(true);
+    expect(
+      context.container.querySelector<HTMLInputElement>(
+        '[name="modalidadAdjudicacion"][value="AUTOMATICA"]',
+      )!.checked,
+    ).toBe(false);
+    expect(control("limiteAdjudicaciones").value).toBe("5");
+    expect(control("limiteSolicitudes").value).toBe("7");
+  });
+});
+
 describe("errores que devuelve el servidor", () => {
   const control = (nombre: string) =>
     context.container.querySelector<HTMLInputElement>(`[name="${nombre}"]`)!;
