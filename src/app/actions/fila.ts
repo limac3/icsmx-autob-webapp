@@ -67,7 +67,27 @@ const conLote = async (
   const sesion = await getSession();
   if (!sesion) return fallo("unauthorized");
 
-  const lectura = await obtenerConvocatoria(entrada.convocatoriaId);
+  // **Las dos lecturas son independientes y van en paralelo.** `leerMiSolicitud`
+  // solo necesita `loteId` y el `participanteId` de la sesion, los dos conocidos
+  // antes de leer la convocatoria, asi que encadenarlas solo sumaba una ida y
+  // vuelta a la cadena que percibe el participante.
+  //
+  // **El orden de las comprobaciones se conserva**, y eso es lo que importa: lo
+  // unico que cambia es cuando se emiten las lecturas, no como se decide. Una
+  // convocatoria ausente sigue respondiendo `not_found` antes de mirar la
+  // solicitud propia, asi que ningun codigo de error se mueve.
+  //
+  // El costo es una lectura desperdiciada cuando la convocatoria no existe o el
+  // lote no esta en ella. Es aceptable por lo mismo que en `solicitarCompra`:
+  // son lecturas idempotentes y sin efecto.
+  const [lectura, miSolicitud] = await Promise.all([
+    obtenerConvocatoria(entrada.convocatoriaId),
+    leerMiSolicitud({
+      loteId: entrada.loteId,
+      participanteId: sesion.participanteId,
+    }),
+  ]);
+
   if (!lectura.ok) return fallo("not_found");
 
   const convocatoria = lectura.data;
@@ -79,10 +99,6 @@ const conLote = async (
   const finVenta = desdeIso(convocatoria.finVenta);
   if (!publicadaEn || !inicioVenta || !finVenta) return fallo("not_found");
 
-  const miSolicitud = await leerMiSolicitud({
-    loteId: entrada.loteId,
-    participanteId: sesion.participanteId,
-  });
   if (!miSolicitud.ok) return miSolicitud;
 
   const ahora = new Date();
@@ -202,14 +218,32 @@ export const solicitarCompra = async (entrada: {
     return fallo("limite_de_tasa");
   }
 
+  // Informativo para la bitacora: cuanta fila habia cuando entro. No decide
+  // nada, asi que ni su ida y vuelta tiene por que ocupar un nivel propio de la
+  // cadena, ni su fallo puede impedir la solicitud.
+  //
+  // Se lanza **antes de la guarda** para que se solape con sus lecturas, y
+  // **despues** del limitador de tasa, que es lo que conserva la propiedad de
+  // la Etapa 16: un intento estrangulado no cuesta ni una lectura. En la ruta
+  // donde la guarda rechaza se desperdicia este conteo, y es aceptable — es una
+  // lectura idempotente, al contrario de los contadores de `solicitarCompra`,
+  // que no se pueden deshacer.
+  //
+  // El `catch` no es decorativo. `consultarTamanoFila` no atrapa, y una promesa
+  // en vuelo que rechace sin observador tumba el proceso en Node. Ademas hace
+  // verdad el comentario de arriba: con el `await` directo que habia antes, un
+  // fallo al contar **si** impedia la solicitud — el patron de la seccion 41,
+  // donde el comentario que declara tolerancia no la hacia cierta.
+  const tamanoEnVuelo = consultarTamanoFila(entrada.loteId).catch(() =>
+    fallo<number>("dependencia_no_disponible"),
+  );
+
   const contexto = await conLote("solicitud:crear", entrada);
   if (!contexto.ok) return contexto;
 
   const { lote, participanteId, correo, actor } = contexto.data;
 
-  // Informativo para la bitacora: cuanta fila habia cuando entro. No decide
-  // nada, asi que un fallo al contarlo no puede impedir la solicitud.
-  const tamano = await consultarTamanoFila(lote.loteId);
+  const tamano = await tamanoEnVuelo;
 
   const resultado = await solicitarServicio({
     lote,

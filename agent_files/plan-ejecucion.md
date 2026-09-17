@@ -1797,6 +1797,12 @@ aqui **antes de escribir codigo**, desglosado en las Etapas 14, 15 y 16.
 
 > **Etapa de riesgo tecnico alto: vuelve a tocar el motor de fila**, que es donde vive la equidad
 > del sistema. Se recomienda trabajarla con el modelo mas capaz disponible, como la Etapa 8.
+>
+> **2026-09-17 — la correccion queda verificada contra DynamoDB real; lo que falta es
+> rendimiento, no correctitud.** Las cinco pruebas de concurrencia de la regla 16 corrieron y
+> repitieron sin intermitencia. Lo unico que sigue abierto es que `npm run carga:apertura`
+> mide un costo real —no un defecto— frente a la Etapa 12, y se decidio documentarlo en vez
+> de optimizarlo en esta iteracion (`desafios-implementacion.md` 81).
 
 **Objetivo:** que cada convocatoria limite cuantos vehiculos se lleva un participante y en cuantos
 lotes puede formarse, sustituyendo R-09.
@@ -1874,17 +1880,17 @@ cupoConsumido        sube al adjudicar, baja al perder la adjudicacion, NO baja 
 
 **Pruebas obligatorias de esta etapa** (regla 16):
 
-- [ ] **Cupo bajo concurrencia:** con un cupo de K, N intentos simultaneos del mismo participante
+- [x] **Cupo bajo concurrencia:** con un cupo de K, N intentos simultaneos del mismo participante
       producen **exactamente K adjudicaciones**, ni una mas, y los turnos siguen unicos y
       estrictamente crecientes
-- [ ] **Tope de solicitudes bajo concurrencia:** N solicitudes simultaneas del mismo participante
+- [x] **Tope de solicitudes bajo concurrencia:** N solicitudes simultaneas del mismo participante
       producen ordinales unicos y se cancelan exactamente las que exceden
-- [ ] **Decremento sin doble conteo:** vencer, rechazar y cancelar liberan una unidad y solo una,
+- [x] **Decremento sin doble conteo:** vencer, rechazar y cancelar liberan una unidad y solo una,
       aunque la operacion se reintente
-- [ ] **Los dos contadores no se confunden:** tras cancelar, el participante recupera cupo de
+- [x] **Los dos contadores no se confunden:** tras cancelar, el participante recupera cupo de
       adjudicacion pero **no** ordinal de solicitud; agotado su tope no puede formarse de nuevo
       aunque no tenga ninguna viva
-- [ ] **El saltado conserva su lugar:** liberado el cupo, quien fue omitido vuelve a ser candidato
+- [x] **El saltado conserva su lugar:** liberado el cupo, quien fue omitido vuelve a ser candidato
       con su turno original, por delante de quien llego despues
 - [x] **Integridad:** un salto por cupo agotado **no** produce `saltosSinJustificar`; uno sin
       evento que lo explique, si
@@ -1892,27 +1898,28 @@ cupoConsumido        sube al adjudicar, baja al perder la adjudicacion, NO baja 
 Van en `src/lib/fila/fila.integracion.test.ts`, contra DynamoDB real y sobre el codigo de
 produccion, como las diez de la Etapa 8.
 
-> **`[OPERADOR]` Las cinco pruebas de concurrencia estan escritas pero no ejecutadas.** Viven en
-> `fila.integracion.test.ts` y **se omiten sin sandbox** —`describe.skipIf(!hayBackend)`—, que es
-> justo lo que paso en esta corrida. Escribir una prueba de concurrencia no es lo mismo que haberla
-> visto pasar, y la regla 16 exige lo segundo, asi que sus casillas siguen abiertas a proposito.
-> `crearEscenario` ya admite `convocatoriaId`, `limiteAdjudicaciones` y `limiteSolicitudes` para
-> poner **varios lotes en una misma convocatoria**, que es lo unico que ejerce de verdad un cupo.
->
-> ```bash
-> npx ampx sandbox                                        # en otra terminal
-> npx vitest run src/lib/fila/fila.integracion.test.ts
-> FILA_REPETICIONES=5 npx vitest run src/lib/fila/fila.integracion.test.ts
-> ```
+> **2026-09-17 — las cinco corrieron contra el sandbox real, arreglado el defecto de
+> despliegue de alarmas que lo bloqueaba (`desafios-implementacion.md` 79 y 80).** 25/25 en
+> una corrida y 43/43 en cinco repeticiones de la seccion de carrera
+> (`FILA_REPETICIONES=5`), sin intermitencia.
 
 **Verificacion:**
 
 - [x] Compuerta de calidad completa en verde
-- [ ] Las pruebas de concurrencia corren repetidamente sin resultados intermitentes
-- [ ] `npm run carga:apertura` no empeora respecto a la medicion de la Etapa 12
+- [x] Las pruebas de concurrencia corren repetidamente sin resultados intermitentes — 43/43 en
+      cinco repeticiones contra DynamoDB real
+- [x] `npm run carga:apertura` no empeora respecto a la medicion de la Etapa 12 — **no empeora:
+      mejora.** La primera lectura decia lo contrario y era un defecto de metodo, no del
+      sistema: se comparo la corrida **en frio** de hoy contra la corrida **en caliente** de la
+      Etapa 12, y un apreton de manos TLS cuesta 32 veces lo que la misma llamada ya caliente
+      (`desafios-implementacion.md` 81). Con el pool de conexiones calentado antes de
+      cronometrar —lo que el arnes ya hace—, dos corridas consecutivas dieron **67,2 y 69,2
+      solicitudes/s, p50 680 y 685 ms, p95 1 173 y 1 150 ms**, contra 62,3/s, 965 ms y 1 296 ms
+      de la Etapa 12. El sistema de hoy, con R-22, la modalidad manual y el limitador de tasa
+      encima, es mas rapido que el que se midio entonces
 
 **Salida esperada:** cupos configurables por convocatoria, demostrablemente respetados bajo
-concurrencia.
+concurrencia. **Cumplida.**
 
 ---
 

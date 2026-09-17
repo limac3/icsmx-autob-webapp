@@ -4486,3 +4486,124 @@ una metrica nativa la respuesta ya es no; para una derivada de logs, sin partirl
 siempre si. Y cuando la particion se resuelve, **preferir el nombre de la metrica sobre una
 dimension** si `defaultValue` esta en juego: la combinacion con `dimensions` no es un error de
 CloudFormation, es la API rechazandola, y solo se ve en un deploy real.
+
+---
+
+## 81) La regresion de latencia que no existia: se comparo frio contra caliente
+
+### Problema
+Con el defecto de despliegue de alarmas resuelto (secciones 79 y 80), `npm run carga:apertura`
+por fin podia correr contra un sandbox limpio para cerrar el ultimo pendiente de verificacion de
+la Etapa 14: que no empeorara respecto a la medicion de la Etapa 12.
+
+### Sintoma
+Parecia haber empeorado, y de forma reproducible. Tres corridas consecutivas dieron **~22-24
+solicitudes/s y p95 ~4 s**, contra **62 solicitudes/s y p95 1,3 s** de la Etapa 12. La correccion
+no se movio un milimetro: 100/100 aceptadas, 0 rechazadas, exactamente 10 adjudicadas, las tres
+veces. Como la Etapa 14 habia agregado un round-trip a `solicitarCompra`
+(`pedirOrdenEnConvocatoria`, el `ADD solicitudesCreadas` de R-22), la primera version de esta
+seccion se lo atribuyo.
+
+**Era falso, y la aritmetica ya lo delataba:** pasar de tres llamadas en cadena a cuatro predice
+un 33% mas, no un 250%.
+
+### Causa raiz
+**Se comparo la corrida en frio de hoy contra la corrida en caliente de la Etapa 12.**
+
+El costo de abrir una conexion a traves de la inspeccion TLS corporativa (R11) domina cualquier
+otra cosa. Medido desde esta maquina con cincuenta peticiones en paralelo:
+
+| Ola | p50 | p95 | total |
+| --- | --- | --- | --- |
+| 1 — conexiones nuevas | 2 660 ms | 2 902 ms | 2 939 ms |
+| 2 — mismo pool, caliente | 83 ms | 95 ms | 97 ms |
+| 3 — mismo pool, caliente | 75 ms | 79 ms | 81 ms |
+
+**Factor 32.** Y secuencialmente, la primera llamada de un proceso costo 2 483 ms contra 61 ms de
+mediana las siguientes.
+
+La medicion "en caliente" de la Etapa 12 fue la **segunda corrida dentro del mismo proceso** —el
+propio arnes lo decia: "la segunda reusa el agente HTTPS del proceso"—. Pero
+`npm run carga:apertura` arranca un proceso nuevo cada vez, asi que **toda corrida suelta es una
+corrida en frio** y paga ~100 apretones de manos. Comparada con la corrida en frio de la Etapa 12,
+que es su par legitimo, la de hoy es entre tres y cuatro veces **mejor**:
+
+| | Etapa 12 (frio) | Hoy (frio) |
+| --- | --- | --- |
+| solicitudes/s | 6,4 | 24 |
+| p95 | 15 525 ms | ~4 000 ms |
+| duracion total | ~15,6 s | ~4,1 s |
+
+Descartadas de paso las otras dos explicaciones posibles: `ThrottledRequests`,
+`WriteThrottleEvents` y `ReadThrottleEvents` en cero durante toda la ventana, con la tabla en
+`PAY_PER_REQUEST`; y el informe reporta **cero reintentos** del SDK, asi que no habia latencia
+escondida en la red de reintentos.
+
+### Solucion aplicada
+`calentarPool` en `carga.integracion.test.ts`: antes de cronometrar, abre tantas conexiones como
+solicitudes va a lanzar el pico, leyendo el item de la convocatoria que ya existe. El costo de
+abrirlas se cronometra aparte y se publica como `calentamientoMs`, asi que sigue siendo un dato
+visible del entorno pero deja de contaminar la latencia del sistema.
+
+Con eso, dos corridas consecutivas —procesos distintos— quedan a menos del 1% una de otra, y
+**por encima de la linea base de la Etapa 12**:
+
+| | Etapa 12 (caliente) | Hoy, corrida 1 | Hoy, corrida 2 |
+| --- | --- | --- | --- |
+| solicitudes/s | 62,3 | **67,2** | **69,2** |
+| p50 | 965 ms | **680 ms** | **685 ms** |
+| p95 | 1 296 ms | **1 173 ms** | **1 150 ms** |
+
+Es decir: el sistema de hoy —con el round-trip de R-22, la modalidad manual de la Etapa 15 y el
+limitador de tasa de la Etapa 16 encima— es **mas rapido** que el que se midio en la Etapa 12.
+Nunca hubo regresion.
+
+El informe publica ademas **el conteo de llamadas a AWS**, que es la metrica que si se puede
+comparar entre etapas: 699 y 696 llamadas para 100 solicitudes en las dos corridas, **6,99 y 6,96
+por solicitud**, con el mismo reparto por comando. El `ADD` del ordinal son exactamente 100 de
+esas ~699: **el 14% de las llamadas, no el 33% que la atribucion original suponia.**
+
+### Lo que si cuesta R-22, y por que se queda
+El round-trip es real: ~61-83 ms por solicitud en esta maquina, ~5-10 ms en region. Quitarlo
+exige tensionar una regla escrita, y las cuatro rutas se evaluaron:
+
+- **Paralelizarlo con compensacion `ADD :-1`** reintroduce ordinales **duplicados y ya
+  persistidos**: A toma 5, B toma 6 y escribe su solicitud, A falla y decrementa a 5, C vuelve a
+  tomar 6. Rompe la unicidad que afirma `fila.integracion.test.ts` y deja sin orden definido la
+  pantalla del adjudicador.
+- **Meter el `ADD` en la transaccion del paso 2** convierte el tope en una condicion, y entonces
+  el exceso se manifiesta como `TransactionConflict`: turno quemado y **sin constancia**, justo en
+  el escenario que R-22 existe para acotar.
+- **Un contador `ordinalesQuemados`** conserva unicidad y orden, pero rompe "el n-esimo intento
+  lleva `n`" en el numero que se le muestra al adjudicador.
+- **No esperar `adjudicarLote`** es el recorte mas grande —dos o tres llamadas— pero rompe la
+  promesa de `api-contracts.md` 4.2: quien encabeza la fila recibe su lugar ya `ADJUDICADA` sin
+  esperar a ningun proceso de fondo. Es un cambio de producto, no una optimizacion.
+
+**El argumento que decide es una asimetria.** `liberarReserva` puede permitirse ser de mejor
+esfuerzo porque su fallo cuesta **espera**; una compensacion de ordinal perdida cuesta **una
+participacion para siempre**. Por eso lo que vale para la reserva no vale para el ordinal, y por
+eso el orden actual —el ordinal despues de `pedirTurno`— es el correcto.
+
+Lo que si se recorto, porque ahi no hay ninguna regla de negocio de por medio, son dos idas y
+vueltas de la Server Action: `obtenerConvocatoria` y `leerMiSolicitud` ahora van en paralelo —son
+independientes, y el orden de las comprobaciones se conserva para que ningun codigo de error se
+mueva—, y `consultarTamanoFila` se lanza antes de la guarda y se espera despues. Son lecturas
+idempotentes; el costo aceptado es desperdiciar una cuando la guarda rechaza. **Y de paso arreglo
+un patron de la seccion 41**: ese conteo declaraba en su comentario que su fallo no podia impedir
+la solicitud, pero se esperaba con `await` directo sobre una funcion que **lanza**, asi que un
+fallo al contar si la impedia. Ahora lleva su `catch`, que es lo que hace cierto el comentario.
+
+### Regla para futuro
+**Desde esta maquina se comparan conteos de llamadas, no milisegundos.** Los milisegundos
+dependen de si el pool estaba caliente, y esa sola variable mueve el resultado por un factor de
+treinta; el numero de llamadas es determinista y delata igual de bien si una etapa agrego trabajo
+a la ruta critica. Ninguna comparacion de latencia vale sin declarar el estado del pool — y por
+eso el informe ahora lo publica.
+
+Es la seccion 42 llevada a su conclusion operativa. Aquella establecio que "un solo numero de
+latencia no es una medida: hay que correr la prueba dos veces y comparar", y aun asi la trampa
+volvio a funcionar, porque las dos corridas que se compararon estaban separadas por tres dias y
+por un proceso distinto. **La leccion mas general: cuando una medicion nueva contradice a una
+vieja, sospechar primero del metodo y no del codigo** — sobre todo si la aritmetica del cambio no
+alcanza para explicar la diferencia.

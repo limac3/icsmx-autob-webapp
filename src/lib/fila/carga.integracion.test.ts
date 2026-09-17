@@ -8,6 +8,7 @@ import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import {
   DeleteCommand,
   DynamoDBDocumentClient,
+  GetCommand,
   PutCommand,
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
@@ -99,15 +100,18 @@ const HORAS_LIQUIDACION = 48;
  * La segunda reusa el agente HTTPS del proceso y mide algo mucho mas cercano a
  * la aplicacion.
  *
- * Asi que treinta segundos: holgado para que la corrida en frio pase, suficiente
- * para detectar una degradacion catastrofica. El p95 que se lleva a la revision
- * de capacidad se mide desde el entorno desplegado, y es lo que el informe
- * imprime.
+ * **Desde que `calentarPool` abre las conexiones antes de cronometrar, la red
+ * ya no es el limite y el techo puede ser un detector de verdad.** Aquellos
+ * treinta segundos existian para que la corrida en frio pasara; con el pool
+ * caliente, dos corridas consecutivas dieron p95 de 1 173 y 1 150 ms. Cinco
+ * segundos deja mas de cuatro veces de holgura —suficiente para una maquina o
+ * una red peores que estas— y al mismo tiempo detecta una degradacion real, que
+ * un techo de treinta segundos jamas habria visto.
  *
- * Ajustable con `CARGA_TECHO_P95_MS` para apretarlo donde la red no sea el
- * limite.
+ * Sigue ajustable con `CARGA_TECHO_P95_MS` para quien corra desde una red donde
+ * ni el calentamiento alcance.
  */
-const TECHO_P95_MS = Number(process.env.CARGA_TECHO_P95_MS ?? "30000");
+const TECHO_P95_MS = Number(process.env.CARGA_TECHO_P95_MS ?? "5000");
 
 const CORRIDA = randomUUID().slice(0, 8);
 
@@ -154,6 +158,19 @@ describe.skipIf(!hayBackend || !seSolicito)(
     let lotes: Lote[];
     let mediciones: Medicion[];
     let duracionTotalMs: number;
+    let calentamientoMs: number;
+
+    /**
+     * Toda llamada a AWS que hicieron `solicitarCompra` y `adjudicarLote`.
+     *
+     * **Es la metrica que si se puede comparar entre etapas.** Los milisegundos
+     * medidos desde esta maquina no sirven para eso: dependen de si el pool de
+     * conexiones estaba caliente, y esa sola variable mueve el resultado por un
+     * factor de treinta (ver `calentarPool`). El **numero de llamadas**, en
+     * cambio, es determinista: si una etapa agrega trabajo a la ruta critica, se
+     * ve aqui y no en el reloj.
+     */
+    const llamadas: { comando: string; ms: number; intentos: number }[] = [];
 
     beforeAll(async () => {
       vi.stubEnv("AUTOB_TABLE_NAME", salidas!.tabla!);
@@ -215,9 +232,37 @@ describe.skipIf(!hayBackend || !seSolicito)(
         },
         unmarshallOptions: { wrapNumbers: false },
       });
+
+      // Cronometro de cada llamada, para poder contarlas. Se engancha al
+      // cliente que usa el codigo de produccion —`clienteDe(deps)` devuelve
+      // este mismo—, asi que captura tanto `solicitarCompra` como
+      // `adjudicarLote` sin que ninguno de los dos sepa que esta medido.
+      cliente.middlewareStack.add(
+        (siguiente, contexto) => async (args) => {
+          const inicio = performance.now();
+          const respuesta = await siguiente(args);
+          const metadatos = (
+            respuesta as { output?: { $metadata?: { attempts?: number } } }
+          ).output?.$metadata;
+          llamadas.push({
+            comando: contexto.commandName ?? "desconocido",
+            ms: Math.round(performance.now() - inicio),
+            intentos: metadatos?.attempts ?? 1,
+          });
+          return respuesta;
+        },
+        { step: "initialize", name: "cronometroDeLlamadas" },
+      );
+
       deps = { cliente };
 
       lotes = await crearConvocatoria();
+      calentamientoMs = await calentarPool();
+
+      // Las llamadas del montaje y del calentamiento no son parte de lo que se
+      // mide: el conteo que interesa es el del pico.
+      llamadas.length = 0;
+
       const inicio = performance.now();
       mediciones = await pico();
       duracionTotalMs = performance.now() - inicio;
@@ -255,6 +300,44 @@ describe.skipIf(!hayBackend || !seSolicito)(
     });
 
     /** Una convocatoria publicada con `LOTES` lotes abiertos a la vez. */
+    /**
+     * Abre el pool de conexiones **antes** de cronometrar, y devuelve lo que
+     * costo abrirlo.
+     *
+     * **Sin esto, esta prueba mide el proxy corporativo y no el sistema.** Cada
+     * solicitud del pico abre su propio socket, y con la inspeccion TLS de por
+     * medio (R11) el apreton de manos cuesta unas cuarenta veces mas que la
+     * llamada ya caliente. Medido desde esta maquina con cincuenta peticiones
+     * en paralelo: p50 de 2 660 ms con conexiones nuevas contra 83 ms
+     * reusandolas, y 75 ms en la ola siguiente.
+     *
+     * Eso es lo que hizo irreconciliables dos mediciones del mismo escenario:
+     * la de la Etapa 12 se tomo en la **segunda** corrida dentro del mismo
+     * proceso —con el agente HTTPS ya caliente— y cualquier corrida posterior
+     * de `npm run carga:apertura` arranca un proceso nuevo, asi que paga el
+     * costo integro. Comparar una con otra atribuyo al codigo una diferencia
+     * que era de la red (`desafios-implementacion.md` 81).
+     *
+     * Se calienta con lecturas del item de la convocatoria, que ya existe y que
+     * el rol SSR puede leer, una por socket que el pico va a necesitar. El
+     * costo se devuelve y se publica aparte en el informe: sigue siendo un dato
+     * util del entorno, pero deja de contaminar la latencia del sistema.
+     */
+    const calentarPool = async (): Promise<number> => {
+      const inicio = performance.now();
+      await Promise.all(
+        Array.from({ length: LOTES * PARTICIPANTES }, async () =>
+          cliente.send(
+            new GetCommand({
+              TableName: process.env.AUTOB_TABLE_NAME,
+              Key: clave.convocatoria(`carga-conv-${CORRIDA}`),
+            }),
+          ),
+        ),
+      );
+      return performance.now() - inicio;
+    };
+
     const crearConvocatoria = async (): Promise<Lote[]> => {
       const tabla = process.env.AUTOB_TABLE_NAME;
       const convocatoriaId = `carga-conv-${CORRIDA}`;
@@ -431,6 +514,14 @@ describe.skipIf(!hayBackend || !seSolicito)(
      * `modelo-datos-dynamodb.md`. Por eso se imprime siempre, tambien cuando
      * todo pasa.
      */
+    const conteoPorComando = (): Map<string, number> => {
+      const conteo = new Map<string, number>();
+      for (const llamada of llamadas) {
+        conteo.set(llamada.comando, (conteo.get(llamada.comando) ?? 0) + 1);
+      }
+      return conteo;
+    };
+
     const informe = (): void => {
       const latencias = mediciones.map((m) => m.ms);
       const porError = new Map<string, number>();
@@ -458,6 +549,22 @@ describe.skipIf(!hayBackend || !seSolicito)(
           p50: percentil(latencias, 50),
           p95: percentil(latencias, 95),
           maxima: Math.max(...latencias),
+        },
+        // El costo de abrir el pool, fuera de la latencia del sistema. Si este
+        // numero es alto y los de arriba bajos, el entorno esta caro y el
+        // sistema no — que es precisamente la distincion que no se podia hacer
+        // antes.
+        poolCalentado: true,
+        calentamientoMs: Math.round(calentamientoMs),
+        // Lo que se compara entre etapas, porque no depende de la red.
+        llamadasAws: {
+          total: llamadas.length,
+          porSolicitud:
+            Math.round((llamadas.length / mediciones.length) * 100) / 100,
+          porComando: Object.fromEntries(
+            [...conteoPorComando()].sort((a, b) => b[1] - a[1]),
+          ),
+          reintentos: llamadas.filter((l) => l.intentos > 1).length,
         },
       };
 

@@ -373,6 +373,44 @@ describe("solicitarCompra — resultado", () => {
     });
     expect(vi.mocked(updateTag)).not.toHaveBeenCalled();
   });
+
+  it("si contar la fila falla, la solicitud sigue adelante sin ese dato", async () => {
+    // El tamano de fila es informativo para la bitacora y no decide nada, asi
+    // que su fallo no puede impedir la solicitud. Conviene que lo diga una
+    // prueba: `consultarTamanoFila` **lanza** en lugar de devolver `Resultado`
+    // cuando DynamoDB falla, y mientras se esperaba con `await` directo ese
+    // throw si tumbaba la solicitud — el patron de la seccion 41, donde un
+    // comentario declaraba tolerancia que el codigo no tenia.
+    tamano.mockRejectedValue(new Error("DynamoDB no responde"));
+
+    const resultado = await acciones.solicitarCompra(entrada);
+
+    expect(resultado.ok).toBe(true);
+    expect(solicitar).toHaveBeenCalledTimes(1);
+    expect(solicitar.mock.calls[0]?.[0]).not.toHaveProperty(
+      "tamanoFilaAlMomento",
+    );
+  });
+
+  it("el conteo de fila se lanza en paralelo con la guarda, no despues", async () => {
+    // Es la unica forma de comprobar el solapamiento: si se encadenara, el
+    // conteo no podria haberse emitido antes de que resolviera la lectura de la
+    // convocatoria. Se ordena por el instante de la llamada, no por el de su
+    // respuesta.
+    const orden: string[] = [];
+    lectura.mockImplementation(async () => {
+      orden.push("convocatoria");
+      return { ok: true, data: convocatoria };
+    });
+    tamano.mockImplementation(async () => {
+      orden.push("tamano");
+      return { ok: true, data: 0 };
+    });
+
+    await acciones.solicitarCompra(entrada);
+
+    expect(orden[0]).toBe("tamano");
+  });
 });
 
 describe("cancelarSolicitud", () => {
