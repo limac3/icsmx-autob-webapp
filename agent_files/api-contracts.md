@@ -113,7 +113,7 @@ capturar se guardaria como cero kilometros, que es un dato falso y plausible.
 | `publicarConvocatoria` | `{ convocatoriaId }` | `{ estatus }` | `convocatoria:publicar` | `invalid_state` | `CONVOCATORIA_PUBLICADA` |
 | `ocultarConvocatoria` | `{ convocatoriaId, motivo }` | `{ estatus }` | `convocatoria:ocultar` | `invalid_state` | `CONVOCATORIA_OCULTA` |
 | `reactivarConvocatoria` | `{ convocatoriaId }` | `{ estatus }` | `convocatoria:reactivar` | `invalid_state` | `CONVOCATORIA_REACTIVADA` |
-| `concluirConvocatoria` | `{ convocatoriaId }` | `{ estatus, vendidos, noVendidos }` | `convocatoria:concluir` | `invalid_state` | `CONVOCATORIA_CONCLUIDA` |
+| `concluirConvocatoria` | `{ convocatoriaId }` | `{ estatus, vendidos, noVendidos, filasCerradas, comprometidos }` | `convocatoria:concluir` | `invalid_state` | `CONVOCATORIA_CONCLUIDA` |
 
 `DatosConvocatoria`: `folio`, `nombre`, `tipo` (`EMPLEADOS` \| `PUBLICO_GENERAL`),
 `descripcionParticipacion`, `publicadaEn`, `inicioVenta`, `finVenta`, `horasLiquidacion`.
@@ -143,7 +143,10 @@ blanca, mayusculas— y es **unico**: un repetido vuelve como `validation_failed
   teniendo ambos permisos**.
 - `ocultarConvocatoria` devuelve `invalid_state` si existe cualquier solicitud (R-06).
 - `concluirConvocatoria` pasa las solicitudes `EN_FILA` y `CONGELADA` a `NO_ADJUDICADA`, pero
-  **respeta las adjudicaciones vigentes** con su plazo intacto (R-18).
+  **respeta las adjudicaciones vigentes** con su plazo intacto (R-18). Esas quedan contadas en
+  `comprometidos` e inscritas como trabajo pendiente: si su compromiso se cae despues, el barrido
+  cierra el lote y devuelve el vehiculo al catalogo (R-11b). **No hay accion para eso ni la
+  necesita** — no es una decision de nadie, es la conclusion terminando de aplicarse.
 
 ### 3.1 Adaptadores de formulario
 
@@ -227,6 +230,9 @@ es la respuesta normal para quien todavia no ha solicitado.
 
 ### 4.2 Comportamiento de `solicitarCompra`
 
+0. **Cuenta el intento contra la limitacion de tasa del participante** y lo rechaza con
+   `limite_de_tasa` si excede el umbral (Etapa 16). Va antes de leer la convocatoria: un intento
+   estrangulado no cuesta ni una lectura ni un turno.
 1. Verifica el gating triple y que la venta este abierta.
 2. Escribe la **reserva del turno**, antes de consumirlo (R18).
 3. Consume un turno del contador atomico del lote.
@@ -249,6 +255,11 @@ Errores especificos:
 | `invalid_state` | La venta no ha abierto o ya cerro |
 | `not_found` | El lote no existe **o** no pasa el gating triple (R-01) |
 | `conflicto_concurrencia` | La reserva del turno se dio por muerta antes de completarse. Es reintentable: la UI vuelve a solicitar y obtiene un turno nuevo |
+| `limite_de_tasa` | Mas de `INTENTOS_POR_VENTANA` intentos del mismo participante en la misma convocatoria dentro de una ventana de diez segundos (Etapa 16). Reintentable como el anterior, y **no consumio turno**: el rechazo ocurre antes del contador |
+
+**`limite_de_tasa` no lo puede producir la pantalla.** `BloqueDeAccionDeLote` deshabilita el boton
+antes de la apertura y mientras hay una peticion en vuelo, asi que por la interfaz no cabe mas de
+un intento por viaje de red. Quien lo reciba esta llamando a la action por fuera.
 
 ### 4.3 `cancelarSolicitud`
 

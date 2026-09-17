@@ -173,7 +173,7 @@ mentiria sobre cuatro de ellas.
 | **GSI1** — identidad alterna | `OKTA#<oktaSub>` | `PERFIL` | `KEYS_ONLY` |
 | **GSI2** — listados por estatus | `<TIPO>_ESTATUS#<estatus>` | `<fecha>#<id>` | `ALL` |
 | **GSI3** — por participante | `PART#<participanteId>` | `SOL#<solicitadoEn>#<loteId>` | `ALL` |
-| **GSI4** — trabajo pendiente (disperso) | `VENCE#<yyyy-mm-dd>` / `OUTBOX_PENDIENTE` | `<venceEn>` / `<creadoEn>` | `ALL` |
+| **GSI4** — trabajo pendiente (disperso) | `VENCE#<yyyy-mm-dd>` / `OUTBOX_PENDIENTE` / `CIERRE_PENDIENTE` | `<venceEn>` / `<creadoEn>` / `<convocatoriaId>#<loteId>` | `ALL` |
 
 **Los cuatro de la bitacora** llevan **nombre semantico**, porque cada uno responde una sola
 pregunta del auditor y el nombre hace evidente la propiedad que sostiene el diseno: un vehiculo no
@@ -348,6 +348,43 @@ desafios-implementacion.md 17).
 > a quien ya la tuviera. Ese item ya no se escribe ni se lee. El cambio de forma no es
 > caprichoso: un centinela responde "¿existe?" y el negocio ahora pregunta "¿cuantos?".
 
+### 4.3.1 Contador de tasa — Etapa 16, R25 y R26
+
+`PART#<participanteId> / TASA#<convocatoriaId>#<ventana:014d>`, con `intentos`,
+`convocatoriaId` y `ventanaIniciadaEn`. `ventana` es el inicio de la ventana de diez segundos en
+epoch de milisegundos, rellenado a catorce digitos por la misma razon que `ANCHO_TURNO`: sin
+relleno la comparacion lexicografica de la `SK` ordenaria mal en cuanto el epoch cambiara de
+numero de digitos.
+
+Lo escribe la Server Action `solicitarCompra` **antes de leer nada**, con un `ADD intentos :uno`
+suelto y `ReturnValues: UPDATED_NEW`. Si el valor nuevo excede `INTENTOS_POR_VENTANA`, el intento
+se rechaza con `limite_de_tasa` y no llega al motor de fila.
+
+**La ventana va en la clave, no en un atributo.** Es lo que hace que el mecanismo quepa en una
+sola escritura: con la ventana dentro del item habria que distinguir "incrementar" de "reiniciar
+porque la ventana cambio", y esas son dos ramas que ninguna `UpdateExpression` expresa. Costaria
+un viaje mas justo donde R26 dice que no se puede pagar. Con la ventana en la `SK`, una ventana
+nueva **es** un item nuevo y el `ADD` arranca en uno sin condicion ninguna.
+
+**Item propio y no un atributo del item de cupo, aunque compartan particion y cardinalidad.** El
+de cupo participa en la transaccion de T2, y DynamoDB rechaza con `TransactionConflictException`
+toda escritura suelta sobre un item que una transaccion esta tocando: un contador de tasa inocuo
+cancelaria adjudicaciones legitimas del mismo participante. Es la misma leccion de la seccion 4.4
+y de `desafios-implementacion.md` 17 y 41. Este item no entra en ninguna transaccion, asi que no
+puede estorbar a nada.
+
+**Acumula sin caducar, y es deliberado.** La tabla no tiene TTL (seccion 1) y estos items tampoco
+lo estrenan: son la evidencia de tasa por participante que la Etapa 16 pide registrar, y
+expirarla la dejaria sin valor justo cuando alguien pregunte. El volumen esta acotado por el uso
+real —un participante honesto deja uno o dos por convocatoria— y cada item pesa unos cien bytes.
+Se barren con `begins_with(SK, "TASA#")` sobre la particion del participante si alguna vez hace
+falta.
+
+**La ventana es fija, no deslizante.** Quien alinee su rafaga al borde junta dos ventanas y saca
+veinte intentos en unos milisegundos. Es una holgura conocida y aceptada: una ventana deslizante
+exigiria leer el historial antes de decidir —otro viaje en el camino mas caro— para quitarle un
+factor de dos a un adversario que, segun la medicion, ya ganaba con un solo disparo.
+
 ### 4.4 Reserva de turno — R18
 
 `LOTE#<loteId> / RESERVA#<reservaId>`, con `anotadaEn`.
@@ -433,6 +470,7 @@ clave y podria fabricar el centinela de otro ambito.
 | PA-14 | Correos pendientes | `Query` GSI4 `OUTBOX_PENDIENTE` |
 | PA-15 | Valores distintos con actividad | `Query` con salto de grupo sobre GSI7 u GSI8. Ver 5.4 |
 | PA-16 | Entidad por su identificador de negocio | `GetItem` del centinela 4.5 |
+| PA-17 | Lotes que sobrevivieron a una conclusion | `Query` GSI4 `CIERRE_PENDIENTE`. Ver 5.6 |
 
 ### 5.1 El gating triple es una consulta, no un filtro
 
@@ -571,6 +609,55 @@ una sola consulta—, acotadas a `MAXIMO_SOLICITUDES_A_RASTREAR`.
 > escribe: devolvia cero siempre, y nadie lo noto porque cero es una respuesta plausible. Se
 > resolvio sin agregar ningun atributo —un `sujetoId` solo responderia sobre los eventos futuros, y
 > esta consulta es retrospectiva por definicion.
+
+### 5.6 PA-17: los lotes que sobreviven a la conclusion de su convocatoria
+
+**El problema.** Un lote `ADJUDICADO` sobrevive al cierre con su plazo intacto (R-18). Si ese
+compromiso se cae despues —vencimiento, rechazo de tesoreria o cancelacion del participante— los
+tres caminos hacen lo que harian en una convocatoria abierta: devuelven el lote a `EN_OFERTA` y el
+vehiculo a `EN_CONVOCATORIA`, para el siguiente de la fila. Solo que ya no hay fila ni convocatoria
+donde tomarlo, y nada lo recogia: `CONCLUIDA` es terminal, la reconciliacion del barrido solo
+recorre `PUBLICADA` y retirar el vehiculo a mano exige `BORRADOR`. El vehiculo quedaba
+`EN_CONVOCATORIA` con su centinela `VEH#<id>/ACTIVO` puesto: invendible e inofertable, para
+siempre. Es R-11b.
+
+**Por que un indice y no un recorrido.** La alternativa obvia era listar las convocatorias
+`CONCLUIDA` en cada corrida y mirar sus lotes. Se descarto por dos razones, y la segunda es de
+correccion, no de costo:
+
+1. El trabajo crece con el historico. Una `Query` por convocatoria concluida cada cinco minutos,
+   para siempre, cuando la inmensa mayoria no tiene nada que reparar.
+2. `listarConvocatorias` corta en `MAXIMO_POR_ESTATUS` y `GSI2SK` ordena por `creadoEn`
+   **ascendente**, asi que al superar el tope devolveria las mas **viejas** y dejaria fuera
+   justamente las recientes, que es donde aparecen los residuos. Falla en silencio y tarde.
+
+**La forma.** `GSI4PK = CIERRE_PENDIENTE`, `GSI4SK = <convocatoriaId>#<loteId>`. Particion fija
+como `OUTBOX_PENDIENTE` y a diferencia de `VENCE#<dia>`: el reparto por dia existe para que el
+trabajo pendiente del sistema entero no caiga en una clave (R12), y aqui el volumen es de unos
+pocos lotes por convocatoria concluida, escritos una sola vez. La clave de orden lleva la
+convocatoria por delante para que los lotes de una misma conclusion queden juntos.
+
+**Disperso, como todo GSI4.** Las claves las escribe `concluirConvocatoria` solo sobre los lotes
+`ADJUDICADO` —un `Update` que ademas pone al dia su `estatusConvocatoria` desnormalizado— y se
+eliminan en cuanto el lote deja de requerir atencion. La particion contiene **exactamente** el
+trabajo pendiente, asi que el barrido no filtra nada.
+
+**Los tres desenlaces**, en `reconciliarCierresPendientes`:
+
+| Estatus del lote | Que significa | Que hace el barrido |
+| --- | --- | --- |
+| `ADJUDICADO` | el plazo sigue corriendo | nada; la marca se queda |
+| `EN_OFERTA` | el compromiso se cayo | lo cierra (T9) y el vehiculo vuelve al catalogo |
+| cualquier otro | `VENDIDO`, o ya cerrado por otra corrida | solo quita la marca |
+
+> **El `REMOVE` de las claves viaja dentro de la transaccion que cierra el lote.** Resolverlo y
+> sacarlo del indice son el mismo acto: no existe una ventana en la que el lote este cerrado y
+> siga apareciendo como pendiente. Es la misma propiedad que hace idempotente al resto del
+> barrido, y no depende de que nadie se coordine.
+
+**Quien limpia la marca del caso feliz.** El barrido, no `avalarPago`. Acoplar el camino de la
+venta a este indice lo obligaria a conocer un caso que solo existe en convocatorias ya concluidas;
+el precio de limpiarlo tarde es una lectura de mas hasta la corrida siguiente.
 
 ---
 
@@ -1135,6 +1222,31 @@ no de la copia del lote.
 
 La propagacion debe ser **idempotente y reanudable**: repetir una tanda ya aplicada no puede
 cambiar nada.
+
+### T9 — Cerrar un lote
+
+Las tres escrituras que sacan un lote de juego y devuelven su vehiculo al catalogo (R-11):
+
+1. **Lote** → `NO_VENDIDO`, `REMOVE GSI4PK, GSI4SK`. Condicion: el estatus que se leyo.
+2. **Delete** del centinela `VEH#<id>/ACTIVO`. Es lo que habilita la reoferta.
+3. **Vehiculo** → `DISPONIBLE`, `REMOVE convocatoriaId`, `GSI2PK` reapuntada a
+   `VEH_ESTATUS#DISPONIBLE`. Condicion: `estatus = EN_CONVOCATORIA`.
+
+**Tiene dos disparadores y son el mismo codigo** (`cierreDeLote.ts`):
+
+- **`concluirConvocatoria`**, sobre cada lote `EN_OFERTA`, por tandas y **sin evento por lote**:
+  el resumen de `CONVOCATORIA_CONCLUIDA` responde por todos a la vez.
+- **El barrido**, sobre un lote que sobrevivio a la conclusion y se cayo despues (5.6), **con**
+  su evento `LOTE_CERRADO_TRAS_CONCLUSION`: ahi el cierre ocurre dias mas tarde y ningun otro
+  evento lo cubre.
+
+Que los dos compartan las escrituras no es economia de lineas: un cierre tardio que dejara al
+vehiculo en otro estado que el de la conclusion seria un defecto invisible hasta meses despues.
+
+La conclusion tambien escribe, sobre cada lote `ADJUDICADO` que **sobrevive**, un `Update` que le
+pone `estatusConvocatoria = CONCLUIDA` y las claves de `CIERRE_PENDIENTE`. Va **despues** de
+cerrar los no vendidos, por la misma regla de orden que T8: el estado a medias tiene que ser el
+mas restrictivo.
 
 ---
 

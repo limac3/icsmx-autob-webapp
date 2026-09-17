@@ -74,6 +74,16 @@ export const ANCHO_TURNO = 10;
 /** Ancho del relleno del orden de una fotografia. */
 export const ANCHO_ORDEN_FOTO = 4;
 
+/**
+ * Ancho del relleno de la ventana de la limitacion de tasa.
+ *
+ * La ventana es un instante epoch en milisegundos, y por la misma razon que
+ * `ANCHO_TURNO`: sin relleno, la comparacion lexicografica de la `SK` ordenaria
+ * mal en cuanto el epoch cambiara de numero de digitos. Trece digitos cubren
+ * hasta el ano 2286; catorce dan margen y cuestan un byte.
+ */
+export const ANCHO_VENTANA_DE_TASA = 14;
+
 const conCeros = (valor: number, ancho: number, campo: string): string => {
   if (!Number.isInteger(valor) || valor < 0) {
     throw new RangeError(
@@ -240,6 +250,37 @@ export const clave = {
   }),
 
   /**
+   * Contador de intentos de un participante en una convocatoria, por ventana
+   * de tiempo — la limitacion de tasa de la Etapa 16 (`src/lib/fila/limiteDeTasa.ts`).
+   *
+   * **La ventana va en la clave y no en un atributo**, y esa es la decision que
+   * hace que el mecanismo quepa en una sola escritura. Con la ventana dentro
+   * del item haria falta distinguir "incrementar" de "reiniciar porque la
+   * ventana cambio", y eso son dos ramas que ninguna `UpdateExpression`
+   * expresa: costaria un viaje extra justo en el momento de mayor contencion,
+   * que es lo que R26 advierte. Con la ventana en la `SK`, la ventana nueva
+   * **es** un item nuevo y el `ADD` arranca en uno sin condicion ninguna.
+   *
+   * **Item propio y no un atributo del item de cupo**, aunque compartan
+   * particion y cardinalidad. El de cupo participa en la transaccion de T2, y
+   * DynamoDB rechaza con `TransactionConflictException` toda escritura suelta
+   * sobre un item que una transaccion esta tocando: un contador de tasa
+   * inocuo cancelaria adjudicaciones legitimas del mismo participante
+   * (`desafios-implementacion.md` 17 y 41). Este item no entra en ninguna
+   * transaccion, asi que no puede estorbar a nada.
+   */
+  tasaDeParticipante: (
+    participanteId: string,
+    convocatoriaId: string,
+    ventana: number,
+  ): Clave => ({
+    PK: `PART#${exigirIdentificador(participanteId, "participanteId")}`,
+    SK:
+      `TASA#${exigirIdentificador(convocatoriaId, "convocatoriaId")}` +
+      `#${conCeros(ventana, ANCHO_VENTANA_DE_TASA, "ventana")}`,
+  }),
+
+  /**
    * Evento de auditoria. Append-only: todo `Put` lleva ademas
    * `attribute_not_exists(PK)`, porque IAM no puede impedir la sobrescritura
    * (regla 5 de CLAUDE.md).
@@ -307,6 +348,8 @@ export const PREFIJO = {
   solicitud: "SOL#",
   centinelaFila: "PART#",
   reservaDeTurno: "RESERVA#",
+  /** Contadores de tasa de un participante, para barrerlos por convocatoria. */
+  tasaDeParticipante: "TASA#",
 } as const;
 
 /**
@@ -497,6 +540,39 @@ export const gsi4 = {
   outboxPendiente: (creadoEn: string): { GSI4PK: string; GSI4SK: string } => ({
     GSI4PK: "OUTBOX_PENDIENTE",
     GSI4SK: exigirIdentificador(creadoEn, "creadoEn"),
+  }),
+
+  /**
+   * PA-17 — lotes que **sobrevivieron a la conclusion de su convocatoria**.
+   *
+   * Un lote `ADJUDICADO` sigue vivo despues de concluir (R-18): quien gano
+   * antes del cierre tiene derecho a terminar de pagar. Si termina, se vende y
+   * aqui no hay nada que hacer; si el plazo vence, tesoreria rechaza o el
+   * participante cancela, el lote vuelve a `EN_OFERTA` **dentro de una
+   * convocatoria que ya nadie puede comprar**, y su vehiculo se queda sin
+   * ningun camino de vuelta al catalogo. Esa es la unica clase de trabajo
+   * pendiente que la conclusion no puede resolver en el acto, porque depende de
+   * algo que todavia no ha pasado.
+   *
+   * La particion es fija, como `outboxPendiente` y a diferencia de
+   * `vencimiento`: el reparto por dia existe para que el trabajo pendiente del
+   * sistema entero no caiga en una sola clave (R12), y aqui el volumen es de
+   * unos pocos lotes por convocatoria concluida, escritos una vez. La clave de
+   * orden lleva la convocatoria por delante para que los lotes de una misma
+   * conclusion queden juntos.
+   *
+   * Disperso como todo GSI4: estas claves se **eliminan** en cuanto el lote
+   * deja de requerir atencion, asi que el indice contiene exactamente lo que
+   * falta por hacer y el barrido no filtra nada.
+   */
+  cierrePendiente: (
+    convocatoriaId: string,
+    loteId: string,
+  ): { GSI4PK: string; GSI4SK: string } => ({
+    GSI4PK: "CIERRE_PENDIENTE",
+    GSI4SK:
+      `${exigirIdentificador(convocatoriaId, "convocatoriaId")}` +
+      `#${exigirIdentificador(loteId, "loteId")}`,
   }),
 } as const;
 

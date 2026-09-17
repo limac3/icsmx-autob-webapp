@@ -4146,3 +4146,219 @@ ser "que lo recorta" y pasa a ser "sobra un pixel".
 reproduce" empujo a comparar desarrollo con produccion —igual que en la seccion 73, y por segunda vez
 en dos dias— cuando la variable era el tamano de la ventana. La pregunta util no es *que entorno
 corre* sino *que numero difiere*.
+
+---
+
+## 75) La limitacion de tasa movio el instante en que se evalua la ventana de venta
+
+### Problema
+La Etapa 16 antepone una escritura —el contador de tasa— a todo lo demas de `solicitarCompra`. Se
+esperaba que fuera inocua para el resto del motor: un rechazo mas, antes de los que ya habia, sin
+tocar el orden de la fila ni las condiciones de DynamoDB.
+
+### Sintoma
+La medicion posterior fallo una afirmacion que pasaba antes: el `contadorTurnos` de un lote marcaba
+seis turnos y solo cinco intentos habian llegado despues de la apertura. Un turno de mas, repetible,
+sin ningun conflicto de por medio.
+
+Mirando el detalle, el bucle de reintentos habia pasado de obtener el turno 7 a obtener el **turno
+1**, con un desfase de disparo de **menos** 60 ms: habia disparado antes de que abriera la venta y
+aun asi habia entrado.
+
+### Causa raiz
+La condicion `inicioVenta <= :ahora` del paso 1 de T1 se evalua con el `ahora` que `resolver(deps)`
+congela **al entrar a `ejecutarSolicitud`**, no cuando el cliente decide disparar. Hasta la Etapa 16
+los dos instantes eran practicamente el mismo, porque la action llamaba al servicio de inmediato.
+Con el contador de tasa por delante, entre uno y otro cabe un viaje de red entero —unos 70 ms desde
+una maquina con inspeccion TLS, unos pocos en region.
+
+Asi que un disparo lanzado 60 ms antes de la apertura llega con la venta **ya abierta** y se lleva
+su turno con todo derecho. No hay defecto: la condicion sigue comparando el reloj real contra
+`inicioVenta` en el momento de escribir. Lo que estaba mal era la contabilidad de la prueba, que
+clasificaba los intentos por el reloj del **disparo** en vez de por su **desenlace**.
+
+### Solucion aplicada
+La prueba cuadra ahora contra el desenlace: `contadorTurnos` debe ser igual a los intentos que
+llegaron al motor menos los que la condicion de la ventana rechazo, comprobando antes que no hubo
+ningun `conflicto_concurrencia` —que haria ambigua la cuenta, porque puede ocurrir antes o despues
+del `ADD`—. Con eso la igualdad es exacta: 96 intentos al motor, 66 rechazados por la ventana, 30
+turnos.
+
+**No se toco el codigo de produccion**, y en particular no se intento pasar al servicio el `ahora`
+tomado antes del contador. Seria restaurar el comportamiento anterior a costa de que la condicion
+compare un reloj de hasta un viaje de antiguedad — y esa misma condicion es la que impide escribir
+despues de `finVenta`.
+
+### Regla para futuro
+**Anteponer un viaje de red a una escritura condicionada por tiempo desplaza la frontera de esa
+condicion, no solo la latencia.** Aqui la consecuencia practica es que la estrategia optima de quien
+automatiza deja de ser "disparar en el instante exacto" y pasa a ser "disparar el propio viaje de
+red antes". No cambia quien gana —sigue ganando el que automatiza, que es lo que la Etapa 16 midio y
+acepto— pero si desplaza unos milisegundos el `solicitadoEn` de **todo el mundo** por igual, incluido
+el de una persona. Las comparaciones entre participantes siguen siendo validas porque el
+desplazamiento es comun; las comparaciones contra `inicioVenta` en terminos absolutos llevan ahora
+ese sesgo dentro, y quien las lea tiene que saberlo.
+
+---
+
+## 76) El vehiculo que quedaba atrapado en una convocatoria concluida
+
+### Problema
+Al concluir una convocatoria, lo no vendido vuelve a `DISPONIBLE` y un administrador puede
+reofertarlo (R-11). Eso funcionaba. Lo que no estaba cubierto es el lote que **no** se cierra ahi:
+el `ADJUDICADO`, que sobrevive al cierre con su plazo intacto porque quien gano antes tiene derecho
+a terminar de pagar (R-18).
+
+### Sintoma
+Ninguno, durante semanas. Despues, un vehiculo que se niega a entrar en otra convocatoria con un
+rechazo que nada explica: el centinela `VEH#<id>/ACTIVO` lo declara activo en una convocatoria que
+para todos los demas efectos ya termino.
+
+### Causa raiz
+Tres caminos devuelven un lote adjudicado a `EN_OFERTA` —vencimiento del plazo, rechazo de
+tesoreria y cancelacion del participante— y los tres hacen lo correcto **para una convocatoria
+abierta**: dejan el lote listo para el siguiente de la fila y el vehiculo `EN_CONVOCATORIA`.
+Ninguno pregunta si la convocatoria sigue viva, y el `estatusConvocatoria` desnormalizado del lote
+tampoco se lo habria dicho: la conclusion no propagaba a los lotes que no cerraba, asi que la copia
+seguia diciendo `PUBLICADA` para siempre.
+
+Y nada lo recogia despues:
+
+- `CONCLUIDA` es terminal, asi que `concluirConvocatoria` no puede volver a correr.
+- La reconciliacion del barrido esta acotada a convocatorias `PUBLICADA`, "fuera de ahi el lote no
+  admite fila" — cierto para la fila, falso para el vehiculo.
+- `convocatoria:retirar-vehiculo` exige `estatusConvocatoria === "BORRADOR"`.
+
+El vehiculo quedaba invendible e inofertable a la vez, en silencio y sin ningun camino de vuelta.
+
+### Solucion aplicada
+Una particion nueva de GSI4, `CIERRE_PENDIENTE` (modelo-datos 5.6, PA-17). Al concluir, cada lote
+que **sobrevive** recibe un `Update` que le pone `estatusConvocatoria = CONCLUIDA` y las claves del
+indice. El barrido recorre esa particion y cierra el que haya vuelto a `EN_OFERTA`, con las mismas
+escrituras que usa la conclusion (`cierreDeLote.ts`, T9) mas su evento
+`LOTE_CERRADO_TRAS_CONCLUSION`.
+
+Se descarto listar las convocatorias `CONCLUIDA` en cada corrida, que era lo obvio. No solo crece
+sin limite: `listarConvocatorias` corta en `MAXIMO_POR_ESTATUS` y `GSI2SK` ordena por `creadoEn`
+ascendente, asi que al pasar el tope devolveria las mas **viejas** y dejaria fuera justo las
+recientes. Habria fallado en silencio, años despues, en el caso que mas importa.
+
+### Nota de despliegue
+El indice es disperso y solo lo puebla `concluirConvocatoria`. Las convocatorias concluidas
+**antes** de este cambio no tienen marca, asi que un residuo anterior no se repara solo. En
+desarrollo no hay ninguno; si alguna vez lo hubiera, se detecta con la consulta de `runbooks.md`
+R-15 y se arregla poniendo a mano las dos claves de GSI4 en el lote.
+
+### Regla para futuro
+Cuando un estado sea terminal para un agregado pero **otro** agregado pueda seguir cambiando
+debajo, preguntarse quien cierra lo que quede. Un estado terminal no detiene los relojes de sus
+hijos; solo quita al proceso que los atendia.
+
+---
+
+## 77) La alarma mas grave del sistema, encendida por basura de una prueba
+
+### Problema
+`npm run barrido` —el ejecutor local recien creado— debia reportar una corrida limpia contra el
+sandbox. La primera ejecucion devolvio **145 vencimientos sin resolver y cero resueltos**.
+
+### Sintoma
+`errores: 145` en cada corrida, y lo mismo en el Lambda desplegado cada cinco minutos. `errores`
+es la senal de `vencimientos-sin-resolver`, descrita en `arquitectura-tecnica-aws.md` 7 como "el
+sintoma mas grave del sistema": una adjudicacion vencida que sigue vigente bloquea la fila entera
+de su lote. La alarma llevaba encendida desde la Etapa 10 **sin que nada estuviera mal**.
+
+### Causa raiz
+Los 160 items pendientes eran solicitudes `e10-*`, fixtures de
+`vencimiento.integracion.test.ts`. Su limpieza registraba tres particiones:
+
+```ts
+particionesCreadas.add(clave.convocatoria(convocatoriaId).PK);
+particionesCreadas.add(clave.vehiculo(vehiculoId).PK);
+particionesCreadas.add(clave.lote(convocatoriaId, loteId).PK);   // <- no hace nada
+```
+
+La tercera **parece** borrar el lote y no borra nada nuevo: el lote cuelga de su convocatoria, asi
+que `clave.lote(...).PK` es `CONV#<convocatoriaId>`, exactamente la misma particion que la primera
+linea ya habia agregado. La particion que faltaba es `LOTE#<loteId>`, donde viven las solicitudes —
+`clave.solicitud(loteId, 0).PK`.
+
+Asi que la prueba borraba la convocatoria, el vehiculo y los participantes, y dejaba **la fila
+entera**. Y como su proposito es fabricar adjudicaciones a punto de vencer, esas solicitudes
+quedaban `ADJUDICADA` con sus claves de GSI4 puestas, apuntando a una convocatoria que ya no
+existia. El barrido las encontraba, no podia leer su convocatoria y las contaba como error, por
+diseño y correctamente.
+
+Las otras cuatro pruebas de integracion contra el sandbox ya registraban
+`clave.solicitud(loteId, 0).PK`. Esta era la unica que no.
+
+### Solucion aplicada
+Sustituir la linea inerte por la particion real de la fila. La basura ya escrita no se limpia
+sola: se borra a mano, o se deja hasta que alguien recree el sandbox.
+
+### Regla para futuro
+**Dos constructores de clave que devuelven la misma `PK` no limpian dos particiones.** Al armar
+una lista de particiones a purgar, comprobar que los valores sean distintos entre si — un `Set` de
+`PK` hace silencioso el error, porque el duplicado desaparece sin avisar.
+
+Y en lo operativo: una alarma encendida por datos de prueba es peor que una alarma apagada.
+Enseña a ignorarla, que es el estado del que ya advierte el runbook R-2 sobre los correos
+`CANCELADO`.
+
+---
+
+## 78) Tres convocatorias desaparecieron de la pantalla, con sus vehiculos dentro
+
+### Problema
+La pantalla de administracion debia listar las cinco convocatorias del sandbox. El sintoma que
+llego fue otro: *"tengo dos vehiculos en convocatoria y ninguna convocatoria; creo que estan
+borradas pero los vehiculos quedaron anclados"*.
+
+### Sintoma
+Las pestañas mostraban **Borrador (1)**, **Publicada (0)** y **Concluida (1)**. La tabla tenia tres
+borradores, una publicada y una concluida. Dos vehiculos seguian `EN_CONVOCATORIA` apuntando a la
+publicada invisible, y un tercero al borrador invisible. Ninguna convocatoria estaba borrada — la
+aplicacion **no tiene** forma de borrar una.
+
+### Causa raiz
+Las Etapas 14 y 15 agregaron `limiteAdjudicaciones`, `limiteSolicitudes` (R-09, R-22) y
+`modalidadAdjudicacion` (R-23) como **obligatorios** en `Convocatoria` y en `Lote`. Las
+convocatorias creadas antes nunca los tuvieron: el atributo no existe en su item, y nada reescribio
+las filas ya guardadas.
+
+`aConvocatoria` los exige y devuelve `undefined`; `listarConvocatorias` lo descartaba con un
+`.filter(...)`. Sin error, sin hueco en la tabla, sin linea de registro. La convocatoria dejaba de
+existir para la aplicacion, y con ella la unica via para llegar a sus lotes, concluirla y liberar
+sus vehiculos.
+
+**El diseño del mapeador es correcto y aun asi produjo esto.** Su comentario lo justifica: "un item
+corrupto entre mil debe desaparecer del listado, no tumbar la pantalla entera". Eso vale para
+corrupcion. Una migracion de esquema no aplicada no es corrupcion: no es uno entre mil, fueron tres
+de cinco, y el modo de fallo silencioso convierte un dato incompleto en un activo inalcanzable.
+
+### Solucion aplicada
+Dos cosas, y la segunda importa mas que la primera:
+
+1. **Los datos.** Relleno de los tres atributos en las tres convocatorias y en sus tres lotes, con
+   escritura condicional (`attribute_not_exists` de los tres) para no pisar nada. Valores: `1` y
+   `3` —las omisiones del propio formulario— y `AUTOMATICA`, que es el unico comportamiento que
+   existia cuando se crearon; poner `MANUAL` les habria reescrito la historia.
+2. **El silencio.** `camposFaltantesDeConvocatoria` y `camposFaltantesDeLote` en `mapeo.ts`, y una
+   linea de traza en `listarConvocatorias` y `obtenerConvocatoria` cuando un item se descarta, con
+   el identificador y **los campos que faltaron**. `obtenerConvocatoria` ademas distingue ahora sus
+   dos `not_found`: "no existe" y "existe y no se puede leer" eran indistinguibles para quien
+   depura.
+
+La duplicacion entre el diagnostico y el `if` del mapeador es deliberada —unificarlos costaria el
+estrechamiento de tipos, o un `as`— y la sostiene `mapeo.test.ts`, que recorre campo por campo y
+exige que los dos coincidan.
+
+### Regla para futuro
+**Un campo nuevo obligatorio es una migracion, aunque TypeScript no lo note.** El compilador obliga
+a escribirlo en el codigo nuevo y no sabe nada de las filas ya guardadas; el mapeador las rechaza en
+tiempo de ejecucion, y si el rechazo es silencioso el defecto aparece semanas despues y disfrazado
+de otra cosa. Al agregar un obligatorio: decidir explicitamente que pasa con lo ya escrito, y
+rellenarlo o aceptar la perdida por escrito.
+
+Y en general: **descartar un item leido es una decision, y toda decision que borra algo de la vista
+del usuario deja rastro.** El filtro que no registra nada no es prudente, es mudo.

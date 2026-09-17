@@ -1994,7 +1994,7 @@ que las automaticas.
 
 ---
 
-## Etapa 16 — Equidad del instante de apertura
+## Etapa 16 — Equidad del instante de apertura ✅
 
 **Objetivo:** saber cuanta ventaja da automatizar la apertura, acotarla, y dejar evidencia de los
 intentos.
@@ -2005,15 +2005,82 @@ intentos.
 precedente — `UMBRAL_CONFLICTOS_POR_PERIODO` quedo pendiente de calibrar precisamente por no tener
 el numero.
 
-- [ ] **Medir primero.** Reusar el arnes que ya existe, `npm run carga:apertura`, para cuantificar
-      **cuanto turno gana** un cliente que dispara en el milisegundo exacto frente a uno que
-      dispara 200-400 ms despues, que es la reaccion humana. Sin ese numero, cualquier umbral de
-      tasa es una intuicion disfrazada de constante
-- [ ] **Limitacion de tasa por participante**, con el umbral calibrado por la medicion, mas su
-      codigo de error y las dos etiquetas
-- [ ] **Registrar la evidencia** para quien audita: solicitudes rechazadas por llegar antes de la
-      apertura —que hoy fallan la condicion y no dejan rastro— y tasa por participante
-- [ ] `arquitectura-tecnica-aws.md`: la metrica y la traza nuevas
+- [x] **Medir primero.** Arnes nuevo `npm run equidad:apertura`
+      (`src/lib/fila/equidadDeApertura.integracion.test.ts`), construido sobre el mismo montaje
+      contra el sandbox que `carga:apertura` pero con la venta abriendo **en el futuro**, que es lo
+      que aquel no podia hacer: abre la venta en el pasado y dispara a todos a la vez, justo lo que
+      borra la pregunta
+- [x] **Limitacion de tasa por participante** — `src/lib/fila/limiteDeTasa.ts`, con el umbral
+      calibrado por la medicion, el codigo `limite_de_tasa` y sus dos etiquetas
+- [x] **Registrar la evidencia** para quien audita: operacion `intentoDeSolicitud` en el registro
+      operativo, contadores `TASA#` consultables por participante, y las dos consultas de Logs
+      Insights en `runbooks.md`
+- [x] `arquitectura-tecnica-aws.md` 7.2.1: la traza nueva, la evidencia durable y **por que no hay
+      alarma** — las lineas las escribe el SSR, cuyo grupo de logs no esta en esta pila
+
+### Lo que midio la apertura
+
+Cinco lotes, cuatro perfiles por lote, contra el sandbox. `RELOJ` dispara una vez en el instante
+exacto; `BUCLE` reintenta esperando cada respuesta; `RAFAGA` reintenta **sin** esperarlas; `HUMANO`
+reacciona entre 200 y 400 ms.
+
+| Perfil | Desfase real del disparo | Turno obtenido |
+| --- | --- | --- |
+| `RELOJ` | 0 ms | **1-2** |
+| `RAFAGA` | 7-15 ms | 3-5 |
+| `BUCLE` | 29-32 ms | 4-7 |
+| `HUMANO` | 199-409 ms | 6-16 |
+
+**La ventaja es total, no marginal.** `RELOJ` encabezo **los cinco lotes**, en las tres corridas.
+Ningun humano quedo por delante de ningun cliente de reloj exacto, y de 100 pares comparados hubo
+**0-1 inversiones** — y la unica fue un humano rapido adelantando al bucle secuencial, nunca al
+reloj. Y la medicion **subestima**: corre desde una maquina con inspeccion TLS contra otra region,
+donde el ruido de red es mucho mayor que el del SSR desplegado. Cuanto mas estable la red, mas
+decisivo el reloj.
+
+**El hallazgo que cambio el diseno fue `RAFAGA`.** Dispara en paralelo, **no necesita saber la
+hora** —le basta cubrir el instante a base de intentos— y aun asi llega a 7-15 ms de la apertura,
+practicamente empatando con el reloj exacto. Sostiene 18 intentos por segundo contra la ventana
+cerrada, frente a los 4-5 del bucle secuencial, cuya tasa la limita el viaje de red y no su
+intencion. De paso **quema 41 turnos** que nadie ocupa: la fila queda llena de huecos.
+
+Y decidio **donde** va el contador, que era la pregunta abierta: `RAFAGA` hace casi todos sus
+disparos **antes** de `inicioVenta`, y esos los rechaza la guarda de `solicitud:crear` sin que
+`solicitarCompra` llegue a ejecutarse. Un contador montado sobre el item `CUPO#` dentro del
+servicio —la opcion barata que este plan sopesaba— **no habria contado ni uno de los 91**. Va en la
+Server Action, antes de leer nada, y el viaje adicional se paga.
+
+**Umbral: 10 intentos por ventana de 10 segundos, por participante y convocatoria.** Cae entre el
+maximo legitimo y el minimo automatizado con un orden de magnitud a cada lado: una persona emite
+como mucho un intento por viaje de red —la pantalla deshabilita el boton antes de la apertura y
+mientras hay peticion en vuelo— y R-22 ya le topa los exitos en tres; el bucle secuencial hace 50
+por ventana y la rafaga 180.
+
+### Lo que la limitacion cambio, medido con el mismo arnes
+
+`EQUIDAD_SIN_LIMITE=1` reproduce la corrida previa desde el mismo binario, que es lo que permite
+comparar sin apelar al recuerdo de una corrida anterior.
+
+| | Sin limitacion | Con limitacion |
+| --- | --- | --- |
+| Intentos que llegaron al motor | 187 | **95** |
+| Turnos consumidos / huecos en las filas | 76 / **41** | 30 / **0** |
+| `RAFAGA`: intentos cortados | 0 | **250 de 300** |
+| `RAFAGA`: turno obtenido | 3 | **ninguno** |
+| Turno del humano (mediana) | 12 | **5** |
+| Lotes adjudicados en el acto | 4 de 5 | **5 de 5** |
+| Latencia p50 / p95 | 428 / 692 ms | 455 / 595 ms |
+
+**No se pago degradando a nadie**, que era la condicion de R26: el p50 sube 27 ms —un viaje de red
+en una maquina con inspeccion TLS; unos pocos milisegundos en region— y el p95 **mejora**, porque
+la carga de la rafaga desaparecio. Los humanos salen ganando por partida doble: mejor turno y
+ninguna fila con huecos.
+
+**Lo que no cambio, y es lo honesto de decir: `RELOJ` sigue ganando.** Ningun umbral de tasa limita
+a quien solo necesita un disparo. Lo que la Etapa 16 compro es que la ventaja deje de estar al
+alcance de quien **no** sabe la hora, que el desgaste quede acotado, y que los intentos queden
+registrados. Si lo que se busca es que llegar primero deje de importar, eso ya existe y es la
+modalidad manual de la Etapa 15.
 
 > **Donde vive el contador de tasa es la decision dificil, y se toma con el numero en la mano.** La
 > aplicacion es SSR sin estado compartido, asi que un contador en memoria no sirve con varias
@@ -2049,13 +2116,23 @@ el numero.
 
 **Verificacion:**
 
-- [ ] **Una solicitud estrangulada no consume turno**, igual que una que llega antes de la
-      apertura. Si la limitacion quema turnos, castiga con huecos de fila a quien solo reintento
-- [ ] **La apertura se mide dos veces**, antes y despues de instalar la limitacion. La segunda no
-      puede ser peor: frenar al que automatiza no puede pagarse degradando a todos los demas
+- [x] **Una solicitud estrangulada no consume turno**, igual que una que llega antes de la
+      apertura. El rechazo ocurre en la action, antes de `solicitarCompra`, donde vive el contador
+      de turnos; cubierto por prueba unitaria y cuadrado en la medicion contra el `contadorTurnos`
+      real: 96 intentos al motor − 66 rechazados por la ventana = 30 turnos, exacto
+- [x] **La apertura se mide dos veces**, antes y despues, desde el mismo arnes y el mismo binario
+      (`EQUIDAD_SIN_LIMITE=1`). La segunda no es peor: p50 +27 ms, p95 −97 ms, y los huecos de fila
+      pasan de 41 a 0
 
 **Salida esperada:** la ventaja de automatizar, medida; el bucle de reintentos, acotado; y los
 intentos, registrados para que la organizacion decida.
+
+> **Lo que la medicion obligo a corregir en el camino** esta en
+> `desafios-implementacion.md` 75: anteponer una escritura a `solicitarCompra` desplaza el instante
+> en que se evalua `inicioVenta <= :ahora`, asi que un disparo lanzado un viaje de red **antes** de
+> la apertura ahora entra con todo derecho. No es un defecto —la condicion sigue comparando el
+> reloj real en el momento de escribir— pero mueve unos milisegundos el `solicitadoEn` de todo el
+> mundo por igual, y quien lea esa evidencia en terminos absolutos tiene que saberlo.
 
 ---
 
@@ -2496,8 +2573,21 @@ y formarse dos veces en el mismo lote (R-07).
 el adjudicador decide, llegar primero no compra nada—, y la limitacion de tasa de la Etapa 16, que
 acota el bucle de reintentos sin eliminar la ventaja del primer disparo.
 
+**Medido en la Etapa 16, y confirmado en su forma mas fuerte.** No es que el script tenga ventaja:
+es que **gana siempre**. `RELOJ` encabezo los cinco lotes en las tres corridas y ningun humano
+quedo nunca por delante; de 100 pares comparados, 0-1 inversiones. La limitacion de tasa **no
+cambia eso** y no podia cambiarlo — quien necesita un solo disparo no tiene tasa que limitar. Lo
+que si cambio: la rafaga, que llegaba igual de cerca **sin saber la hora**, pasa de obtener el
+turno 3 a no obtener ninguno.
+
+**Riesgo aceptado, no cerrado.** La equidad del instante no es recuperable por medios tecnicos sin
+cambiar la regla de negocio; lo que queda es la modalidad manual para donde importe, y evidencia
+para quien decida. Detalle y numeros en la Etapa 16.
+
 **Senal de alerta:** un participante que obtiene el turno 1 de forma sistematica en convocatorias
-distintas, o solicitudes registradas a menos de 50 ms de `inicioVenta`.
+distintas, o solicitudes registradas a menos de 50 ms de `inicioVenta`. Las dos se consultan hoy:
+la primera con `solicitadoEn` menos `inicioVenta`, la segunda con la consulta `intentoDeSolicitud`
+de `runbooks.md`.
 
 ### R26 — La limitacion de tasa encarece la apertura
 
@@ -2508,9 +2598,20 @@ caliente del sistema y en su momento de mayor contencion. Mal puesto, degrada a 
 participantes para frenar a unos pocos — y lo haria precisamente en el instante que la Etapa 12
 midio como el mas fragil.
 
-**Mitigacion:** el orden de la Etapa 16, que no es negociable: medir con `npm run carga:apertura`
+**Mitigacion:** el orden de la Etapa 16, que no es negociable: medir con `npm run equidad:apertura`
 **antes** de construir, para calibrar el umbral con un numero en vez de una intuicion, y volver a
 medir despues para comprobar que no se pago de mas.
+
+**Medido, y el temor no se materializo.** Entre las dos corridas del mismo arnes el p50 sube 27 ms
+—un viaje de red desde una maquina con inspeccion TLS; unos pocos milisegundos en region— y el p95
+**mejora** 97 ms, porque la carga que la rafaga metia en el pico desaparecio. La escritura no
+comparte item con nada: vive en la particion del propio participante y fuera de toda transaccion,
+asi que no agrega contencion. Y quien dispara una sola vez **nunca** se estrangula, que esta
+cubierto por afirmacion en la propia medicion.
+
+**Lo que si hay que vigilar es otra cosa, y no estaba previsto:** ese viaje extra desplaza el
+instante en que se evalua la ventana de venta, no solo la latencia
+(`desafios-implementacion.md` 75).
 
 **Senal de alerta:** la latencia de `inicioVenta` empeora entre la medicion previa y la posterior.
 
@@ -2565,3 +2666,12 @@ medir despues para comprobar que no se pago de mas.
 | 2026-09-14 | Se **conserva el vocabulario** de R-09 (`CONGELADA`, `SOLICITUD_CONGELADA`, `SOLICITUD_DESCONGELADA`) aunque se retire su maquinaria | Borrarlos del catalogo: la bitacora es append-only y `reconstruirFila` y `verificarIntegridad` tienen que seguir sabiendo leer historias ya escritas. Ademas `SOLICITUD_OMITIDA` no se jubila en absoluto — gana dos razones nuevas y es lo que sostiene la trazabilidad del salto de turno por cupo y por decision manual |
 | 2026-09-14 | El cruce de solicitudes del adjudicador se arma **en memoria** desde PA-04 + PA-07 | Un `GSI5` con clave `PART#<pid>#CONV#<convId>`: el numero esta libre, pero es infraestructura irreversible para una pantalla administrativa de volumen acotado, y la pantalla es por convocatoria — ya necesita leer todas sus filas de todas formas |
 | 2026-09-14 | Contra la automatizacion de la apertura: **medir, limitar la tasa y registrar la evidencia** | El **token de participacion**, que verifica autorizacion —lo que la sesion de Okta ya hace— sin hacer a nadie mas lento, y que ademas lo paga mejor el script que la persona; la **prueba de trabajo**, que grava tambien al usuario honesto y hace ganar a quien tenga mejor telefono; y **cancelar la participacion por sospecha de trampa**, indistinguible de un doble clic o un reintento de red, con falsos positivos inevitables y prohibida ademas por la regla 17 — a quien se sanciona lo decide la organizacion, no un umbral en un archivo |
+| 2026-09-15 | El contador de tasa vive en la **Server Action**, antes de leer nada, y no dentro de `solicitarCompra` | Montarlo sobre el item `CUPO#`, que ya se escribe en cada solicitud y costaria cero viajes extra. **Lo descarto la medicion, no el gusto:** el perfil que hay que acotar hace casi todos sus disparos antes de `inicioVenta`, y esos los rechaza la guarda de `solicitud:crear` sin llegar al motor — el contador barato no habria visto ni uno de los 91. Ademas el item `CUPO#` participa en la transaccion de T2, asi que escribirlo suelto cancelaria adjudicaciones legitimas del mismo participante con `TransactionConflict` |
+| 2026-09-15 | La ventana de tasa va **en la `SK`**, no en un atributo del item | Guardarla dentro del item: obligaria a distinguir "incrementar" de "reiniciar porque la ventana cambio", dos ramas que ninguna `UpdateExpression` expresa, y costaria un viaje mas justo donde R26 dice que no se puede pagar. Con la ventana en la clave, una ventana nueva **es** un item nuevo y el `ADD` arranca en uno sin condicion |
+| 2026-09-15 | Ventana **fija** de 10 s con tope de 10 intentos, no ventana deslizante | La deslizante, que no tiene el efecto de borde: exigiria leer el historial antes de decidir —otro viaje en el camino mas caro— para quitarle un factor de dos a un adversario que, segun la medicion, ya ganaba con un solo disparo |
+| 2026-09-15 | Los contadores `TASA#` **no caducan** y la tabla sigue sin TTL | Activar TTL sobre ellos: son la evidencia de tasa por participante que la etapa existe para registrar, y expirarla la dejaria sin valor cuando alguien pregunte. Habilitar TTL en la tabla ademas debilitaria la garantia de R-20, que hoy descansa en que **ningun** item caduca solo |
+| 2026-09-15 | **Ninguna alarma** sobre los intentos anticipados o estrangulados; solo traza y consultas | Un filtro de metrica: las lineas las escribe el SSR, cuyo grupo de logs crea Amplify Hosting y no esta en esta pila — el filtro compilaria, se desplegaria y no coincidiria con nada, que segun 7.3 "no da error, da silencio". Y publicar la metrica con `PutMetricData` seria una llamada de red mas en el instante mas caro, para vigilar algo que no exige reaccion en minutos |
+| 2026-09-15 | Lo que sobrevive a una conclusion se libera **solo, desde el barrido**, cuando su compromiso se cae (R-11b) | Un **boton "liberar vehiculos no vendidos"** en la convocatoria concluida, que fue la propuesta original. Se descarto porque nada le avisa a nadie de que el compromiso se cayo: un boton que hay que descubrir no repara un estado que nadie sabe que existe, y su sintoma solo aparece semanas despues. Tampoco lo pide la regla 17 —volver a `DISPONIBLE` ya era automatico al concluir, y la decision que R-11 reserva a una persona es la **inclusion** en otra convocatoria, que no cambia |
+| 2026-09-15 | Los lotes que sobreviven se inscriben en una particion **dispersa** de GSI4 (`CIERRE_PENDIENTE`) | Listar las convocatorias `CONCLUIDA` en cada corrida y mirar sus lotes. No solo crece sin limite con el historico: `listarConvocatorias` corta en `MAXIMO_POR_ESTATUS` y `GSI2SK` ordena por `creadoEn` **ascendente**, asi que al pasar el tope devolveria las mas viejas y dejaria fuera justo las recientes — habria fallado en silencio, años despues, en el unico caso que importa |
+| 2026-09-15 | El cierre tardio **si** escribe evento por lote (`LOTE_CERRADO_TRAS_CONCLUSION`); la conclusion sigue sin escribirlo | Reusar el mismo criterio en los dos sitios. En la conclusion el resumen de `CONVOCATORIA_CONCLUIDA` responde por todos los lotes a la vez y un evento por lote repetiria N veces el mismo hecho; el cierre tardio ocurre dias despues y **no tiene ningun evento que lo cubra** — sin el, un vehiculo reaparece en el catalogo y la bitacora no puede decir por que |
+| 2026-09-15 | La marca del caso feliz la limpia el **barrido**, no `avalarPago` | Quitarla en `avalarPago`, que es donde el lote se vuelve `VENDIDO`: obligaria al camino de la venta a conocer un indice que solo existe para convocatorias ya concluidas. El precio de limpiarla tarde es una lectura de mas hasta la corrida siguiente; el del acoplamiento es permanente |

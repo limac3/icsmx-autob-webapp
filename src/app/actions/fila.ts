@@ -26,7 +26,9 @@ import { contextoDeConvocatoria } from "@/lib/domain/gating";
 import { cancelarSolicitud as cancelarServicio } from "@/lib/fila/cancelarSolicitud";
 import { consultarMiLugar, leerMiSolicitud } from "@/lib/fila/consultarMiLugar";
 import { consultarTamanoFila } from "@/lib/fila/conteosDeFila";
+import { registrarIntento } from "@/lib/fila/limiteDeTasa";
 import { solicitarCompra as solicitarServicio } from "@/lib/fila/solicitarCompra";
+import { registrar } from "@/lib/observabilidad/registro";
 import type { ActorUsuario } from "@/types/auditoria";
 import type { MiLugarDTO, Solicitud } from "@/types/fila";
 import type { Lote } from "@/types/lote";
@@ -83,6 +85,7 @@ const conLote = async (
   });
   if (!miSolicitud.ok) return miSolicitud;
 
+  const ahora = new Date();
   const permiso = await exigirPermiso(accion, {
     ...contextoDeConvocatoria(
       {
@@ -92,7 +95,7 @@ const conLote = async (
         estatus: convocatoria.estatus,
         tipo: convocatoria.tipo,
       },
-      new Date(),
+      ahora,
     ),
     // R-07: la guarda de `solicitud:crear` exige **saber** que no hay una
     // solicitud viva. Ignorarlo permitiria formarse dos veces; por eso viaja
@@ -111,6 +114,27 @@ const conLote = async (
   });
 
   if (!permiso.ok) {
+    // **La evidencia de haber llegado antes de tiempo se escribe aqui y no en
+    // otro sitio, porque aqui es donde el intento muere.** La guarda de
+    // `solicitud:crear` lo rechaza sin que `solicitarCompra` llegue a
+    // ejecutarse, asi que no hay traza del motor que lo recoja; y no es una
+    // transicion de estado, asi que tampoco le corresponde un evento de
+    // bitacora (`trazabilidad-auditoria.md`: la bitacora prueba, el registro
+    // diagnostica). Queda en traza operativa, que es donde el plan de la
+    // Etapa 16 lo situa.
+    const anticipacionMs = inicioVenta.getTime() - ahora.getTime();
+    if (accion === "solicitud:crear" && anticipacionMs > 0) {
+      registrar("warn", "intentoDeSolicitud", {
+        participanteId: sesion.participanteId,
+        convocatoriaId: entrada.convocatoriaId,
+        loteId: entrada.loteId,
+        desenlace: "rechazado",
+        error: permiso.error,
+        // Cuanto le falta a la venta para abrir. Es el numero que distingue a
+        // quien se adelanto un segundo de quien sondea desde hace una hora.
+        anticipacionMs,
+      });
+    }
     // `invalid_state` describe una guarda de negocio —la venta no ha abierto,
     // ya estas en la fila— y esa si se le puede explicar a quien pregunta. Un
     // `forbidden` sobre un recurso publicado, en cambio, revelaria que existe.
@@ -138,11 +162,46 @@ const invalidar = (lote: Lote): void => {
  * El `MiLugarDTO` se lee **despues** de que el servicio intento adjudicar, no
  * antes: quien encabeza la fila recibe su lugar ya en estado `ADJUDICADA`, sin
  * esperar a ningun proceso de fondo (api-contracts 4.2).
+ *
+ * **La limitacion de tasa va primero, antes incluso de leer la convocatoria**
+ * (Etapa 16). Dos razones, y la segunda es la que manda:
+ *
+ *   - Un intento estrangulado no debe costarle nada al sistema, y aqui todavia
+ *     no costo ninguna lectura.
+ *   - Sobre todo: **el perfil que hay que acotar no llega al motor de fila.**
+ *     La medicion de la apertura lo dejo claro — la rafaga que cubre el
+ *     instante a base de intentos en paralelo hace casi todos sus disparos
+ *     **antes** de `inicioVenta`, y esos los rechaza la guarda de
+ *     `solicitud:crear`, no `solicitarCompra`. Un contador colocado dentro del
+ *     servicio, que era la opcion barata, no habria contado ni uno.
+ *
+ * Y por lo mismo **no consume turno**: el contador de turnos vive tres pasos
+ * mas adentro, en `solicitarCompra`, y este camino no llega ahi. Estrangular no
+ * puede castigar con huecos de fila a quien solo reintento.
  */
 export const solicitarCompra = async (entrada: {
   convocatoriaId: string;
   loteId: string;
 }): Promise<Resultado<MiLugarDTO>> => {
+  const sesion = await getSession();
+  if (!sesion) return fallo("unauthorized");
+
+  const tasa = await registrarIntento({
+    participanteId: sesion.participanteId,
+    convocatoriaId: entrada.convocatoriaId,
+  });
+  if (!tasa.permitido) {
+    registrar("warn", "intentoDeSolicitud", {
+      participanteId: sesion.participanteId,
+      convocatoriaId: entrada.convocatoriaId,
+      loteId: entrada.loteId,
+      desenlace: "rechazado",
+      error: "limite_de_tasa",
+      intentosEnVentana: tasa.intentos,
+    });
+    return fallo("limite_de_tasa");
+  }
+
   const contexto = await conLote("solicitud:crear", entrada);
   if (!contexto.ok) return contexto;
 

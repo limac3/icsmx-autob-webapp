@@ -12,7 +12,8 @@ import {
   type EstatusConvocatoria,
 } from "@/types/convocatoria";
 import { exito, type Resultado } from "@/types/resultado";
-import { aConvocatoria } from "./mapeo";
+import { registrar } from "@/lib/observabilidad/registro";
+import { aConvocatoria, camposFaltantesDeConvocatoria } from "./mapeo";
 
 export type FiltroDeConvocatorias = {
   /** Estatus a incluir. Sin este campo, todos. */
@@ -57,10 +58,35 @@ export const listarConvocatorias = async (
     }),
   );
 
-  const convocatorias = porEstatus
-    .flat()
-    .map((item) => aConvocatoria(item))
-    .filter((una): una is Convocatoria => una !== undefined);
+  const convocatorias: Convocatoria[] = [];
+  for (const item of porEstatus.flat()) {
+    const convocatoria = aConvocatoria(item);
+    if (convocatoria) {
+      convocatorias.push(convocatoria);
+      continue;
+    }
+
+    // **El descarte deja rastro.** Antes era un `.filter(...)` y la
+    // convocatoria simplemente dejaba de existir para la aplicacion: sin error,
+    // sin hueco en la tabla y sin forma de llegar a sus lotes ni a sus
+    // vehiculos. Con los tres atributos que agregaron las Etapas 14 y 15 eso
+    // dejo invisibles a las convocatorias anteriores, y el sintoma que llego
+    // fue "vehiculos anclados a convocatorias borradas"
+    // (`desafios-implementacion.md` 78).
+    //
+    // Va a la traza operativa y no a la bitacora: no es una transicion de
+    // estado, es un diagnostico. Y lleva el `convocatoriaId` crudo porque sin
+    // el la linea no sirve para nada — no es identidad de una persona (D-13).
+    registrar("warn", "listarConvocatorias", {
+      convocatoriaId:
+        typeof item.convocatoriaId === "string"
+          ? item.convocatoriaId
+          : "(ilegible)",
+      desenlace: "rechazado",
+      error: "item_no_mapeable",
+      camposFaltantes: camposFaltantesDeConvocatoria(item).join(","),
+    });
+  }
 
   // Mas reciente primero: quien administra trabaja sobre lo ultimo que creo.
   convocatorias.sort((a, b) => b.creadoEn.localeCompare(a.creadoEn));

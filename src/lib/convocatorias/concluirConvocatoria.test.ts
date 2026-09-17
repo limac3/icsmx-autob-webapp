@@ -293,6 +293,7 @@ describe("cierre de los lotes", () => {
         vendidos: 2,
         noVendidos: 1,
         filasCerradas: 0,
+        comprometidos: 0,
       },
     });
 
@@ -306,6 +307,7 @@ describe("cierre de los lotes", () => {
       vendidos: 2,
       noVendidos: 1,
       filasCerradas: 0,
+      comprometidos: 0,
     });
   });
 
@@ -436,5 +438,163 @@ describe("cierre de los lotes", () => {
 
     expect(resultado).toEqual({ ok: false, error: "conflicto_concurrencia" });
     expect(falso.comandos).toHaveLength(1);
+  });
+});
+
+describe("lotes que sobreviven a la conclusion (R-11b)", () => {
+  /** La transaccion que marca lotes comprometidos: un solo `Update` con GSI4. */
+  const transaccionDeMarcas = (falso: ClienteFalso) =>
+    transaccionesDe(falso).find((items) =>
+      items.some(
+        (item) =>
+          (item.Update?.ExpressionAttributeValues as Record<string, string>)?.[
+            ":gsi4pk"
+          ] === "CIERRE_PENDIENTE",
+      ),
+    ) ?? [];
+
+  it("un lote ADJUDICADO no se cierra ni pierde su centinela", async () => {
+    const falso = crearClienteFalso();
+
+    await concluirConvocatoria(
+      {
+        actual: { ...publicada, lotes: [lote("L1", "ADJUDICADO")] },
+        ventaFinalizada: true,
+        actor,
+      },
+      deps(falso),
+    );
+
+    // R-18: quien gano antes del cierre tiene derecho a terminar de pagar, y su
+    // vehiculo sigue comprometido mientras tanto.
+    const borrados = transaccionesDe(falso)
+      .flat()
+      .filter((item) => item.Delete !== undefined);
+    expect(borrados).toHaveLength(0);
+  });
+
+  it("lo inscribe en GSI4 como trabajo pendiente", async () => {
+    const falso = crearClienteFalso();
+
+    const resultado = await concluirConvocatoria(
+      {
+        actual: { ...publicada, lotes: [lote("L1", "ADJUDICADO")] },
+        ventaFinalizada: true,
+        actor,
+      },
+      deps(falso),
+    );
+
+    const marcas = transaccionDeMarcas(falso);
+    expect(marcas).toHaveLength(1);
+    expect(marcas[0]?.Update?.Key).toEqual({ PK: "CONV#C1", SK: "LOTE#L1" });
+    expect(marcas[0]?.Update?.ExpressionAttributeValues).toMatchObject({
+      ":gsi4pk": "CIERRE_PENDIENTE",
+      ":gsi4sk": "C1#L1",
+      ":estatusEsperado": "ADJUDICADO",
+    });
+    expect(resultado.ok && resultado.data.comprometidos).toBe(1);
+  });
+
+  it("le pone al dia el estatusConvocatoria desnormalizado", async () => {
+    const falso = crearClienteFalso();
+
+    await concluirConvocatoria(
+      {
+        actual: { ...publicada, lotes: [lote("L1", "ADJUDICADO")] },
+        ventaFinalizada: true,
+        actor,
+      },
+      deps(falso),
+    );
+
+    // Sin esto la copia del lote seguiria diciendo `PUBLICADA` para siempre, y
+    // en cuanto el lote volviera a `EN_OFERTA` la condicion del paso 1 de T1 lo
+    // daria por comprable bajo una convocatoria ya cerrada.
+    expect(
+      transaccionDeMarcas(falso)[0]?.Update?.ExpressionAttributeValues,
+    ).toMatchObject({ ":concluida": "CONCLUIDA" });
+  });
+
+  it("marca despues de cerrar los no vendidos", async () => {
+    const falso = crearClienteFalso();
+
+    await concluirConvocatoria(
+      {
+        actual: {
+          ...publicada,
+          lotes: [lote("L1"), lote("L2", "ADJUDICADO")],
+        },
+        ventaFinalizada: true,
+        actor,
+      },
+      deps(falso),
+    );
+
+    const transacciones = transaccionesDe(falso);
+    const cierre = transacciones.findIndex((items) =>
+      items.some((item) => item.Delete !== undefined),
+    );
+    const marca = transacciones.findIndex((items) =>
+      items.some(
+        (item) =>
+          (item.Update?.ExpressionAttributeValues as Record<string, string>)?.[
+            ":gsi4pk"
+          ] === "CIERRE_PENDIENTE",
+      ),
+    );
+
+    // El mismo orden que sostiene el resto de la conclusion: una interrupcion
+    // deja lotes cerrados o marcados bajo una convocatoria todavia publicada
+    // —el lado seguro—, nunca la convocatoria cerrada con lotes sueltos.
+    expect(cierre).toBeGreaterThanOrEqual(0);
+    expect(marca).toBeGreaterThan(cierre);
+  });
+
+  it("una convocatoria sin lotes comprometidos no escribe ninguna marca", async () => {
+    const falso = crearClienteFalso();
+
+    const resultado = await concluirConvocatoria(
+      {
+        actual: { ...publicada, lotes: [lote("L1"), lote("L2", "VENDIDO")] },
+        ventaFinalizada: true,
+        actor,
+      },
+      deps(falso),
+    );
+
+    expect(transaccionDeMarcas(falso)).toHaveLength(0);
+    expect(resultado.ok && resultado.data.comprometidos).toBe(0);
+  });
+
+  it("el resumen del evento distingue no vendidos de comprometidos", async () => {
+    const falso = crearClienteFalso();
+
+    await concluirConvocatoria(
+      {
+        actual: {
+          ...publicada,
+          lotes: [
+            lote("L1"),
+            lote("L2", "VENDIDO"),
+            lote("L3", "ADJUDICADO"),
+            lote("L4", "ADJUDICADO"),
+          ],
+        },
+        ventaFinalizada: true,
+        actor,
+      },
+      deps(falso),
+    );
+
+    const item = transaccionDeLaConvocatoria(falso)[1]?.Put?.Item as Record<
+      string,
+      unknown
+    >;
+    expect(item.datos).toMatchObject({
+      vendidos: 1,
+      noVendidos: 1,
+      comprometidos: 2,
+    });
   });
 });

@@ -406,6 +406,23 @@ vuelven a `DISPONIBLE` y **un administrador** puede incluirlos en otra convocato
 habitual es empleados primero y despues publico general, pero **la aplicacion no lo automatiza
 ni lo exige**: la inclusion es siempre una decision explicita del administrador.
 
+**R-11b — Lo que sobrevive al cierre tambien vuelve, cuando deja de estar comprometido.** Un lote
+`ADJUDICADO` sigue vivo despues de concluir (R-18). Si esa adjudicacion termina en venta, no hay
+mas que hacer. Si se cae —vencimiento, rechazo de tesoreria o cancelacion—, su vehiculo vuelve a
+`DISPONIBLE` igual que el resto de lo no vendido, sin que nadie tenga que pedirlo.
+
+> **Devolver al catalogo no es la decision que R-11 reserva a una persona.** Esa es la
+> **inclusion** en otra convocatoria, y sigue siendo del administrador. Volver a `DISPONIBLE` ya
+> era automatico al concluir; esto solo termina de aplicar la decision que entonces se tomo, sobre
+> el lote que en ese momento seguia comprometido. Por eso lo hace el barrido y no un boton: nada
+> le avisa a nadie de que el compromiso se cayo, y un boton que hay que descubrir no repara un
+> estado que nadie sabe que existe.
+
+> **Sin esto el vehiculo quedaba atrapado.** Ni vendible —su convocatoria termino— ni ofertable
+> —el centinela de R-10 lo declaraba activo en ella—, en silencio y para siempre. El sintoma
+> aparecia semanas despues, al intentar incluirlo en otra convocatoria y recibir un rechazo que
+> nada explicaba.
+
 **R-12 — Anonimato de la fila.** Un participante **jamas** ve la identidad de otro. Solo recibe
 `miTurno`, `miPosicion` y `tamanoFila`. Ninguna proyeccion enviada al cliente puede incluir el
 identificador, correo o nombre de un tercero. Aplica tambien a metadatos: no se expone cuando

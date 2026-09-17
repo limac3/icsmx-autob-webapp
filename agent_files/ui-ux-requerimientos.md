@@ -335,6 +335,19 @@ pasa los seis grupos ya resueltos.
 > categoria". Si mas adelante se quiere una linea de tiempo visual, seria un componente propio y
 > habria que justificar por que vale su mantenimiento.
 
+**La columna *Tipo* lleva dos datos: el tipo y la modalidad de adjudicacion.** Quien puede
+participar (R-01) y como se decide al ganador (R-23) son las dos preguntas que se hacen a la vez
+sobre una convocatoria, y ninguna de las dos sustituye a la otra. La modalidad va **debajo** del
+tipo, con el mismo `Text4` secundario que el folio bajo el nombre y la hora de negocio bajo el
+periodo; no se abre una quinta columna, que costaria ancho sin agrupar nada nuevo.
+
+> **Con la etiqueta breve, no con la del formulario.** El diccionario tiene las dos:
+> `modalidadesAdjudicacion` —"Automatica: gana el turno mas bajo"— explica una decision **en el
+> momento de tomarla**, y es la que usa 4.4; `modalidadesAdjudicacionBreve` —"Automatica"— es la
+> que sirve en una lista que se recorre con la vista, donde la explicacion se repetiria en cada
+> renglon. Derivar una de la otra recortando en los dos puntos seria una suposicion sobre la
+> puntuacion de cada idioma; son dos entradas y las dos estan vigiladas por `diccionarios.test.ts`.
+
 ### 4.4 `/admin/convocatorias/nueva` y `/[id]/editar`
 
 **El titulo de la pantalla es el `nombre`**, por la misma razon que en 3.2: el tipo no distingue

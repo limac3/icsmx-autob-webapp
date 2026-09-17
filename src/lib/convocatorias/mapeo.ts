@@ -186,3 +186,97 @@ export const aLote = (item: Record<string, unknown>): Lote | undefined => {
       : {}),
   };
 };
+
+// --- Diagnostico de items que no se pueden mapear ---------------------------
+//
+// **Devolver `undefined` y seguir es correcto; hacerlo en silencio no.** Los dos
+// mapeadores descartan el item mal formado para no tumbar la pantalla entera, y
+// quien llama lo filtra. El problema es que ahi termina la historia: la
+// convocatoria desaparece del listado sin error, sin hueco y sin linea de
+// registro, y con ella la unica via para llegar a sus lotes y a sus vehiculos.
+//
+// Paso de verdad. Las Etapas 14 y 15 agregaron `limiteAdjudicaciones`,
+// `limiteSolicitudes` y `modalidadAdjudicacion` como obligatorios, y las
+// convocatorias creadas antes nunca los tuvieron: tres de cinco se volvieron
+// invisibles en la pantalla de administracion, con dos vehiculos anclados a una
+// de ellas y ninguna forma de concluirla. El sintoma que llego fue "los
+// vehiculos quedaron anclados a convocatorias borradas" — y no habia ninguna
+// borrada. `desafios-implementacion.md` 78.
+//
+// Estas funciones existen para que el descarte deje rastro. No deciden nada:
+// los mapeadores siguen siendo la autoridad sobre que es mapeable, y la prueba
+// de `mapeo.test.ts` exige que ambos coincidan campo por campo, para que no
+// puedan separarse.
+
+/** Presente y utilizable, o `undefined`. Cada entrada es `[campo, valor]`. */
+type Campo = readonly [string, unknown];
+
+const nombresAusentes = (campos: readonly Campo[]): string[] =>
+  campos.filter(([, valor]) => valor === undefined).map(([campo]) => campo);
+
+/**
+ * Que le falta a un item para ser una convocatoria, por nombre de campo.
+ *
+ * Vacio significa que `aConvocatoria` lo va a mapear.
+ */
+export const camposFaltantesDeConvocatoria = (
+  item: Record<string, unknown>,
+): string[] =>
+  nombresAusentes([
+    ["convocatoriaId", texto(item.convocatoriaId)],
+    ["folio", texto(item.folio)],
+    ["nombre", texto(item.nombre)],
+    ["descripcionParticipacion", texto(item.descripcionParticipacion)],
+    ["publicadaEn", texto(item.publicadaEn)],
+    ["inicioVenta", texto(item.inicioVenta)],
+    ["finVenta", texto(item.finVenta)],
+    ["horasLiquidacion", entero(item.horasLiquidacion)],
+    ["limiteAdjudicaciones", entero(item.limiteAdjudicaciones)],
+    ["limiteSolicitudes", entero(item.limiteSolicitudes)],
+    ["creadoEn", texto(item.creadoEn)],
+    ["creadoPor", texto(item.creadoPor)],
+    ["estatus", esEstatusConvocatoria(item.estatus) ? item.estatus : undefined],
+    ["tipo", esTipo(item.tipo) ? item.tipo : undefined],
+    [
+      "modalidadAdjudicacion",
+      esModalidad(item.modalidadAdjudicacion)
+        ? item.modalidadAdjudicacion
+        : undefined,
+    ],
+  ]);
+
+/** Lo mismo para un lote. Vacio significa que `aLote` lo va a mapear. */
+export const camposFaltantesDeLote = (
+  item: Record<string, unknown>,
+): string[] =>
+  nombresAusentes([
+    ["loteId", texto(item.loteId)],
+    ["convocatoriaId", texto(item.convocatoriaId)],
+    ["vehiculoId", texto(item.vehiculoId)],
+    ["precio", entero(item.precio)],
+    ["contadorTurnos", entero(item.contadorTurnos)],
+    ["inicioVenta", texto(item.inicioVenta)],
+    ["finVenta", texto(item.finVenta)],
+    ["horasLiquidacion", entero(item.horasLiquidacion)],
+    ["limiteAdjudicaciones", entero(item.limiteAdjudicaciones)],
+    ["limiteSolicitudes", entero(item.limiteSolicitudes)],
+    ["creadoEn", texto(item.creadoEn)],
+    ["creadoPor", texto(item.creadoPor)],
+    ["estatus", esEstatusLote(item.estatus) ? item.estatus : undefined],
+    [
+      "tipoConvocatoria",
+      esTipo(item.tipoConvocatoria) ? item.tipoConvocatoria : undefined,
+    ],
+    [
+      "estatusConvocatoria",
+      esEstatusConvocatoria(item.estatusConvocatoria)
+        ? item.estatusConvocatoria
+        : undefined,
+    ],
+    [
+      "modalidadAdjudicacion",
+      esModalidad(item.modalidadAdjudicacion)
+        ? item.modalidadAdjudicacion
+        : undefined,
+    ],
+  ]);

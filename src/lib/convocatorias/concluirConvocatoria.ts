@@ -18,22 +18,30 @@ import "server-only";
 // Se recorren **todos** los lotes, no solo los que se cierran aqui: detras de
 // un lote `ADJUDICADO` —o de uno `VENDIDO`— puede quedar gente formada, y esa
 // fila tampoco va a avanzar ya.
+//
+// **Y lo que sobrevive queda inscrito como trabajo pendiente (R-11b).** Un lote
+// `ADJUDICADO` conserva su plazo, asi que en este momento no se puede saber
+// como termina: si se paga, se vende y no hay nada mas que hacer; si el plazo
+// vence, tesoreria rechaza o el participante cancela, el lote vuelve a
+// `EN_OFERTA` dentro de una convocatoria que ya nadie puede comprar y su
+// vehiculo se queda sin camino de vuelta al catalogo. Ese desenlace no lo puede
+// resolver la conclusion —depende de algo que aun no ocurre—, asi que lo unico
+// que hace aqui es dejarlo anotado en GSI4 para que el barrido lo cierre cuando
+// pase (`cerrarLoteTrasConclusion.ts`).
 
 import { TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 
-import { clave, gsi2 } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
 import { MAXIMO_ITEMS_POR_TRANSACCION } from "@/lib/data/transacciones";
-import { transicion } from "@/lib/domain/transiciones";
 import { cerrarFilaDelLote } from "@/lib/fila/cerrarFilaDelLote";
 import type { ActorUsuario } from "@/types/auditoria";
 import type {
   ConvocatoriaConLotes,
   EstatusConvocatoria,
 } from "@/types/convocatoria";
-import type { Lote } from "@/types/lote";
 import { exito, fallo, type Resultado } from "@/types/resultado";
+import { itemParaMarcarComprometido, itemsParaCerrar } from "./cierreDeLote";
 import { aplicarTransicion } from "./transicionDeConvocatoria";
 
 export type EntradaConcluirConvocatoria = {
@@ -51,6 +59,12 @@ export type ResultadoDeConclusion = {
   noVendidos: number;
   /** Solicitudes que pasaron a `NO_ADJUDICADA` al cerrar las filas (R-18). */
   filasCerradas: number;
+  /**
+   * Lotes que sobreviven `ADJUDICADO` y quedan inscritos como trabajo
+   * pendiente. Cada uno terminara en venta o, si el compromiso se cae, en un
+   * cierre tardio del barrido (R-11b).
+   */
+  comprometidos: number;
 };
 
 /**
@@ -69,6 +83,9 @@ export const ITEMS_POR_LOTE = 3;
 export const LOTES_POR_TANDA = Math.floor(
   (MAXIMO_ITEMS_POR_TRANSACCION - 5) / ITEMS_POR_LOTE,
 );
+
+/** Marcar un lote comprometido cuesta **un** item, asi que caben muchos mas. */
+export const MARCAS_POR_TANDA = MAXIMO_ITEMS_POR_TRANSACCION - 5;
 
 export const concluirConvocatoria = async (
   entrada: EntradaConcluirConvocatoria,
@@ -93,6 +110,9 @@ export const concluirConvocatoria = async (
   const vendidos = actual.lotes.filter(
     (lote) => lote.estatus === "VENDIDO",
   ).length;
+  const comprometidos = actual.lotes.filter(
+    (lote) => lote.estatus === "ADJUDICADO",
+  );
 
   const cliente = clienteDe(deps);
   const tabla = nombreDeTabla();
@@ -104,7 +124,6 @@ export const concluirConvocatoria = async (
       itemsParaCerrar({
         lote,
         convocatoriaId: actual.convocatoriaId,
-        actor: entrada.actor,
         momento,
         tabla,
       }),
@@ -113,11 +132,45 @@ export const concluirConvocatoria = async (
     if (items.length === 0) continue;
 
     try {
-      await cliente.send(new TransactWriteCommand({ TransactItems: items }));
+      await cliente.send(
+        new TransactWriteCommand({
+          TransactItems: items.map(({ item }) => item),
+        }),
+      );
     } catch {
       // Se corta sin marcar la convocatoria. El estado a medias son lotes ya
       // cerrados bajo una convocatoria todavia publicada: no comprables, que es
       // el lado seguro. Repetir la operacion reanuda desde donde quedo.
+      return fallo("conflicto_concurrencia");
+    }
+  }
+
+  // Los que sobreviven se inscriben como trabajo pendiente (R-11b). Va en su
+  // propia tanda —un item por lote, no tres— y **despues** de cerrar los que no
+  // se vendieron, para conservar el orden que hace inofensiva una interrupcion:
+  // lo que queda a medias son lotes cerrados o marcados bajo una convocatoria
+  // todavia publicada, nunca al reves.
+  for (
+    let inicio = 0;
+    inicio < comprometidos.length;
+    inicio += MARCAS_POR_TANDA
+  ) {
+    const tanda = comprometidos.slice(inicio, inicio + MARCAS_POR_TANDA);
+    try {
+      await cliente.send(
+        new TransactWriteCommand({
+          TransactItems: tanda.map(
+            (lote) =>
+              itemParaMarcarComprometido({
+                lote,
+                convocatoriaId: actual.convocatoriaId,
+                momento,
+                tabla,
+              }).item,
+          ),
+        }),
+      );
+    } catch {
       return fallo("conflicto_concurrencia");
     }
   }
@@ -140,7 +193,12 @@ export const concluirConvocatoria = async (
       evento: "CONCLUIR",
       tipoDeEvento: "CONVOCATORIA_CONCLUIDA",
       actor: entrada.actor,
-      datos: { vendidos, noVendidos: sinVender.length, filasCerradas },
+      datos: {
+        vendidos,
+        noVendidos: sinVender.length,
+        filasCerradas,
+        comprometidos: comprometidos.length,
+      },
     },
     deps,
   );
@@ -151,86 +209,6 @@ export const concluirConvocatoria = async (
     vendidos,
     noVendidos: sinVender.length,
     filasCerradas,
+    comprometidos: comprometidos.length,
   });
-};
-
-/** Las tres escrituras que cierran un lote sin vender. */
-const itemsParaCerrar = (entrada: {
-  lote: Lote;
-  convocatoriaId: string;
-  actor: ActorUsuario;
-  momento: string;
-  tabla: string;
-}): Record<string, unknown>[] => {
-  const { lote, convocatoriaId, tabla, momento } = entrada;
-
-  const destinoDelLote = transicion(
-    "lote",
-    lote.estatus,
-    "CONCLUIR_CONVOCATORIA",
-  );
-  // `sinVender` ya filtro por `EN_OFERTA`, asi que la transicion existe. El
-  // guardado esta para que un cambio futuro en la maquina no produzca un
-  // `undefined` grabado como estatus.
-  if (!destinoDelLote) return [];
-
-  return [
-    {
-      Update: {
-        TableName: tabla,
-        Key: clave.lote(convocatoriaId, lote.loteId),
-        UpdateExpression: "SET #estatus = :destino, #actualizadoEn = :momento",
-        ConditionExpression:
-          "attribute_exists(SK) AND #estatus = :estatusEsperado",
-        ExpressionAttributeNames: {
-          "#estatus": "estatus",
-          "#actualizadoEn": "actualizadoEn",
-        },
-        ExpressionAttributeValues: {
-          ":destino": destinoDelLote,
-          ":estatusEsperado": lote.estatus,
-          ":momento": momento,
-        },
-      },
-    },
-    {
-      // Liberar el centinela es lo que habilita la reoferta de R-11. Solo se
-      // libera el de los lotes sin vender: el de un lote adjudicado tiene que
-      // seguir puesto mientras alguien termina de pagarlo.
-      Delete: {
-        TableName: tabla,
-        Key: clave.centinelaVehiculoActivo(lote.vehiculoId),
-        ConditionExpression: "attribute_exists(SK)",
-      },
-    },
-    {
-      Update: {
-        TableName: tabla,
-        Key: clave.vehiculo(lote.vehiculoId),
-        // Solo se reescribe `GSI2PK`: la clave de orden lleva la fecha de
-        // **creacion** del vehiculo, que no cambia, asi que no hace falta
-        // leerlo para conocerla.
-        UpdateExpression:
-          "SET #estatus = :disponible, #actualizadoEn = :momento," +
-          " #gsi2pk = :gsi2pk REMOVE #convocatoriaId",
-        ConditionExpression:
-          "attribute_exists(PK) AND #estatus = :estatusEsperado",
-        ExpressionAttributeNames: {
-          "#estatus": "estatus",
-          "#convocatoriaId": "convocatoriaId",
-          "#actualizadoEn": "actualizadoEn",
-          "#gsi2pk": "GSI2PK",
-        },
-        ExpressionAttributeValues: {
-          ":disponible": "DISPONIBLE",
-          // El vehiculo de un lote en oferta esta `EN_CONVOCATORIA`; si no lo
-          // esta, algo mas lo movio y la transaccion debe fallar en vez de
-          // pisarlo.
-          ":estatusEsperado": "EN_CONVOCATORIA",
-          ":momento": momento,
-          ":gsi2pk": gsi2.particionDeEstatus("VEH", "DISPONIBLE").GSI2PK,
-        },
-      },
-    },
-  ];
 };

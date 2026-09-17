@@ -58,6 +58,10 @@
     "AUTOMATICA": "Automática: gana el turno más bajo",
     "MANUAL": "Manual: una persona decide"
   },
+  "modalidadesAdjudicacionBreve": {
+    "AUTOMATICA": "Automática",
+    "MANUAL": "Manual"
+  },
   "tiposConvocatoria": {
     "EMPLEADOS": "De empleados",
     "PUBLICO_GENERAL": "De público general"
@@ -73,6 +77,7 @@
     "adjudicacion_activa": "Ya tienes un vehículo adjudicado",
     "limite_alcanzado": "Alcanzaste el límite de vehículos de esta convocatoria",
     "plazo_vencido": "El plazo de pago venció",
+    "limite_de_tasa": "Demasiados intentos seguidos; espera unos segundos e inténtalo de nuevo",
     "conflicto_concurrencia": "Alguien más actuó al mismo tiempo; inténtalo de nuevo",
     "dependencia_no_disponible": "Un servicio no responde; inténtalo más tarde"
   },
@@ -133,6 +138,7 @@
     "CONVOCATORIA_OCULTA": "Convocatoria oculta",
     "CONVOCATORIA_REACTIVADA": "Convocatoria reactivada",
     "CONVOCATORIA_CONCLUIDA": "Convocatoria concluida",
+    "LOTE_CERRADO_TRAS_CONCLUSION": "Lote cerrado tras la conclusión",
     "SOLICITUD_CREADA": "Solicitud de compra registrada",
     "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Solicitud cancelada por el participante",
     "SOLICITUD_CANCELADA_POR_LIMITE": "Solicitud cancelada por exceder el límite",

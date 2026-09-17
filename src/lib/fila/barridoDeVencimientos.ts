@@ -29,11 +29,26 @@
 // Antes eso duraba hasta que alguien concluyera la convocatoria; aqui se repara
 // en la corrida siguiente. Es el mismo recorrido de lotes que el punto anterior:
 // una condicion mas, ninguna lectura extra.
+//
+// **Y cierra los lotes que sobrevivieron a una conclusion y se cayeron
+// despues** (R-11b, GSI4 `CIERRE_PENDIENTE`). Un lote `ADJUDICADO` sigue vivo
+// tras concluir la convocatoria (R-18); si su compromiso se cae, los caminos de
+// liberacion lo devuelven a `EN_OFERTA` para el siguiente de la fila, solo que
+// ahi ya no hay fila ni convocatoria. Sin esto el vehiculo se quedaba
+// `EN_CONVOCATORIA` con su centinela puesto: ni vendible ni reofertable, para
+// siempre. Es una `Query` a una particion que contiene **exactamente** los
+// lotes que pueden llegar a ese estado y nada mas, asi que el coste no crece
+// con el historico de convocatorias concluidas.
 
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 
+import {
+  cerrarLoteTrasConclusion,
+  soltarMarcaDeCierre,
+} from "@/lib/convocatorias/cerrarLoteTrasConclusion";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { listarConvocatorias } from "@/lib/convocatorias/listarConvocatorias";
+import { aLote } from "@/lib/convocatorias/mapeo";
 import { clave, gsi4, NOMBRES_DE_INDICE, PREFIJO } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { clienteDe, resolver, type DepsDeServicio } from "@/lib/data/deps";
@@ -41,6 +56,7 @@ import { diaDeNegocio } from "@/lib/domain/fechas";
 import { registrar } from "@/lib/observabilidad/registro";
 import { conTraza } from "@/lib/observabilidad/traza";
 import type { Solicitud } from "@/types/fila";
+import type { Lote } from "@/types/lote";
 import { adjudicarLote } from "./adjudicarLote";
 import { cerrarFilaDelLote } from "./cerrarFilaDelLote";
 import { aSolicitud } from "./mapeo";
@@ -72,6 +88,15 @@ export type ResultadoDeBarrido = {
    * que algo esta fallando aguas arriba en cada venta.
    */
   filasCerradas: number;
+  /**
+   * Vehiculos devueltos al catalogo al cerrar un lote que sobrevivio a la
+   * conclusion de su convocatoria y se cayo despues (R-11b).
+   *
+   * Tampoco entra en `errores`: es trabajo previsto, no un fallo. Su valor
+   * normal es cero la mayoria de las corridas y distinto de cero justo despues
+   * de que venza el plazo de una adjudicacion que sobrevivio a un cierre.
+   */
+  lotesLiberados: number;
 };
 
 export const barridoDeVencimientos = async (
@@ -111,6 +136,7 @@ const ejecutarBarrido = async (
     errores: 0,
     lotesRecuperados: 0,
     filasCerradas: 0,
+    lotesLiberados: 0,
   };
 
   for (let i = 0; i < dias; i += 1) {
@@ -124,6 +150,11 @@ const ejecutarBarrido = async (
   }
 
   await reconciliarLotesPublicados(resultado, deps);
+  // Va **despues** de los vencimientos del dia a proposito: una adjudicacion que
+  // acaba de vencer en una convocatoria concluida deja el lote `EN_OFERTA` en
+  // este mismo recorrido, y asi se cierra en la misma corrida en vez de esperar
+  // a la siguiente.
+  await reconciliarCierresPendientes(resultado, deps);
 
   return resultado;
 };
@@ -354,4 +385,96 @@ const reconciliarLotesPublicados = async (
   }
 };
 
-export const __test__ = { leerVencidasDelDia, hayFilaViva, resolverVencida };
+/**
+ * R-11b — los lotes que sobrevivieron a una conclusion, resueltos cuando su
+ * desenlace por fin se conoce.
+ *
+ * La particion `CIERRE_PENDIENTE` de GSI4 contiene exactamente los lotes que
+ * estaban `ADJUDICADO` en el momento de concluir y nada mas, asi que aqui no se
+ * filtra: cada item leido es trabajo real o trabajo recien terminado. Tres
+ * desenlaces posibles, y los tres salen del indice:
+ *
+ *  - **`EN_OFERTA`** — el compromiso se cayo. Es el caso que este mecanismo
+ *    existe para resolver: se cierra el lote y su vehiculo vuelve al catalogo.
+ *  - **`ADJUDICADO`** — sigue vivo, con plazo corriendo. Se deja la marca
+ *    puesta; la corrida que lo encuentre resuelto lo sacara.
+ *  - **cualquier otro** (`VENDIDO` el dia bueno, `NO_VENDIDO` o `RETIRADO` si
+ *    otra corrida se adelanto) — no hay nada que reparar, solo que quitar la
+ *    marca.
+ */
+const reconciliarCierresPendientes = async (
+  resultado: ResultadoDeBarrido,
+  deps: DepsDeServicio,
+): Promise<void> => {
+  const pendientes = await leerCierresPendientes(deps);
+
+  for (const lote of pendientes) {
+    // Sigue comprometido: no es trabajo pendiente todavia, es trabajo que
+    // todavia no se sabe si hara falta.
+    if (lote.estatus === "ADJUDICADO") continue;
+
+    if (lote.estatus !== "EN_OFERTA") {
+      const soltado = await soltarMarcaDeCierre({ lote }, deps);
+      if (!soltado.ok) {
+        registrar("warn", "cerrarLoteTrasConclusion", {
+          loteId: lote.loteId,
+          convocatoriaId: lote.convocatoriaId,
+          desenlace: "rechazado",
+          error: soltado.error,
+          descripcion: "no se pudo soltar la marca de cierre pendiente",
+        });
+      }
+      continue;
+    }
+
+    const cierre = await cerrarLoteTrasConclusion({ lote }, deps);
+    if (cierre.ok) {
+      resultado.lotesLiberados += 1;
+      continue;
+    }
+
+    // Fuera de `errores` por la misma razon que el cierre de fila de arriba:
+    // esa cuenta mide vencidas sin resolver y es lo que dispara
+    // `vencimientos-sin-resolver`. Un cierre tardio que falla se reintenta solo
+    // en la corrida siguiente —la marca sigue en el indice— y no compromete
+    // ninguna adjudicacion viva.
+    registrar("warn", "cerrarLoteTrasConclusion", {
+      loteId: lote.loteId,
+      convocatoriaId: lote.convocatoriaId,
+      desenlace: "rechazado",
+      error: cierre.error,
+      descripcion: "el cierre tardio no pudo completarse",
+    });
+  }
+};
+
+/** `Query` a la particion fija de cierres pendientes. Sin filtro: es exacta. */
+const leerCierresPendientes = async (deps: DepsDeServicio): Promise<Lote[]> => {
+  const salida = await clienteDe(deps).send(
+    new QueryCommand({
+      TableName: nombreDeTabla(),
+      IndexName: NOMBRES_DE_INDICE.trabajoPendiente,
+      KeyConditionExpression: "GSI4PK = :pk",
+      ExpressionAttributeValues: {
+        // "relleno" solo completa la firma; lo que importa es la particion, que
+        // es fija. Mismo atajo que en `leerVencidasDelDia`.
+        ":pk": gsi4.cierrePendiente("relleno", "relleno").GSI4PK,
+      },
+    }),
+  );
+
+  const lotes: Lote[] = [];
+  for (const item of salida.Items ?? []) {
+    const lote = aLote(item);
+    if (lote) lotes.push(lote);
+  }
+  return lotes;
+};
+
+export const __test__ = {
+  leerVencidasDelDia,
+  hayFilaViva,
+  resolverVencida,
+  leerCierresPendientes,
+  reconciliarCierresPendientes,
+};

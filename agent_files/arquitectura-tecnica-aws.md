@@ -97,13 +97,24 @@ tiene mas formas de fallar que un servicio de AWS, y ninguna puede tocar la tran
 
 ### 2.6 Lambda programada — barrido
 
-Se ejecuta cada pocos minutos y realiza dos tareas:
+Se ejecuta cada pocos minutos y realiza tres tareas, todas sobre GSI4:
 
-1. Consulta GSI4 (`VENCE#<dia>`) las adjudicaciones vencidas y aplica T5.
-2. Consulta GSI4 (`OUTBOX_PENDIENTE`) y envia los correos pendientes.
+1. Consulta `VENCE#<dia>` las adjudicaciones vencidas y aplica T5. De paso reconcilia los lotes
+   de las convocatorias `PUBLICADA`: los que quedaron libres con fila viva, y los ya cerrados
+   cuya fila nadie alcanzo a cerrar.
+2. Consulta `OUTBOX_PENDIENTE` y envia los correos pendientes.
+3. Consulta `CIERRE_PENDIENTE` y cierra los lotes que sobrevivieron a la conclusion de su
+   convocatoria y cuyo compromiso se cayo despues (R-11b): el lote queda `NO_VENDIDO` y su
+   vehiculo vuelve al catalogo. Sin esto el vehiculo quedaba invendible e inofertable a la vez.
 
 **Idempotente:** cada operacion es condicional, asi que dos ejecuciones simultaneas o una
 repetida no producen doble efecto. Se puede reejecutar sin miedo (`runbooks.md`).
+
+> **Las tres particiones son dispersas**, asi que el trabajo de cada corrida es proporcional a lo
+> que falta por hacer y no al tamano del historico. Es lo que permite que la tercera tarea exista
+> sin recorrer las convocatorias concluidas una por una — un recorrido que ademas habria empezado
+> a perder las mas recientes al superar el tope de `listarConvocatorias`
+> (`modelo-datos-dynamodb.md` 5.6).
 
 ### 2.7 EAS
 
@@ -361,6 +372,7 @@ las alarmas.
 | --- | --- | --- |
 | Registro estructurado | Una linea por operacion, con `correlacionId` compartido con la bitacora | `registro.ts` |
 | Trazas | Desenlace y duracion de las operaciones criticas: solicitar, adjudicar, vencer, mas el barrido y el outbox | `traza.ts` (`conTraza`) |
+| Intentos que no llegan al motor | Una linea por intento rechazado antes de `solicitarCompra`: estrangulado por tasa, o llegado antes de la apertura | `registro.ts`, operacion `intentoDeSolicitud` |
 | Diagnostico de transacciones | Solo en el fallo: codigo crudo de DynamoDB, posicion e intencion del item que cancelo | `data/transacciones.ts` |
 | Metricas y alarmas | Metricas nativas de Lambda y DynamoDB, mas filtros de metrica sobre el registro del barrido | `amplify/alarmas.ts` |
 
@@ -389,6 +401,39 @@ y **combinacion de dimensiones**: `loteId` es de cardinalidad ilimitada y crecie
 existido, para siempre. Lo que se necesita de ese dato es responder preguntas puntuales —"que
 paso en el lote L7"—, y eso lo responde una consulta de Logs Insights sobre el registro, que no
 se cobra por serie. Las consultas concretas estan en `runbooks.md`.
+
+### 7.2.1 La equidad de la apertura: que se registra y por que no hay alarma
+
+La Etapa 16 agrego una senal y **deliberadamente ninguna alarma**. Las dos decisiones salen de lo
+mismo que ya dice 7.2 y 7.3.
+
+**La senal.** La operacion `intentoDeSolicitud` deja una linea de nivel `warn` por cada intento
+que **no llega** al motor de fila, con dos formas:
+
+| Campos | Que dice |
+| --- | --- |
+| `error: "limite_de_tasa"`, `intentosEnVentana` | El participante excedio el umbral. `intentosEnVentana` sigue creciendo despues de rechazar, asi que distingue un doble clic de un bucle |
+| `error: "invalid_state"`, `anticipacionMs` | Llego antes de la apertura, y cuanto antes. Distingue a quien se adelanto un segundo de quien sondea desde hace una hora |
+
+Se escribe **solo en el rechazo**, nunca en el camino feliz: el volumen queda proporcional al
+abuso y no al uso. Estos intentos no producian ninguna senal antes — el anticipado lo rechaza la
+guarda de `solicitud:crear`, asi que `solicitarCompra` no llega a ejecutarse y `conTraza` no lo
+ve; y como no es una transicion de estado, tampoco le corresponde un evento de bitacora.
+
+**La evidencia durable no es el log.** Son los items `PART#<pid> / TASA#<convId>#<ventana>`
+(modelo-datos 4.3.1), que se consultan por participante y no caducan; y el desfase de cada
+solicitud respecto de la apertura, que **ya era derivable** de `solicitadoEn` menos `inicioVenta`
+sin escribir nada nuevo. El log sirve para diagnosticar; esos dos, para responder preguntas
+meses despues.
+
+**Por que no hay alarma.** Estas lineas las escribe el **SSR**, y 7.3 ya establecio que el grupo
+de logs del SSR lo crea Amplify Hosting y no esta pila: no hay a que colgarle un filtro de
+metrica. Desplegar uno de todas formas produciria "un filtro que compila, se despliega y nunca
+coincide con nada", que es el fallo que 7.3 advierte que **no da error, da silencio**. Se
+descarto tambien publicar una metrica propia con `PutMetricData` desde el camino de la solicitud:
+seria una llamada de red mas en el instante que R26 senala como el mas caro, para vigilar algo
+que no exige reaccion en minutos. Las consultas de Logs Insights estan en `runbooks.md` y son la
+forma prevista de mirarlo.
 
 ### 7.3 Alarmas, y por que cada una toma su senal de donde la toma
 

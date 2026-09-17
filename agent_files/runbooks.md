@@ -47,6 +47,8 @@ mira.
 1. Ultima ejecucion de la Lambda y su error.
 2. `Query` GSI4 `VENCE#<dia>` con `GSI4SK <= ahora` → cuantas adjudicaciones vencidas quedan.
 3. Revisa varios dias: el indice esta particionado por dia de vencimiento.
+4. `Query` GSI4 `CIERRE_PENDIENTE` → lotes que sobrevivieron a una conclusion. Los que esten
+   `EN_OFERTA` son vehiculos atrapados que el barrido deberia haber liberado (R-11b, R-15).
 
 **Resolucion:**
 
@@ -57,6 +59,24 @@ mira.
 
 **Si no se puede restaurar pronto:** no hace falta accion manual masiva. Cada lectura de fila
 resuelve su propio vencimiento. Comunica la demora y prioriza el arreglo.
+
+**En local el barrido no corre solo**, asi que para reproducir o para desatascar un sandbox:
+
+```bash
+npm run barrido          # ejecuta el barrido real contra el sandbox y publica su informe
+BARRIDO_DIAS=10 npm run barrido    # mas dias de GSI4, si lleva tiempo sin correr
+```
+
+Despachar el outbox es aparte y **no viene activado** (`BARRIDO_OUTBOX=1`): `.env.local` trae
+credenciales de CES reales, asi que despacharlo manda correo de verdad.
+
+> **Antes de escalar unos `errores` altos, comprueba de quien son.** En un sandbox la causa mas
+> probable no es un fallo sino **basura de una prueba de integracion**: solicitudes cuya
+> convocatoria se borro al terminar, que conservan sus claves de GSI4 y que el barrido no puede
+> resolver porque no puede leer su convocatoria. Se distinguen por el prefijo del
+> `convocatoriaId` en la particion `VENCE#<dia>` — los fixtures lo llevan (`e10-`, `carga-`...).
+> Paso de verdad y mantuvo la alarma encendida desde la Etapa 10: `desafios-implementacion.md` 77.
+> Se limpian borrando las particiones `LOTE#<loteId>` correspondientes; ningun dato real las usa.
 
 ---
 
@@ -261,6 +281,31 @@ El incidente mas delicado. Se responde con datos, no con opiniones.
 4. Si algo **no** cuadra, es un incidente grave: congela la convocatoria afectada, escala y
    preserva la evidencia. No intentes arreglarlo antes de documentarlo.
 
+### Si la sospecha es "alguien automatizo la apertura"
+
+Es una pregunta distinta y se responde aparte, porque **la respuesta honesta suele ser que si y
+que no rompio ninguna regla**. La medicion de la Etapa 16 lo dejo claro: quien dispara en el
+milisegundo exacto de `inicioVenta` obtiene el primer turno y ninguna persona que reacciona en
+200-400 ms queda por delante. Eso no es un fallo del sistema ni una trampa demostrable; es la
+consecuencia de que la fila se gane por orden de llegada.
+
+Lo que si se puede poner sobre la mesa, con datos:
+
+1. **A cuantos milisegundos de la apertura llego cada quien.** `solicitadoEn` menos el
+   `inicioVenta` del lote, sin consultar nada nuevo. Un desfase de unidades de milisegundos en
+   varias convocatorias distintas no es una acusacion, pero es un hecho.
+2. **Cuantas veces lo intento antes de que abriera**, con la consulta `intentoDeSolicitud` de
+   abajo.
+3. **A que tasa lo intento**, leyendo los contadores del participante:
+   `PK = "PART#<participanteId>" AND begins_with(SK, "TASA#")`. Cada item es una ventana de diez
+   segundos con su cuenta de intentos.
+
+**La aplicacion no sanciona a nadie por esto y no debe hacerlo** (regla 17 de CLAUDE.md): un
+script y una persona con buena conexion que tenia la pagina abierta se parecen demasiado, y el
+castigo automatico seria una acusacion invisible que el afectado no puede rebatir. Entrega la
+evidencia a quien tenga que decidir. Si lo que se busca es que llegar primero deje de importar,
+la respuesta no es un umbral: es la **modalidad manual** de adjudicacion (R-23).
+
 ---
 
 ## R-9 — Fallo de certificado desde Node en la maquina de desarrollo
@@ -274,7 +319,20 @@ AWS.
 
 1. `echo $env:NODE_EXTRA_CA_CERTS` — debe apuntar al PEM del CA corporativo.
 2. Si falta, configuralo como variable de usuario y reinicia la terminal.
-3. Si el CA rotó, reexporta el PEM desde el almacen de Windows.
+3. **Que la variable este puesta no basta: el PEM puede tener un CA ya rotado.** Compara la
+   huella del archivo contra la del almacen — si difieren, reexporta:
+
+   ```powershell
+   (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $env:NODE_EXTRA_CA_CERTS).Thumbprint
+   (Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -like '*CrowdStrike*').Thumbprint
+   ```
+
+   CrowdStrike reemplaza el CA sin esperar a que expire —el viejo sigue vigente por meses— asi
+   que la fecha de vencimiento del PEM no delata nada. Deja ambos certificados en el bundle: es
+   un archivo concatenable y durante la rotacion conviven las dos cadenas.
+4. Reinicia el proceso afectado. Node lee `NODE_EXTRA_CA_CERTS` una sola vez, al primer uso de
+   TLS, y lo cachea mientras viva el proceso: una sesion ya abierta seguira fallando aunque el
+   PEM ya este corregido.
 
 **Nunca uses `NODE_TLS_REJECT_UNAUTHORIZED=0`.** Desactiva la verificacion TLS de todo el
 proceso, incluidas las llamadas a AWS.
@@ -789,6 +847,94 @@ Ver **R-10**.
 
 ---
 
+## R-16 — Una convocatoria no aparece en la pantalla de administracion
+
+**Sintoma:** las cuentas de las pestañas no cuadran con lo que hay en la tabla. Suele llegar
+disfrazado: *"tengo vehiculos en convocatoria y ninguna convocatoria", "creo que se borro y los
+vehiculos quedaron anclados"*.
+
+**Lo primero, porque descarta la hipotesis mas comun:** una convocatoria **no se puede borrar**.
+La aplicacion no tiene accion, servicio ni transicion que la elimine. Si no aparece, esta ahi y no
+se esta pudiendo leer.
+
+**Impacto:** alto y silencioso. Una convocatoria ilegible no se puede concluir, asi que sus
+vehiculos quedan `EN_CONVOCATORIA` con su centinela puesto y fuera del catalogo, sin ninguna via
+desde la interfaz.
+
+**Diagnostico:**
+
+1. La linea de registro lo dice directamente:
+
+```
+fields @timestamp, message.convocatoriaId, message.camposFaltantes, message.error
+| filter message.operacion in ["listarConvocatorias", "obtenerConvocatoria"]
+    and message.desenlace = "rechazado"
+| sort @timestamp desc
+```
+
+2. Sin acceso a los logs, comparar la tabla base contra lo que se ve: un `Scan` filtrando
+   `SK = "META"` y `begins_with(PK, "CONV#")` da el total real.
+3. `message.camposFaltantes` nombra el campo exacto. Un item que existe y no se mapea casi siempre
+   es un **atributo obligatorio agregado despues** de que se creara esa fila.
+
+**Resolucion:** escribir los atributos que faltan en el item de la convocatoria **y en cada uno de
+sus lotes** —los desnormalizados viven en los dos sitios y el lote los exige igual—, con
+`attribute_not_exists` de cada uno en la condicion para no pisar valores buenos. Elegir los
+valores que esa convocatoria **tenia** por comportamiento cuando se creo, no los que hoy parezcan
+mejores: cambiarlos le reescribe las reglas a una fila que ya existia.
+
+> Es una escritura directa a DynamoDB, con todo lo que advierte la seccion 0: no genera evento de
+> auditoria. Se hace asi porque no hay camino por la aplicacion — editar una convocatoria solo se
+> permite en `BORRADOR`, y el caso tipico es una `PUBLICADA`. Paso de verdad y esta contado en
+> `desafios-implementacion.md` 78.
+
+**Verificacion:** recargar la pantalla; las cuentas de las pestañas deben cuadrar con la tabla. Si
+la convocatoria aparece pero le falta un vehiculo, el que no se mapea es el **lote** — misma
+consulta, `message.error = "lote_no_mapeable"`.
+
+---
+
+## R-15 — Un vehiculo no se deja incluir en otra convocatoria
+
+**Sintoma:** al agregar un vehiculo a una convocatoria nueva, la operacion falla. El vehiculo
+aparece `EN_CONVOCATORIA` y la convocatoria a la que apunta ya esta `CONCLUIDA`.
+
+**Impacto:** bajo por vehiculo, pero silencioso y acumulativo: el activo queda fuera del catalogo
+sin que nadie se entere hasta que alguien intenta reofertarlo.
+
+**Que lo causa.** Es R-11b. Un lote `ADJUDICADO` sobrevive a la conclusion (R-18); si despues
+vence el plazo, tesoreria rechaza el pago o el participante cancela, el lote vuelve a `EN_OFERTA`
+dentro de una convocatoria que ya nadie puede comprar. El barrido lo cierra solo — **este runbook
+es para cuando no lo hizo**.
+
+**Diagnostico:**
+
+1. `Query` GSI4 `CIERRE_PENDIENTE` → los lotes que sobrevivieron a una conclusion. Si el lote del
+   vehiculo **esta** ahi con `estatus = EN_OFERTA`, el barrido deberia haberlo cerrado: mira R-1,
+   probablemente no esta corriendo.
+2. Si **no esta** ahi, la marca nunca se puso. Dos causas posibles: la conclusion se interrumpio
+   a mitad, o la convocatoria se concluyo antes de que existiera este mecanismo.
+3. Confirma el diagnostico leyendo el lote: `PK = CONV#<convocatoriaId>`, `SK = LOTE#<loteId>`.
+   Un residuo tiene `estatus = EN_OFERTA` con la convocatoria `CONCLUIDA`.
+
+**Resolucion:**
+
+- **Si el barrido no corria:** arreglalo (R-1) e invocalo. Es idempotente y cierra el lote solo.
+- **Si falta la marca:** ponle al lote `GSI4PK = "CIERRE_PENDIENTE"` y
+  `GSI4SK = "<convocatoriaId>#<loteId>"`, y deja que el barrido siguiente haga el resto. Es
+  preferible a cerrar el lote a mano: asi el cierre pasa por la misma transaccion de siempre y
+  deja su evento `LOTE_CERRADO_TRAS_CONCLUSION`.
+
+**Verificacion:** el lote queda `NO_VENDIDO`, el vehiculo `DISPONIBLE` sin `convocatoriaId`, el
+centinela `VEH#<id>/ACTIVO` ya no existe y hay un `LOTE_CERRADO_TRAS_CONCLUSION` en
+`AUDIT#LOTE#<loteId>`. Con eso, incluirlo en otra convocatoria vuelve a funcionar.
+
+> **No cierres el lote editando items sueltos.** Las tres escrituras de T9 van juntas por una
+> razon: un vehiculo `DISPONIBLE` cuyo centinela sigue puesto es peor que el problema original —se
+> deja incluir en otra convocatoria y despues falla al adjudicar.
+
+---
+
 ## Consultas de diagnostico frecuentes
 
 | Necesidad | Consulta |
@@ -798,6 +944,7 @@ Ver **R-10**.
 | Historia de un lote | `Query` `PK=AUDIT#LOTE#<loteId>` |
 | Vencidos pendientes | `Query` GSI4 `VENCE#<dia>`, `GSI4SK <= ahora` |
 | Correos atorados | `Query` GSI4 `OUTBOX_PENDIENTE` |
+| Vehiculos atrapados en una convocatoria concluida | `Query` GSI4 `CIERRE_PENDIENTE`; mirar los `EN_OFERTA` (R-15) |
 | Actividad de un participante | `Query` `PK=AUDIT#PART#<participanteId>` |
 | Todo lo de un dia | `Query` GSI2 `AUDIT#<yyyy-mm-dd>` |
 
@@ -822,6 +969,29 @@ fields @timestamp, message.operacion, message.desenlace, message.estado, message
 | filter message.loteId = "L7"
 | sort @timestamp asc
 ```
+
+**Quien disparo contra la ventana cerrada, y cuanto se adelanto** (Etapa 16). Solo aparecen los
+intentos rechazados; los que entraron no escriben esta linea:
+
+```
+fields @timestamp, message.participanteId, message.loteId, message.anticipacionMs
+| filter message.operacion = "intentoDeSolicitud" and ispresent(message.anticipacionMs)
+| filter message.convocatoriaId = "01J..."
+| stats count() as intentos, max(message.anticipacionMs) as msAntesDelPrimero by message.participanteId
+| sort intentos desc
+```
+
+**A quien estrangulo la limitacion de tasa**, con hasta donde llego insistiendo:
+
+```
+fields @timestamp, message.participanteId, message.intentosEnVentana
+| filter message.operacion = "intentoDeSolicitud" and message.error = "limite_de_tasa"
+| stats count() as rechazos, max(message.intentosEnVentana) as intentosMaximos by message.participanteId
+| sort intentosMaximos desc
+```
+
+Un `intentosMaximos` de once o doce es alguien que insistio de mas; de varios cientos es un bucle.
+Ninguno de los dos es, por si solo, prueba de nada — ver R-8.
 
 **Todo lo de una transaccion**, siguiendo el `correlacionId` que aparece en la bitacora:
 

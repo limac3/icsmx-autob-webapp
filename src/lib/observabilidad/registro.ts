@@ -40,6 +40,19 @@ export type Nivel = (typeof NIVELES)[number];
  */
 export const OPERACIONES = [
   "solicitarCompra",
+  /**
+   * El intento de solicitar que **no llega** al motor de fila — Etapa 16.
+   *
+   * Cumple el criterio comun de las que siguen, y de la forma mas literal:
+   * hasta ahora estos intentos no los reportaba nadie **ni podia hacerlo**.
+   * Una solicitud anticipada la rechaza la guarda de `solicitud:crear` antes de
+   * `solicitarCompra`, asi que no producia traza; y como no es una transicion
+   * de estado, tampoco produce evento de bitacora. El resultado era que "este
+   * participante disparo ochenta y cinco veces contra la ventana cerrada" no se
+   * podia ni preguntar. Se escribe solo cuando el intento se rechaza, no en el
+   * camino feliz: el volumen queda proporcional al abuso y no al uso.
+   */
+  "intentoDeSolicitud",
   "adjudicarLote",
   // La decision humana de R-23. Se traza aparte de `adjudicarLote` porque
   // responde otra pregunta operativa: cuanto tarda el adjudicador en dictaminar
@@ -58,6 +71,35 @@ export const OPERACIONES = [
   // posicion que ya no significa nada. Esta linea es la unica forma de
   // enterarse antes de que el barrido lo repare.
   "cerrarFilaDelLote",
+  /**
+   * El cierre tardio de R-11b, cuando falla.
+   *
+   * Mismo criterio que las anteriores: nadie mas lo reporta. Lo dispara el
+   * barrido sobre una convocatoria que ya nadie mira, y si falla el sintoma
+   * visible aparece semanas despues —un vehiculo que no se deja incluir en otra
+   * convocatoria— sin nada que lo conecte con su causa. La marca sigue en GSI4
+   * y la corrida siguiente reintenta, asi que una linea suelta no es una
+   * emergencia; varias sobre el mismo lote si.
+   */
+  "cerrarLoteTrasConclusion",
+  /**
+   * Un item que la aplicacion leyo y **no supo mapear**, en las dos lecturas de
+   * convocatoria.
+   *
+   * Mismo criterio que las anteriores llevado a su extremo: aqui no es que
+   * nadie lo reporte, es que el item **desaparece**. Los mapeadores descartan lo
+   * mal formado para no tumbar la pantalla entera —correcto— y quien llama lo
+   * filtra, asi que la convocatoria deja de existir para la aplicacion sin
+   * error, sin hueco y sin rastro, junto con sus lotes y sus vehiculos.
+   *
+   * Paso de verdad: los tres atributos obligatorios que agregaron las Etapas 14
+   * y 15 volvieron invisibles a las convocatorias anteriores
+   * (`desafios-implementacion.md` 78). Estas lineas son lo que convierte ese
+   * caso en un renglon con el campo que falto, en vez de en una tarde de
+   * desconcierto.
+   */
+  "listarConvocatorias",
+  "obtenerConvocatoria",
 ] as const;
 export type Operacion = (typeof OPERACIONES)[number];
 

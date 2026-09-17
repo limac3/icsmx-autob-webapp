@@ -32,6 +32,18 @@ export const TIPOS_DE_EVENTO = [
   "CONVOCATORIA_OCULTA",
   "CONVOCATORIA_REACTIVADA",
   "CONVOCATORIA_CONCLUIDA",
+  /**
+   * La cola de la conclusion: un lote que sobrevivio como `ADJUDICADO` (R-18)
+   * y cuyo compromiso se cayo despues, ya con la convocatoria cerrada.
+   *
+   * **Este si lleva evento propio, y la conclusion no.** Ahi el resumen de
+   * `CONVOCATORIA_CONCLUIDA` responde por todos los lotes cerrados a la vez, y
+   * un evento por lote repetiria N veces el mismo hecho. Aqui el cierre ocurre
+   * dias despues, lo dispara el barrido y no hay ningun evento que lo cubra:
+   * sin este, un vehiculo reapareceria en el catalogo sin que la bitacora
+   * pudiera decir por que.
+   */
+  "LOTE_CERRADO_TRAS_CONCLUSION",
 
   // Fila y adjudicacion
   "SOLICITUD_CREADA",

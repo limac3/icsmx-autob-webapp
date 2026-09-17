@@ -32,6 +32,13 @@ export const CODIGOS_ERROR = [
   /** El participante agoto su cupo de adjudicaciones en la convocatoria (R-09). */
   "limite_alcanzado",
   "plazo_vencido",
+  /**
+   * Demasiados intentos del mismo participante en la misma convocatoria en muy
+   * poco tiempo (Etapa 16, R25). Como `conflicto_concurrencia`, **no es un
+   * fallo del usuario**: es reintentable, la ventana dura diez segundos y el
+   * intento no consumio turno.
+   */
+  "limite_de_tasa",
   "conflicto_concurrencia",
   "dependencia_no_disponible",
 ] as const;

@@ -58,6 +58,10 @@
     "AUTOMATICA": "Automatic: lowest turn wins",
     "MANUAL": "Manual: a person decides"
   },
+  "modalidadesAdjudicacionBreve": {
+    "AUTOMATICA": "Automatic",
+    "MANUAL": "Manual"
+  },
   "tiposConvocatoria": {
     "EMPLEADOS": "Employee",
     "PUBLICO_GENERAL": "General public"
@@ -73,6 +77,7 @@
     "adjudicacion_activa": "You already have a vehicle awarded",
     "limite_alcanzado": "You reached this call for bids vehicle limit",
     "plazo_vencido": "The payment deadline has passed",
+    "limite_de_tasa": "Too many attempts in a row; wait a few seconds and try again",
     "conflicto_concurrencia": "Someone else acted at the same time; please try again",
     "dependencia_no_disponible": "A service is not responding; please try later"
   },
@@ -133,6 +138,7 @@
     "CONVOCATORIA_OCULTA": "Sale announcement hidden",
     "CONVOCATORIA_REACTIVADA": "Sale announcement reactivated",
     "CONVOCATORIA_CONCLUIDA": "Sale announcement closed",
+    "LOTE_CERRADO_TRAS_CONCLUSION": "Lot closed after the sale ended",
     "SOLICITUD_CREADA": "Purchase request placed",
     "SOLICITUD_CANCELADA_POR_PARTICIPANTE": "Request canceled by the participant",
     "SOLICITUD_CANCELADA_POR_LIMITE": "Request canceled for exceeding the limit",

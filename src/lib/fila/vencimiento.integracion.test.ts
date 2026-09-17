@@ -210,7 +210,19 @@ describe.skipIf(!hayBackend)(
 
       particionesCreadas.add(clave.convocatoria(convocatoriaId).PK);
       particionesCreadas.add(clave.vehiculo(vehiculoId).PK);
-      particionesCreadas.add(clave.lote(convocatoriaId, loteId).PK);
+      // **`LOTE#<loteId>`, que es donde viven las solicitudes.** Aqui decia
+      // `clave.lote(convocatoriaId, loteId).PK`, que parece lo mismo y no lo
+      // es: el lote cuelga de la convocatoria, asi que esa `PK` es
+      // `CONV#<convocatoriaId>` — la misma que la linea de arriba ya agrego. La
+      // fila entera se quedaba sin borrar, y como esta prueba fabrica
+      // adjudicaciones **a punto de vencer**, sus solicitudes conservaban las
+      // claves de GSI4 apuntando a una convocatoria ya eliminada. El barrido
+      // desplegado las recogia cada cinco minutos, no podia leer su
+      // convocatoria y las contaba como error: 145 errores por corrida, para
+      // siempre, con `vencimientos-sin-resolver` encendida sin que nada
+      // estuviera mal en produccion. Las demas pruebas de integracion ya
+      // registraban esta particion; esta era la unica que no.
+      particionesCreadas.add(clave.solicitud(loteId, 0).PK);
 
       return lote;
     };

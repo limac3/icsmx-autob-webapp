@@ -73,6 +73,8 @@ npm run test       # Vitest
 npm run verify:rapido  # compuerta completa sin el chequeo de desactualizados (~50 s)
 npm run prototipo:fila # prototipo concurrente de la fila contra el sandbox (R18, ~2 min)
 npm run carga:apertura # prueba de carga de la apertura de una convocatoria (Etapa 12, sandbox)
+npm run equidad:apertura # ventaja de automatizar el instante de apertura (Etapa 16, sandbox, ~30 s)
+npm run barrido       # ejecuta el barrido contra el sandbox; en local no corre solo
 npm run verify     # lo anterior + chequeo de paquetes desactualizados (~2.5 min)
 npm run build      # build de produccion
 npx ampx sandbox   # backend Amplify Gen2 personal

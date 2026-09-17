@@ -9,6 +9,7 @@ import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { cancelarSolicitud as cancelarServicio } from "@/lib/fila/cancelarSolicitud";
 import { consultarMiLugar, leerMiSolicitud } from "@/lib/fila/consultarMiLugar";
 import { consultarTamanoFila } from "@/lib/fila/conteosDeFila";
+import { registrarIntento } from "@/lib/fila/limiteDeTasa";
 import { solicitarCompra as solicitarServicio } from "@/lib/fila/solicitarCompra";
 import type { ConvocatoriaConLotes } from "@/types/convocatoria";
 import type { Solicitud } from "@/types/fila";
@@ -27,6 +28,7 @@ vi.mock("@/lib/fila/consultarMiLugar", () => ({
   leerMiSolicitud: vi.fn(),
 }));
 vi.mock("@/lib/fila/conteosDeFila", () => ({ consultarTamanoFila: vi.fn() }));
+vi.mock("@/lib/fila/limiteDeTasa", () => ({ registrarIntento: vi.fn() }));
 vi.mock("@/lib/fila/solicitarCompra", () => ({ solicitarCompra: vi.fn() }));
 vi.mock("@/lib/fila/cancelarSolicitud", () => ({ cancelarSolicitud: vi.fn() }));
 
@@ -35,6 +37,7 @@ const lectura = vi.mocked(obtenerConvocatoria);
 const miSolicitud = vi.mocked(leerMiSolicitud);
 const miLugar = vi.mocked(consultarMiLugar);
 const tamano = vi.mocked(consultarTamanoFila);
+const tasa = vi.mocked(registrarIntento);
 const solicitar = vi.mocked(solicitarServicio);
 const cancelar = vi.mocked(cancelarServicio);
 
@@ -106,6 +109,7 @@ beforeEach(() => {
   lectura.mockResolvedValue({ ok: true, data: convocatoria });
   miSolicitud.mockResolvedValue({ ok: true, data: null });
   tamano.mockResolvedValue({ ok: true, data: 0 });
+  tasa.mockResolvedValue({ permitido: true, intentos: 1, ventana: 0 });
   solicitar.mockResolvedValue({
     ok: true,
     data: {
@@ -196,6 +200,72 @@ describe("solicitarCompra — autorizacion", () => {
     expect(
       await acciones.solicitarCompra({ convocatoriaId: "C1", loteId: "OTRO" }),
     ).toEqual({ ok: false, error: "not_found" });
+  });
+});
+
+describe("solicitarCompra — limitacion de tasa (Etapa 16)", () => {
+  it("un intento estrangulado no consume turno", async () => {
+    // **Es la verificacion central de la Etapa 16.** El contador de turnos vive
+    // dentro de `solicitarCompra`, tres pasos mas adentro; si el servicio no se
+    // invoca, no hay `ADD` que gastar. Que la limitacion no queme turnos es lo
+    // que impide que castigue con huecos de fila a quien solo reintento.
+    tasa.mockResolvedValue({ permitido: false, intentos: 11, ventana: 0 });
+
+    expect(await acciones.solicitarCompra(entrada)).toEqual({
+      ok: false,
+      error: "limite_de_tasa",
+    });
+    expect(solicitar).not.toHaveBeenCalled();
+  });
+
+  it("estrangula antes de leer la convocatoria", async () => {
+    // El intento rechazado no le cuesta al sistema ni una lectura. Es tambien
+    // lo que hace que el mecanismo sirva de algo: el perfil que hay que acotar
+    // dispara **antes** de la apertura, y esos intentos mueren en la guarda de
+    // `solicitud:crear` sin llegar nunca al motor de fila.
+    tasa.mockResolvedValue({ permitido: false, intentos: 11, ventana: 0 });
+
+    await acciones.solicitarCompra(entrada);
+
+    expect(lectura).not.toHaveBeenCalled();
+    expect(miSolicitud).not.toHaveBeenCalled();
+  });
+
+  it("sin sesion no se cuenta ningun intento", async () => {
+    // Contar antes de identificar dejaria el contador a merced de cualquiera y
+    // sin participante a quien atribuirlo.
+    sesionSimulada.mockResolvedValue(null);
+
+    expect(await acciones.solicitarCompra(entrada)).toEqual({
+      ok: false,
+      error: "unauthorized",
+    });
+    expect(tasa).not.toHaveBeenCalled();
+  });
+
+  it("cuenta el intento contra el participante de la sesion, no contra uno del cliente", async () => {
+    sesionSimulada.mockResolvedValue(sesion(["Autob_Venta_a_empleados"], "P7"));
+
+    await acciones.solicitarCompra(entrada);
+
+    expect(tasa).toHaveBeenCalledWith({
+      participanteId: "P7",
+      convocatoriaId: "C1",
+    });
+  });
+
+  it("cancelar no pasa por la limitacion de tasa", async () => {
+    // Acota la carrera por la apertura, que es donde esta el incentivo de
+    // automatizar. Cancelar no compite por nada, y estrangularlo solo impediria
+    // salirse de una fila.
+    miSolicitud.mockResolvedValue({
+      ok: true,
+      data: solicitudPropia("EN_FILA"),
+    });
+
+    await acciones.cancelarSolicitud(entrada);
+
+    expect(tasa).not.toHaveBeenCalled();
   });
 });
 

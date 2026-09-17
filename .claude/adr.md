@@ -595,6 +595,126 @@ Descartado:
 Anclas: `src/lib/auth/devMode.ts::exigirModoSeguro`, `::obtenerEntornoApp`,
 `src/lib/auth/eas.ts::obtenerPermisos`.
 
+### D-19 — La equidad del instante de apertura se mide, se acota y se registra; no se restaura
+La apertura de una convocatoria la gana quien automatiza, y esta **medido**, no supuesto
+(`npm run equidad:apertura`): un cliente que dispara en el milisegundo exacto de `inicioVenta`
+encabezo los cinco lotes en las tres corridas, y ningun participante que reacciona en los 200-400
+ms de una reaccion humana quedo nunca por delante — de 100 pares comparados, cero o una inversion,
+y siempre contra el bucle secuencial, jamas contra el reloj exacto. La medicion corre desde una
+maquina con inspeccion TLS contra otra region, asi que **subestima**: cuanto mas estable la red,
+mas decisivo el reloj.
+De ahi la decision, que es tanto lo que se hace como lo que se renuncia a hacer: **ningun mecanismo
+tecnico devuelve la equidad del instante**, porque el que necesita un solo disparo no tiene tasa que
+limitar. Lo que se construye es una limitacion de tasa por participante y convocatoria —10 intentos
+por ventana de 10 s— y evidencia consultable. Donde llegar primero no deba importar, la respuesta ya
+existe y es la modalidad manual de adjudicacion (R-23).
+**Lo que la limitacion si compra, medido con el mismo binario antes y despues:** el perfil que
+llegaba igual de cerca **sin saber la hora** —una rafaga de intentos en paralelo que cubre el
+instante— pasa de obtener el turno 3 a no obtener ninguno; los intentos que alcanzan el motor caen
+de 187 a 95; los huecos de fila, de 41 a 0; y el turno mediano de una persona mejora de 12 a 5. El
+p50 sube 27 ms y el p95 **mejora** 97 ms, asi que R26 —"la limitacion encarece la apertura"— no se
+materializo.
+**El contador va en la Server Action, antes de leer nada.** Es la parte que solo la medicion podia
+decidir: el perfil que hay que acotar hace casi todos sus disparos **antes** de `inicioVenta`, y
+esos los rechaza la guarda de `solicitud:crear` sin que `solicitarCompra` llegue a ejecutarse. Un
+contador dentro del servicio no habria contado ni uno.
+Descartado:
+- **Montarlo sobre el item `CUPO#`**, que ya se escribe en cada solicitud y no costaria viajes
+  extra. Dos razones independientes: no veria los intentos anticipados, y ese item participa en la
+  transaccion de T2 — escribirlo suelto cancelaria adjudicaciones legitimas del mismo participante
+  con `TransactionConflict`.
+- **Ventana deslizante.** Exige leer el historial antes de decidir, un viaje mas en el camino mas
+  caro, para quitarle un factor de dos a un adversario que ya ganaba con un disparo.
+- **Token de participacion emitido al abrir.** Verifica autorizacion, que la sesion de Okta ya
+  resuelve, y no hace a nadie mas lento; ademas todo paso previo lo paga mejor el script que la
+  persona.
+- **Prueba de trabajo.** Grava tambien al usuario honesto y hace ganar a quien tenga mejor telefono:
+  cambia una injusticia por otra menos visible.
+- **Cancelar la participacion por sospecha.** Un script y una persona con buena conexion se ven casi
+  igual, como un doble clic o un reintento de red; todo umbral tendria falsos positivos y el castigo
+  seria una acusacion invisible. Lo prohibe ademas D-9: a quien se sanciona lo decide la
+  organizacion, no un umbral en un archivo.
+- **Alarma sobre los intentos anticipados.** Las lineas las escribe el SSR, cuyo grupo de logs no
+  esta en esta pila: el filtro compilaria y no coincidiria con nada, que segun D-13 no da error,
+  da silencio.
+Anclas: `src/lib/fila/limiteDeTasa.ts::registrarIntento`, `::ventanaDe`,
+`src/app/actions/fila.ts::solicitarCompra`.
+
+### D-20 — Lo que sobrevive a una conclusion se libera solo, y lo anota un indice disperso
+Al concluir una convocatoria, lo no vendido vuelve a `DISPONIBLE` y un administrador puede
+reofertarlo (R-11). Lo que faltaba era el lote `ADJUDICADO`, que **sobrevive** al cierre con su
+plazo intacto porque quien gano antes tiene derecho a terminar de pagar (R-18). Si ese compromiso se
+cae —vencimiento, rechazo de tesoreria o cancelacion—, los tres caminos hacen lo correcto para una
+convocatoria abierta: devuelven el lote a `EN_OFERTA` y el vehiculo a `EN_CONVOCATORIA`, para el
+siguiente de la fila. Ya no hay fila ni convocatoria donde tomarlo, y nada lo recogia: `CONCLUIDA`
+es terminal, la reconciliacion del barrido solo recorre `PUBLICADA` y retirar el vehiculo a mano
+exige `BORRADOR`. El vehiculo quedaba invendible **e** inofertable —el centinela de R-10 lo
+declaraba activo en una convocatoria terminada—, en silencio y para siempre; el sintoma aparecia
+semanas despues como un rechazo inexplicable al incluirlo en otra convocatoria.
+La decision: **lo cierra el barrido, sin que nadie lo pida**. No es politica organizacional y D-9 no
+pide que decida una persona — la decision ya la tomo quien concluyo la convocatoria, y esto solo
+termina de aplicarla sobre el lote que entonces seguia comprometido. Lo que R-11 si reserva a un
+administrador, la **inclusion** en otra convocatoria, no cambia.
+**Como se encuentra el trabajo:** al concluir, cada lote que sobrevive recibe un `Update` que le
+pone `estatusConvocatoria = CONCLUIDA` —cerrando de paso la copia desnormalizada que se quedaba en
+`PUBLICADA` para siempre— y las claves de la particion `CIERRE_PENDIENTE` de GSI4. Esa particion
+contiene **exactamente** los lotes que pueden llegar a ese estado, asi que el barrido no filtra
+nada, y el `REMOVE` de las claves viaja dentro de la transaccion que cierra el lote: resolverlo y
+sacarlo del indice son el mismo acto.
+Descartado:
+- **Un boton "liberar vehiculos no vendidos"** en la convocatoria concluida, que fue la propuesta
+  original. Nada le avisa a nadie de que el compromiso se cayo: un boton que hay que descubrir no
+  repara un estado que nadie sabe que existe.
+- **Listar las convocatorias `CONCLUIDA` en cada corrida** y mirar sus lotes. Ademas de crecer sin
+  limite con el historico, `listarConvocatorias` corta en `MAXIMO_POR_ESTATUS` y `GSI2SK` ordena por
+  `creadoEn` ascendente: al pasar el tope devolveria las mas viejas y dejaria fuera justo las
+  recientes. Habria fallado en silencio, años despues, en el unico caso que importa.
+- **Que `avalarPago` limpie la marca** del caso feliz. Obligaria al camino de la venta a conocer un
+  indice que solo existe para convocatorias ya concluidas; el precio de limpiarla tarde es una
+  lectura de mas hasta la corrida siguiente, el del acoplamiento es permanente.
+- **Reusar el criterio de eventos de la conclusion.** Alli el resumen de `CONVOCATORIA_CONCLUIDA`
+  responde por todos los lotes a la vez y un evento por lote repetiria N veces el mismo hecho; el
+  cierre tardio ocurre dias despues y ninguno lo cubre, asi que **si** escribe
+  `LOTE_CERRADO_TRAS_CONCLUSION`.
+Anclas: `src/lib/convocatorias/cierreDeLote.ts::itemsParaCerrar`,
+`::itemParaMarcarComprometido`, `src/lib/convocatorias/cerrarLoteTrasConclusion.ts`,
+`src/lib/data/claves.ts::gsi4`.
+
+### D-21 — Descartar un item ilegible es correcto; hacerlo en silencio, no
+Los mapeadores de `mapeo.ts` devuelven `undefined` ante un item mal formado y quien llama lo filtra,
+para que un registro corrupto no tumbe la pantalla entera. La decision se mantiene. Lo que cambia es
+que el descarte **deja rastro**: `listarConvocatorias` y `obtenerConvocatoria` escriben una linea de
+traza operativa con el identificador y **los campos que faltaron**, y `obtenerConvocatoria` distingue
+sus dos `not_found` — "no existe" y "existe y no se puede leer" eran indistinguibles para quien
+depura.
+**Lo forzo un caso real, no una revision.** Las Etapas 14 y 15 agregaron `limiteAdjudicaciones`,
+`limiteSolicitudes` y `modalidadAdjudicacion` como obligatorios; las convocatorias creadas antes no
+los tenian, y tres de cinco se volvieron invisibles en la pantalla de administracion. Con ellas
+desaparecio la unica via para concluirlas, asi que sus vehiculos quedaron `EN_CONVOCATORIA` con el
+centinela de R-10 puesto: fuera del catalogo y fuera de alcance. El sintoma que llego fue "los
+vehiculos quedaron anclados a convocatorias borradas", y no habia ninguna borrada — la aplicacion ni
+siquiera puede borrar una. Diagnosticarlo costo una tarde; con la linea de traza habria costado un
+renglon (`desafios-implementacion.md` 78).
+El razonamiento que fallo esta escrito en el propio mapeador —"un item corrupto entre mil debe
+desaparecer del listado"— y es correcto **para corrupcion**. Una migracion de esquema no aplicada no
+es corrupcion: no es uno entre mil, y su modo de fallo silencioso convierte un dato incompleto en un
+activo inalcanzable.
+Descartado:
+- **Hacer opcionales los tres atributos en el mapeador**, con un valor por omision. Es lo que
+  `Lote.limiteAdjudicaciones` ya prohibe por escrito: la unica lectura sensata de su ausencia seria
+  "sin tope", que es la direccion **mas** permisiva, y una propagacion a medias repartiria vehiculos
+  sin limite en silencio. Un item ilegible es ruidoso y detectable; uno con topes inventados, no.
+- **Lanzar en vez de descartar.** Un item malo entre mil tumbaria la pantalla de administracion
+  entera, que es peor que perder una fila y ahora saberlo.
+- **Unificar el diagnostico con el `if` del mapeador.** Costaria el estrechamiento de tipos que da
+  ese `if`, o un `as` que le mentiria al compilador sobre datos de origen desconocido. Se acepta la
+  duplicacion y la sostiene una prueba que recorre campo por campo exigiendo que ambos coincidan.
+Regla que queda: **un campo nuevo obligatorio es una migracion**, aunque el compilador no lo note —
+obliga a escribirlo en el codigo nuevo y no sabe nada de las filas ya guardadas.
+Anclas: `src/lib/convocatorias/mapeo.ts::camposFaltantesDeConvocatoria`,
+`::camposFaltantesDeLote`, `src/lib/convocatorias/listarConvocatorias.ts`,
+`src/lib/convocatorias/obtenerConvocatoria.ts`.
+
 ## Decisiones de modelo de datos
 
 Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
@@ -616,8 +736,12 @@ Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
 | Los nueve eventos de la fila se anclan a `AUDIT#LOTE#<loteId>` | "Reconstruir la fila" es una `Query` por lote; anclar `SOLICITUD_CREADA` a la solicitud obligaria a una consulta por participante |
 | `correoTitular` se copia de la sesion a la solicitud en T1, no se resuelve por *join* a un perfil | No existe ningun item de perfil de participante con correo (la Etapa 4 nunca hizo el *upsert* real); y aunque existiera, copiarlo conserva el correo con el que se pago aunque la cuenta cambie despues — lo que el auditor necesita ver (desafios-implementacion.md 31) |
 | GSI2 de la solicitud es disperso: T3 escribe `SOL_ESTATUS#EN_VERIFICACION`, T4 y T6 lo retiran | Misma logica que GSI4 con los vencimientos: el indice de "trabajo pendiente de tesoreria" (PA-11) solo debe contener lo que de verdad esta pendiente (desafios-implementacion.md 32) |
+| GSI4 gana una tercera particion, `CIERRE_PENDIENTE`, con los lotes que **sobrevivieron** a la conclusion de su convocatoria | Es la unica clase de trabajo pendiente que la conclusion no puede resolver en el acto: depende de como termine una adjudicacion que en ese momento sigue viva. Fija como `OUTBOX_PENDIENTE` y no repartida por dia como `VENCE#` — el reparto existe contra R12 y aqui son unos pocos lotes por conclusion, escritos una vez (D-20) |
+| El `REMOVE` de esas claves viaja **dentro** de la transaccion que cierra el lote | Resolver el lote y sacarlo del indice de trabajo pendiente tienen que ser el mismo acto: separarlos abre una ventana en la que el lote esta cerrado y el barrido lo sigue viendo pendiente. Misma propiedad que hace idempotente al resto del barrido (D-20) |
 | `solicitudId` se resuelve en reversa con `loteYTurnoDesdeIdentificador`, sin un indice nuevo | Es derivado (`<loteId>-<turno>`), no generado: dividir por el ultimo `-` basta, porque un `loteId` real (ULID) nunca contiene guion (desafios-implementacion.md 32) |
 | T6 (rechazar pago) sigue la estrategia de T5b (liberar y volver a llamar a T2), no la de T5 | El documento decia "identica a T5"; rechazar lo dispara una persona mirando la pantalla, no un barrido sobre un plazo vencido, asi que aplica el mismo argumento que ya justificaba T5b |
+| El contador de tasa lleva la **ventana en la `SK`** (`TASA#<convId>#<ventana:014d>`), no en un atributo | Con la ventana dentro del item haria falta distinguir "incrementar" de "reiniciar porque cambio la ventana", dos ramas que ninguna `UpdateExpression` expresa: costaria un viaje mas en el camino mas caro. Con la ventana en la clave, una ventana nueva **es** un item nuevo y el `ADD` arranca en uno sin condicion (D-19) |
+| Los items `TASA#` **no caducan**, y la tabla sigue sin TTL | Son la evidencia de tasa por participante que la limitacion existe para registrar; expirarla la dejaria sin valor cuando alguien pregunte. Habilitar TTL en la tabla debilitaria ademas la garantia de R-20, que descansa en que **ningun** item caduca solo |
 | `rechazarPago` no retira el centinela de fila, a diferencia de la cancelacion voluntaria | `RECHAZADA_POR_TESORERIA` tiene que seguir visible en `MiLugarDTO` con su motivo (R-16); retirarlo borraria la unica forma en que el titular se entera |
 | La variante reducida de T5 (fila agotada) tambien libera el vehiculo a `EN_CONVOCATORIA` | El documento solo mencionaba `REMOVE adjudicacionActual` y `estatus = EN_OFERTA`; sin liberar el vehiculo, el siguiente que se forme nunca podria adjudicarse (el item 4 de T2 exige `EN_CONVOCATORIA`) — el mismo defecto de "lote huerfano" que la Etapa 10 corrige en el barrido, pero permanente |
 | `vencerYReasignar` reusa `leerFila` y `congelar` de `adjudicarLote.ts` en vez de duplicarlos | T5 es T2 con dos escrituras del vencido intercaladas delante; la abstencion por reservas y el congelamiento por R-09 son identicos |

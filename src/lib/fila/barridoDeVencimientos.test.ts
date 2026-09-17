@@ -5,6 +5,10 @@ import {
   crearClienteFalso,
   type ComandoEnviado,
 } from "@/utils/clienteDynamoFalso";
+import {
+  cerrarLoteTrasConclusion,
+  soltarMarcaDeCierre,
+} from "@/lib/convocatorias/cerrarLoteTrasConclusion";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { listarConvocatorias } from "@/lib/convocatorias/listarConvocatorias";
 import { registrar } from "@/lib/observabilidad/registro";
@@ -25,7 +29,13 @@ vi.mock("./adjudicarLote", () => ({ adjudicarLote: vi.fn() }));
 vi.mock("./cerrarFilaDelLote", () => ({ cerrarFilaDelLote: vi.fn() }));
 vi.mock("./vencerYReasignar", () => ({ vencerYReasignar: vi.fn() }));
 vi.mock("@/lib/observabilidad/registro", () => ({ registrar: vi.fn() }));
+vi.mock("@/lib/convocatorias/cerrarLoteTrasConclusion", () => ({
+  cerrarLoteTrasConclusion: vi.fn(),
+  soltarMarcaDeCierre: vi.fn(),
+}));
 
+const cerrarTardio = vi.mocked(cerrarLoteTrasConclusion);
+const soltarMarca = vi.mocked(soltarMarcaDeCierre);
 const obtener = vi.mocked(obtenerConvocatoria);
 const listar = vi.mocked(listarConvocatorias);
 const adjudicar = vi.mocked(adjudicarLote);
@@ -71,15 +81,38 @@ const solicitudVencidaItem = (
   ...extra,
 });
 
+/** Un lote tal como lo devuelve la particion `CIERRE_PENDIENTE` de GSI4. */
+const loteMarcado = (
+  loteId: string,
+  estatus: Lote["estatus"],
+): Record<string, unknown> => ({
+  PK: `CONV#C1`,
+  SK: `LOTE#${loteId}`,
+  ...lote,
+  loteId,
+  vehiculoId: `V-${loteId}`,
+  estatus,
+  estatusConvocatoria: "CONCLUIDA",
+  GSI4PK: "CIERRE_PENDIENTE",
+  GSI4SK: `C1#${loteId}`,
+});
+
 const escenario = (
   opciones: {
     vencidasGsi4?: Record<string, unknown>[];
+    cierresPendientes?: Record<string, unknown>[];
     filaViva?: boolean;
   } = {},
 ) => {
   const dynamo = crearClienteFalso({
     responder: (comando: ComandoEnviado) => {
       if (comando.input.IndexName === "GSI4") {
+        const pk = (
+          comando.input.ExpressionAttributeValues as Record<string, string>
+        )[":pk"];
+        if (pk === "CIERRE_PENDIENTE") {
+          return { Items: opciones.cierresPendientes ?? [] };
+        }
         return { Items: opciones.vencidasGsi4 ?? [] };
       }
       if (comando.nombre === "QueryCommand") {
@@ -98,6 +131,11 @@ beforeEach(() => {
   // Por omision el cierre no encuentra nada que cerrar: cada prueba que le
   // importa el cierre pone su propia respuesta.
   cerrar.mockResolvedValue({ ok: true, data: 0 });
+  cerrarTardio.mockResolvedValue({
+    ok: true,
+    data: { loteId: "L1", vehiculoId: "V1" },
+  });
+  soltarMarca.mockResolvedValue({ ok: true, data: { loteId: "L1" } });
 });
 
 afterEach(() => {
@@ -117,10 +155,14 @@ describe("barridoDeVencimientos — recorrido de dias", () => {
         (c) =>
           (c.input.ExpressionAttributeValues as Record<string, string>)[":pk"],
       );
+    // La cuarta no es un dia: es la particion fija de cierres pendientes
+    // (R-11b), que se consulta una sola vez por corrida y no depende de
+    // `diasHaciaAtras`.
     expect(particiones).toEqual([
       "VENCE#2026-10-08",
       "VENCE#2026-10-07",
       "VENCE#2026-10-06",
+      "CIERRE_PENDIENTE",
     ]);
   });
 
@@ -129,9 +171,14 @@ describe("barridoDeVencimientos — recorrido de dias", () => {
 
     await barridoDeVencimientos({ diasHaciaAtras: 1 }, deps);
 
-    expect(
-      dynamo.comandos.filter((c) => c.input.IndexName === "GSI4"),
-    ).toHaveLength(1);
+    const porDia = dynamo.comandos.filter(
+      (c) =>
+        c.input.IndexName === "GSI4" &&
+        String(
+          (c.input.ExpressionAttributeValues as Record<string, string>)[":pk"],
+        ).startsWith("VENCE#"),
+    );
+    expect(porDia).toHaveLength(1);
   });
 });
 
@@ -456,5 +503,116 @@ describe("barridoDeVencimientos — reconciliacion de filas en lotes ya cerrados
     await barridoDeVencimientos({ diasHaciaAtras: 0 }, deps);
 
     expect(adjudicar).not.toHaveBeenCalled();
+  });
+});
+
+describe("barridoDeVencimientos — cierres pendientes tras la conclusion (R-11b)", () => {
+  it("cierra el lote que volvio a EN_OFERTA con su convocatoria ya concluida", async () => {
+    const { deps } = escenario({
+      cierresPendientes: [loteMarcado("L7", "EN_OFERTA")],
+    });
+
+    const resultado = await barridoDeVencimientos({}, deps);
+
+    expect(cerrarTardio).toHaveBeenCalledTimes(1);
+    expect(cerrarTardio.mock.calls[0]?.[0].lote).toMatchObject({
+      loteId: "L7",
+      vehiculoId: "V-L7",
+      estatus: "EN_OFERTA",
+    });
+    expect(resultado.lotesLiberados).toBe(1);
+  });
+
+  it("deja intacto el lote que sigue ADJUDICADO: su plazo aun corre", async () => {
+    const { deps } = escenario({
+      cierresPendientes: [loteMarcado("L7", "ADJUDICADO")],
+    });
+
+    const resultado = await barridoDeVencimientos({}, deps);
+
+    // Ni se cierra ni se le quita la marca: es exactamente el caso que el
+    // indice existe para vigilar, y quitarla lo dejaria sin vigilancia.
+    expect(cerrarTardio).not.toHaveBeenCalled();
+    expect(soltarMarca).not.toHaveBeenCalled();
+    expect(resultado.lotesLiberados).toBe(0);
+  });
+
+  it("suelta la marca del lote que si se vendio, sin cerrarlo", async () => {
+    const { deps } = escenario({
+      cierresPendientes: [loteMarcado("L7", "VENDIDO")],
+    });
+
+    const resultado = await barridoDeVencimientos({}, deps);
+
+    expect(cerrarTardio).not.toHaveBeenCalled();
+    expect(soltarMarca).toHaveBeenCalledTimes(1);
+    expect(soltarMarca.mock.calls[0]?.[0].lote.loteId).toBe("L7");
+    // Soltar una marca no es liberar un vehiculo: ese lote se vendio.
+    expect(resultado.lotesLiberados).toBe(0);
+  });
+
+  it("suelta la marca de un lote que otra corrida ya cerro", async () => {
+    const { deps } = escenario({
+      cierresPendientes: [loteMarcado("L7", "NO_VENDIDO")],
+    });
+
+    await barridoDeVencimientos({}, deps);
+
+    expect(cerrarTardio).not.toHaveBeenCalled();
+    expect(soltarMarca).toHaveBeenCalledTimes(1);
+  });
+
+  it("un cierre tardio que falla se registra pero no cuenta como error", async () => {
+    const { deps } = escenario({
+      cierresPendientes: [loteMarcado("L7", "EN_OFERTA")],
+    });
+    cerrarTardio.mockResolvedValue({ ok: false, error: "invalid_state" });
+
+    const resultado = await barridoDeVencimientos({}, deps);
+
+    // `errores` es lo que dispara `vencimientos-sin-resolver`, la alarma mas
+    // grave del sistema. Un cierre tardio fallido no significa eso: la marca
+    // sigue en GSI4 y la corrida siguiente reintenta.
+    expect(resultado.errores).toBe(0);
+    expect(resultado.lotesLiberados).toBe(0);
+    expect(registro).toHaveBeenCalledWith(
+      "warn",
+      "cerrarLoteTrasConclusion",
+      expect.objectContaining({ loteId: "L7", desenlace: "rechazado" }),
+    );
+  });
+
+  it("recorre varios lotes marcados y trata cada uno segun su estado", async () => {
+    const { deps } = escenario({
+      cierresPendientes: [
+        loteMarcado("L1", "EN_OFERTA"),
+        loteMarcado("L2", "ADJUDICADO"),
+        loteMarcado("L3", "VENDIDO"),
+        loteMarcado("L4", "EN_OFERTA"),
+      ],
+    });
+
+    const resultado = await barridoDeVencimientos({}, deps);
+
+    expect(cerrarTardio).toHaveBeenCalledTimes(2);
+    expect(soltarMarca).toHaveBeenCalledTimes(1);
+    expect(resultado.lotesLiberados).toBe(2);
+  });
+
+  it("consulta la particion fija una sola vez, sin filtro", async () => {
+    const { dynamo, deps } = escenario();
+
+    await barridoDeVencimientos({ diasHaciaAtras: 1 }, deps);
+
+    const consultas = dynamo.comandos.filter(
+      (c) =>
+        c.input.IndexName === "GSI4" &&
+        (c.input.ExpressionAttributeValues as Record<string, string>)[":pk"] ===
+          "CIERRE_PENDIENTE",
+    );
+    expect(consultas).toHaveLength(1);
+    // Sin `FilterExpression` a proposito: la particion contiene exactamente los
+    // lotes que pueden necesitar cierre, asi que no hay nada que descartar.
+    expect(consultas[0]?.input.FilterExpression).toBeUndefined();
   });
 });

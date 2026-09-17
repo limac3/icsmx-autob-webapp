@@ -1,4 +1,5 @@
-import { vi } from "vitest";
+import { act } from "react";
+import { describe, expect, it, vi } from "vitest";
 import { obtenerDiccionario } from "@/dictionaries";
 import { genericTests, getTestContext } from "@/utils/testHelpers";
 import type { Convocatoria } from "@/types/convocatoria";
@@ -64,4 +65,51 @@ genericTests(context, TablaConvocatorias, {
     C2: "5 de octubre de 2026, 09:00 — 12 de octubre de 2026, 09:00",
     C3: "5 de octubre de 2026, 09:00 — 12 de octubre de 2026, 09:00",
   },
+});
+
+describe("la columna de tipo lleva tambien la modalidad", () => {
+  const pintar = async (modalidad: Convocatoria["modalidadAdjudicacion"]) => {
+    const una: Convocatoria = {
+      ...convocatoria("C1", "BORRADOR"),
+      modalidadAdjudicacion: modalidad,
+    };
+    await act(async () => {
+      context.root.render(
+        <TablaConvocatorias
+          convocatorias={[una]}
+          diccionario={obtenerDiccionario("es")}
+          periodos={{ C1: "5 de octubre de 2026, 09:00" }}
+        />,
+      );
+    });
+  };
+
+  it("muestra el tipo y la modalidad juntos, sin que uno sustituya al otro", async () => {
+    await pintar("AUTOMATICA");
+
+    // Las dos preguntas que se hacen sobre una convocatoria —quien puede
+    // participar y como se decide al ganador— en la misma celda.
+    const celda = context.container.querySelectorAll("tbody tr td")[1];
+    expect(celda?.textContent).toContain("De empleados");
+    expect(celda?.textContent).toContain("Automática");
+  });
+
+  it("distingue la modalidad manual", async () => {
+    await pintar("MANUAL");
+
+    const celda = context.container.querySelectorAll("tbody tr td")[1];
+    expect(celda?.textContent).toContain("De empleados");
+    expect(celda?.textContent).toContain("Manual");
+  });
+
+  it("usa la etiqueta breve, no la explicativa del formulario", async () => {
+    await pintar("AUTOMATICA");
+
+    // "Automática: gana el turno más bajo" explica una decision que se esta
+    // tomando; en un listado que se recorre con la vista, repetirla en cada
+    // renglon es ruido.
+    expect(context.container.textContent).not.toContain(
+      "gana el turno más bajo",
+    );
+  });
 });

@@ -116,7 +116,15 @@ Motivo obligatorio marcado con **M**.
 | `CONVOCATORIA_RECHAZADA` **M** | Vuelve a `BORRADOR` |
 | `CONVOCATORIA_PUBLICADA` | Registra `publicadaEn` e `inicioVenta` |
 | `CONVOCATORIA_OCULTA` **M** / `CONVOCATORIA_REACTIVADA` | |
-| `CONVOCATORIA_CONCLUIDA` | Con el resumen de vendidos y no vendidos |
+| `CONVOCATORIA_CONCLUIDA` | Con el resumen de vendidos, no vendidos y **comprometidos** |
+| `LOTE_CERRADO_TRAS_CONCLUSION` | Un lote que sobrevivio al cierre (R-18) y cuyo compromiso se cayo despues. Anclado al **lote**, firmado por `SISTEMA` |
+
+> **La conclusion no escribe un evento por lote, y el cierre tardio si.** Ahi el resumen de
+> `CONVOCATORIA_CONCLUIDA` responde por todos los lotes a la vez y un evento por lote repetiria N
+> veces el mismo hecho. Aqui el cierre ocurre dias despues, lo dispara el barrido y no hay ningun
+> evento que lo cubra: sin el, un vehiculo reapareceria en el catalogo sin que la bitacora pudiera
+> decir por que. Sus `datos` llevan `razon: ADJUDICACION_CAIDA_TRAS_CONCLUSION` y el vehiculo
+> liberado (R-11b).
 
 ### Fila y adjudicacion — el nucleo
 

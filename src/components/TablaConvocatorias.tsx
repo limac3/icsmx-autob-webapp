@@ -122,8 +122,27 @@ const TablaConvocatorias = ({
                             {`${etiquetas.campoFolio}: ${convocatoria.folio}`}
                           </Text4>
                         </TD>
+                        {/* Tipo y modalidad en la misma celda: quien puede
+                            participar y como se decide al ganador son las dos
+                            preguntas que se hacen a la vez sobre una
+                            convocatoria, y separarlas en dos columnas costaria
+                            ancho sin agrupar nada. La modalidad va debajo, con
+                            el mismo `Text4` que el folio y la hora de negocio.
+
+                            Usa la etiqueta **breve**, no la del formulario: ahi
+                            "Automatica: gana el turno mas bajo" explica una
+                            decision que se esta tomando; aqui se repetiria en
+                            cada renglon de una lista que se recorre con la
+                            vista. */}
                         <TD>
                           {diccionario.tiposConvocatoria[convocatoria.tipo]}
+                          <Text4 renderAs="p">
+                            {
+                              diccionario.modalidadesAdjudicacionBreve[
+                                convocatoria.modalidadAdjudicacion
+                              ]
+                            }
+                          </Text4>
                         </TD>
                         <TD>
                           {periodos[convocatoria.convocatoriaId] ?? ""}

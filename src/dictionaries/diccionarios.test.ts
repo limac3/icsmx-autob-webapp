@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { TIPOS_DE_ACTOR, TIPOS_DE_EVENTO } from "@/types/auditoria";
-import { ESTATUS_CONVOCATORIA, TIPOS_CONVOCATORIA } from "@/types/convocatoria";
+import {
+  ESTATUS_CONVOCATORIA,
+  MODALIDADES_ADJUDICACION,
+  TIPOS_CONVOCATORIA,
+} from "@/types/convocatoria";
 import { PERMISOS } from "@/types/identidad";
 import { ESTATUS_LOTE } from "@/types/lote";
 import { CODIGOS_ERROR } from "@/types/resultado";
@@ -24,6 +28,14 @@ import { idiomaPorDefecto, obtenerDiccionario } from "./index";
 const CATALOGOS = {
   permisos: PERMISOS,
   tiposConvocatoria: TIPOS_CONVOCATORIA,
+  // Las dos formas de la modalidad. **Ninguna estaba vigilada**: R-23 entro en
+  // la Etapa 15 y su catalogo se quedo fuera de esta tabla, asi que una
+  // modalidad nueva habria llegado a pantalla sin etiqueta y sin que nada
+  // fallara. La `Breve` existe porque la del formulario explica la decision
+  // —"gana el turno mas bajo"— y eso, repetido en cada renglon de un listado,
+  // es ruido; las dos se comprueban porque las dos llegan a pantalla.
+  modalidadesAdjudicacion: MODALIDADES_ADJUDICACION,
+  modalidadesAdjudicacionBreve: MODALIDADES_ADJUDICACION,
   errores: CODIGOS_ERROR,
   estatusConvocatoria: ESTATUS_CONVOCATORIA,
   estatusVehiculo: ESTATUS_VEHICULO,
@@ -262,6 +274,10 @@ describe("ortografia del diccionario en espanol", () => {
       "Borrador",
       "JPG, PNG o WEBP, hasta 10 MB.",
       "Actor",
+      // `modalidadesAdjudicacionBreve.MANUAL`. La forma larga si difiere
+      // ("una persona decide" / "a person decides"); es la breve la que
+      // coincide, y coincide de verdad.
+      "Manual",
     ]);
 
     const aplanar = (nodo: unknown, prefijo = ""): [string, string][] =>
