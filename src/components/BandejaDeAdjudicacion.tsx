@@ -36,8 +36,16 @@ import "./BandejaDeAdjudicacion.css";
 export type LotePorDecidir = {
   convocatoriaId: string;
   loteId: string;
-  /** Como se nombra el vehiculo en pantalla. */
+  /** Como se nombra el vehiculo en pantalla: marca, version y modelo. */
   vehiculo: string;
+  /**
+   * Numero economico y numero de serie, ya unidos para pintarse en una linea.
+   * Vacio si el vehiculo no se pudo leer — el rotulo ya cae al `vehiculoId` en
+   * ese caso, y no hay nada mas que mostrar.
+   */
+  identificadores: string;
+  /** Precio publicado del lote, ya formateado en el idioma de la sesion. */
+  precio: string;
   /** Nombre corto de la convocatoria, no su identificador. */
   convocatoria: string;
   /** Cuantas solicitudes vivas tiene la fila. Una cantidad, no identidades. */
@@ -68,6 +76,7 @@ const BandejaDeAdjudicacion = ({
       <Table className="bandeja-adjudicacion">
         <ColGroup>
           <Col id="col-adjudicacion-lote" />
+          <Col id="col-adjudicacion-precio" />
           <Col id="col-adjudicacion-convocatoria" />
           <Col id="col-adjudicacion-fila" />
           <Col id="col-adjudicacion-espera" />
@@ -75,6 +84,7 @@ const BandejaDeAdjudicacion = ({
         <THead>
           <TR>
             <TH scope="col">{etiquetas.columnaLote}</TH>
+            <TH scope="col">{etiquetas.columnaPrecio}</TH>
             <TH scope="col">{etiquetas.columnaConvocatoria}</TH>
             <TH scope="col">{etiquetas.columnaTamanoFila}</TH>
             <TH scope="col">{etiquetas.columnaEspera}</TH>
@@ -89,7 +99,11 @@ const BandejaDeAdjudicacion = ({
                 >
                   {lote.vehiculo}
                 </Link>
+                {lote.identificadores ? (
+                  <Text4 renderAs="p">{lote.identificadores}</Text4>
+                ) : null}
               </TD>
+              <TD>{lote.precio}</TD>
               <TD>
                 {lote.convocatoria}
                 {lote.ventaAbierta ? (

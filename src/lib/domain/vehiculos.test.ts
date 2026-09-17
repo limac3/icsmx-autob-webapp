@@ -6,6 +6,7 @@ import {
   modeloMaximo,
   normalizarDatosVehiculo,
   revisarDatosVehiculo,
+  rotuloVehiculo,
   validarDatosVehiculo,
 } from "./vehiculos";
 import type { DatosVehiculo } from "@/types/vehiculo";
@@ -266,5 +267,11 @@ describe("validarDatosVehiculo", () => {
     expect(resultado.ok).toBe(false);
     if (resultado.ok) return;
     expect(resultado).not.toHaveProperty("data");
+  });
+});
+
+describe("rotuloVehiculo", () => {
+  it("junta marca, version y modelo, nunca el vehiculoId", () => {
+    expect(rotuloVehiculo(validos)).toBe("Nissan NP300 Doble Cabina 2019");
   });
 });

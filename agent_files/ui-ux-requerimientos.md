@@ -466,24 +466,27 @@ Que la consecuencia aparezca antes de confirmar es lo que evita rechazos por err
 Solo existe para convocatorias de modalidad `MANUAL` (R-23).
 
 - **Bandeja** (`/adjudicacion`) — los lotes que esperan decision, **los que llevan mas tiempo
-  esperando primero**: un lote sin decidir es una venta detenida. Muestra el vehiculo, la
-  convocatoria, **cuantos hay en la fila** —una cantidad, jamas identidades— y desde cuando espera.
-  Avisa si la venta sigue abierta.
+  esperando primero**: un lote sin decidir es una venta detenida. Por cada lote: el vehiculo
+  identificado —marca, version y modelo, con numero economico y numero de serie en una segunda
+  linea, **nunca el `vehiculoId` interno**, que no dice nada a quien decide—, el **precio
+  publicado del lote**, la convocatoria, **cuantos hay en la fila** —una cantidad, jamas
+  identidades— y desde cuando espera. Avisa si la venta sigue abierta.
 
   **La bandeja no dictamina**, igual que la del aprobador: cada fila lleva al detalle, donde ya
   viven los datos completos y el boton. Dos vistas del mismo dictamen se separan al primer cambio.
 
 - **Detalle del lote** (`/adjudicacion/<convocatoriaId>/<loteId>`) — **la unica pantalla fuera de
   auditoria que expone identidades de terceros**, y es el requerimiento entero: quien decide no
-  puede hacerlo a ciegas. Por cada candidato vivo:
+  puede hacerlo a ciegas. El encabezado identifica el vehiculo igual que la bandeja, no por su
+  `vehiculoId`. Por cada candidato vivo:
 
   | Dato | Por que |
   | --- | --- |
-  | Turno y **hora exacta** de llegada | Lo que el operador pidio explicitamente |
+  | Turno y **hora exacta de llegada, con milisegundos** | Distinguir que tan cerca llegaron dos solicitudes en la rafaga de apertura — `turno` sigue siendo la unica fuente de verdad del orden (regla 3); esto es para que quien decide entienda el margen, no para que lo reordene |
   | Nombre o correo, y su identificador | Para saber a quien se le adjudica |
   | Su orden dentro de la convocatoria | Los turnos son por lote y no se comparan entre si (R-22) |
   | Cuantas adjudicaciones lleva | Su cupo consumido en esta convocatoria (R-09) |
-  | **Sus otras solicitudes aqui, con su orden** | El cruce que el requerimiento pidio |
+  | **Sus otras solicitudes aqui, con su orden y el vehiculo de cada una** | El cruce que el requerimiento pidio. Cada una enlaza al detalle de ese otro lote —dentro de la misma convocatoria—, porque un numero de solicitud sin decir de que vehiculo se trata no le sirve a quien decide |
 
   **Se advierte cuando la venta sigue abierta**, porque puede decidir de todas formas y la fila que
   tiene delante puede no ser la ultima. **El motivo es obligatorio**: una decision humana sin razon

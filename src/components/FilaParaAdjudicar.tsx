@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import {
   Error as AlertaError,
@@ -55,6 +56,8 @@ export type OtraParticipacionVista = {
   turno: number;
   estatus: string;
   ordenEnConvocatoria?: number;
+  /** Como se nombra ese otro vehiculo: marca, version y modelo. */
+  vehiculo: string;
 };
 
 export type CandidatoVista = {
@@ -197,10 +200,15 @@ const FilaParaAdjudicar = ({
                     <ul className="fila-adjudicar__otras">
                       {candidato.otrasParticipaciones.map((otra) => (
                         <li key={`${otra.loteId}-${String(otra.turno)}`}>
-                          <Text4>
+                          <Link
+                            href={`/adjudicacion/${convocatoriaId}/${otra.loteId}`}
+                          >
+                            {otra.vehiculo}
+                          </Link>
+                          <Text4 renderAs="p">
                             {otra.ordenEnConvocatoria === undefined
                               ? ""
-                              : `#${String(otra.ordenEnConvocatoria)} · `}
+                              : `${etiquetas.ordenEnConvocatoria} ${String(otra.ordenEnConvocatoria)} · `}
                             {etiquetas.turnoAbreviado} {otra.turno} ·{" "}
                             {diccionario.estatusSolicitud[
                               otra.estatus as keyof typeof diccionario.estatusSolicitud

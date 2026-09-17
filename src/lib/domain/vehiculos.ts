@@ -208,3 +208,11 @@ export const validarDatosVehiculo = (
   }
   return exito(normalizarDatosVehiculo(datos));
 };
+
+/**
+ * Como se nombra un vehiculo en una lista o un enlace: marca, version y
+ * modelo. Nunca el `vehiculoId` interno, que no dice nada a quien administra.
+ */
+export const rotuloVehiculo = (
+  vehiculo: Pick<DatosVehiculo, "marca" | "version" | "modelo">,
+): string => `${vehiculo.marca} ${vehiculo.version} ${String(vehiculo.modelo)}`;

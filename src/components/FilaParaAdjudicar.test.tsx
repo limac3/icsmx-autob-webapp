@@ -8,6 +8,18 @@ vi.mock("@/app/actions/adjudicacion", () => ({
   adjudicarManualmente: vi.fn(),
 }));
 
+// Misma razon que en `BandejaDeAdjudicacion.test.tsx`: `next/link` precarga
+// por interseccion y aterriza fuera del `act` de la prueba.
+vi.mock("next/link", () => ({
+  default: ({
+    href,
+    children,
+  }: {
+    href: string;
+    children: React.ReactNode;
+  }) => <a href={href}>{children}</a>,
+}));
+
 // `CardView` arrastra `Fade`, que mide el desbordamiento con un `setTimeout` de
 // 50 ms y aterriza fuera del `act` de la prueba.
 vi.mock("@churchofjesuschrist/eden-has-overflow", () => ({
@@ -90,6 +102,7 @@ describe("la informacion que el adjudicador necesita", () => {
               turno: 3,
               estatus: "EN_FILA",
               ordenEnConvocatoria: 1,
+              vehiculo: "Nissan NP300 2019",
             },
           ],
         }),
@@ -97,8 +110,16 @@ describe("la informacion que el adjudicador necesita", () => {
     });
 
     const texto = context.container.textContent ?? "";
-    expect(texto).toContain("#1");
+    // El vehiculo, no el `loteId`: sin esto "#1" no decia de cual se trataba.
+    expect(texto).toContain("Nissan NP300 2019");
+    expect(texto).toContain(
+      `${diccionario.adjudicacion.ordenEnConvocatoria} 1`,
+    );
     expect(texto).toContain(diccionario.estatusSolicitud.EN_FILA);
+    // Y lleva al detalle de ese otro lote, dentro de la misma convocatoria.
+    expect(
+      context.container.querySelector('a[href="/adjudicacion/C1/L9"]'),
+    ).not.toBeNull();
   });
 
   it("dice cuando no tiene otras solicitudes, en vez de dejar la celda vacia", async () => {

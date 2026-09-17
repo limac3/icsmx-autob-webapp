@@ -345,6 +345,7 @@
     "columnaConvocatoria": "Call for bids",
     "columnaTamanoFila": "In queue",
     "columnaEspera": "Waiting since",
+    "columnaPrecio": "Price",
     "ventaAbiertaAviso": "Sales are still open.",
     "tituloDetalle": "Decide the winner",
     "ventaAbiertaDetalle": "Sales are still open: the queue may grow after you decide. You may decide anyway; the record will show the queue was not closed.",

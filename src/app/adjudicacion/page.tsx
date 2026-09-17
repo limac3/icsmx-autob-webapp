@@ -9,10 +9,13 @@ import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
 import { listarConvocatorias } from "@/lib/convocatorias/listarConvocatorias";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
+import { formatearPrecio } from "@/lib/domain/dinero";
 import { desdeIso, formatearEspera } from "@/lib/domain/fechas";
 import { ventaAbierta } from "@/lib/domain/ventanas";
+import { rotuloVehiculo } from "@/lib/domain/vehiculos";
 import { consultarTamanoFila } from "@/lib/fila/conteosDeFila";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
+import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import "./pagina.css";
 
 /**
@@ -69,11 +72,21 @@ const AdjudicacionPagina = async () => {
       const tamano = await consultarTamanoFila(lote.loteId);
       if (!tamano.ok || tamano.data === 0) continue;
 
+      // Sin esto la bandeja solo mostraba `vehiculoId`, el identificador
+      // interno: nada que permita reconocer el vehiculo sin abrir el detalle.
+      const vehiculo = await obtenerVehiculo(lote.vehiculoId);
+
       pendientes.push({
         lote: {
           convocatoriaId: convocatoria.convocatoriaId,
           loteId: lote.loteId,
-          vehiculo: lote.vehiculoId,
+          vehiculo: vehiculo.ok
+            ? rotuloVehiculo(vehiculo.data)
+            : lote.vehiculoId,
+          identificadores: vehiculo.ok
+            ? `${vehiculo.data.numeroEconomico} · ${vehiculo.data.numeroDeSerie}`
+            : "",
+          precio: formatearPrecio(lote.precio, idioma),
           convocatoria: convocatoria.nombre,
           tamanoFila: tamano.data,
           espera: inicio ? formatearEspera(inicio, ahora, idioma) : "",

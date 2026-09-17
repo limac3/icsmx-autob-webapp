@@ -8,10 +8,12 @@ import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
-import { desdeIso, formatearFechaHora } from "@/lib/domain/fechas";
+import { desdeIso, formatearFechaHoraPrecisa } from "@/lib/domain/fechas";
 import { ventaAbierta } from "@/lib/domain/ventanas";
+import { rotuloVehiculo } from "@/lib/domain/vehiculos";
 import { leerFilaParaAdjudicar } from "@/lib/fila/leerFilaParaAdjudicar";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
+import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import "../../pagina.css";
 
 /**
@@ -68,6 +70,18 @@ const DetalleDeAdjudicacion = async ({
   });
   if (!fila.ok) throw new Error(fila.error);
 
+  // Como se nombra cada lote de la convocatoria, para el encabezado y para
+  // "otras participaciones": sin esto, la unica pista era el `loteId` interno,
+  // que no dice a quien decide de que vehiculo se trata.
+  const vehiculosPorLote = new Map<string, string>();
+  for (const unLote of convocatoria.lotes) {
+    const vehiculo = await obtenerVehiculo(unLote.vehiculoId);
+    vehiculosPorLote.set(
+      unLote.loteId,
+      vehiculo.ok ? rotuloVehiculo(vehiculo.data) : unLote.vehiculoId,
+    );
+  }
+
   // El permiso de decidir se evalua aparte del de ver: `Autob_Auditar` ve la
   // fila pero no adjudica. Se pide sin motivo —todavia no hay ninguno— asi que
   // solo responde por la capacidad; la guarda completa vuelve a correr en la
@@ -86,14 +100,23 @@ const DetalleDeAdjudicacion = async ({
       participanteId: c.participanteId,
       ...(c.correoTitular ? { correoTitular: c.correoTitular } : {}),
       // Se formatea en el servidor, en hora de negocio: dejarselo al navegador
-      // mostraria la hora local de cada quien (regla 9).
-      solicitadoEn: llegada ? formatearFechaHora(llegada) : c.solicitadoEn,
+      // mostraria la hora local de cada quien (regla 9). Con milisegundos y no
+      // solo minutos: el `turno` sigue siendo la unica fuente de verdad del
+      // orden (regla 3), pero quien decide a mano necesita ver que tan cerca
+      // llegaron dos solicitudes, y "10:05" no distingue a nadie en la rafaga
+      // de apertura.
+      solicitadoEn: llegada
+        ? formatearFechaHoraPrecisa(llegada)
+        : c.solicitadoEn,
       ...(c.ordenEnConvocatoria === undefined
         ? {}
         : { ordenEnConvocatoria: c.ordenEnConvocatoria }),
       adjudicacionesEnConvocatoria: c.adjudicacionesEnConvocatoria,
       sinCupo: c.sinCupo,
-      otrasParticipaciones: c.otrasParticipaciones,
+      otrasParticipaciones: c.otrasParticipaciones.map((otra) => ({
+        ...otra,
+        vehiculo: vehiculosPorLote.get(otra.loteId) ?? otra.loteId,
+      })),
     };
   });
 
@@ -102,7 +125,8 @@ const DetalleDeAdjudicacion = async ({
       <header>
         <H1>{etiquetas.tituloDetalle}</H1>
         <Text2 renderAs="p">
-          {convocatoria.nombre} · {lote.vehiculoId}
+          {convocatoria.nombre} ·{" "}
+          {vehiculosPorLote.get(loteId) ?? lote.vehiculoId}
         </Text2>
       </header>
 
