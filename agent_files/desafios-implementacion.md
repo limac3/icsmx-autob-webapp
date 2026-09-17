@@ -4607,3 +4607,84 @@ volvio a funcionar, porque las dos corridas que se compararon estaban separadas 
 por un proceso distinto. **La leccion mas general: cuando una medicion nueva contradice a una
 vieja, sospechar primero del metodo y no del codigo** — sobre todo si la aritmetica del cambio no
 alcanza para explicar la diferencia.
+
+---
+
+## 82) El `V2` de la seccion 79 nunca se probo contra `main`, y ahi rompio
+
+### Problema
+El deploy de `main` fallaba al desplegar el commit que corrige la seccion 79
+(sufijo `V2` en los seis ids logicos de alarma), con el mismo mensaje que esa
+seccion ya habia documentado: `Validation failed with 6 error(s)`.
+
+### Sintoma
+`aws cloudformation describe-stack-events` sobre la pila anidada de alarmas mostraba
+un solo evento `UPDATE_FAILED` a nivel de pila, sin ningun evento por recurso — la
+plantilla nunca llego a tocar un solo `Alarm`. `aws cloudwatch describe-alarms`
+confirmo que las seis alarmas de `main-branch` ya existian, en `OK`, con
+`AlarmConfigurationUpdatedTimestamp` del 2026-09-11: el mismo dia en que
+`bf9f79b` introdujo el prefijo por identidad de backend.
+
+### Causa raiz
+**El `V2` de la seccion 79 se valido contra el sandbox — el unico entorno que de
+verdad tenia el defecto — y nunca contra `main`, que no lo tenia.**
+
+`main` nunca paso por el estado roto que motivo el `V2`: sus seis alarmas se
+crearon por primera vez el 09-11 ya con el nombre prefijado correcto, bajo los
+ids logicos originales (sin sufijo). Cambiarles el id logico a `V2` hoy no es un
+reemplazo que libera un nombre — es pedirle a CloudFormation que cree una alarma
+nueva con **el mismo `AlarmName`** que una alarma sana ya tiene, dentro de la
+misma pila. CloudFormation lo rechaza en su validacion previa, antes de tocar
+ningun recurso, exactamente como la seccion 79 describio para el sandbox — pero
+aqui el rol esta invertido: alli el id viejo tenia el nombre malo y el nuevo el
+bueno; aqui los dos apuntan al nombre bueno a la vez.
+
+**Borrar la alarma fisica a mano no libera el nombre.** Se intento como primer
+arreglo: `aws cloudwatch delete-alarms` sobre las seis de `main-branch`, seguido
+de un reintento del deploy. El resultado fue peor, no mejor: la validacion previa
+si paso (ya no habia un recurso vivo con ese nombre), pero la creacion fallo con
+`"<nombre> already exists in stack"` — un mensaje que **no viene de la API de
+CloudWatch sino del registro interno de CloudFormation**. El id logico viejo
+sigue siendo, para la pila, el dueno de ese `AlarmName` hasta que su borrado
+formal se complete, y en un reemplazo CloudFormation intenta crear el recurso
+nuevo **antes** de borrar el viejo. Borrar por fuera deja el nombre libre en
+AWS pero no en la contabilidad de la pila, y el resultado neto fue peor:
+production se quedo sin las seis alarmas activas, con la pila en drift
+(ids logicos viejos apuntando a recursos que ya no existen).
+
+### Solucion aplicada
+Dos despliegues, no uno, para separar "liberar el nombre" de "crear el
+definitivo":
+
+1. **Paso 1**, temporal: los seis ids logicos con un sufijo adicional (`V2Tmp`)
+   y el propio `AlarmName` con `-tmp` al final. Al no colisionar con ningun
+   nombre existente, CloudFormation crea las seis alarmas nuevas **y** completa
+   el borrado de los ids logicos viejos como parte de la misma actualizacion —
+   eso es lo que de verdad libera el nombre en la contabilidad de la pila, no el
+   borrado manual.
+2. **Paso 2**: `git revert` exacto del paso 1, que restaura el codigo real
+   (`V2`, nombre final). Con los ids viejos ya fuera de la pila desde el paso 1,
+   crear `V2` con el nombre definitivo ya no colisiona con nada.
+
+Los tests de `backend.test.ts` no necesitaron ningun cambio temporal: sus
+aserciones de nombre usan `Match.stringLikeRegexp`, que hace coincidencia
+parcial — verificado antes de commitear, con un `node -e` suelto contra
+`aws-cdk-lib/assertions`, no de memoria — asi que el sufijo `-tmp` del paso 1
+las sigue cumpliendo sin tocarlas.
+
+### Regla para futuro
+**Un `createOnlyProperty` renombrado por id logico solo es gratis en el entorno
+que ya tenia el nombre malo.** En cualquier otro entorno donde el recurso ya
+tenga el nombre bueno, el mismo cambio es un reemplazo con el nombre repetido
+dentro de la propia pila, y CloudFormation lo rechaza sin tocar nada — la
+plantilla es identica en ambos casos, asi que ninguna sintesis lo distingue.
+Antes de desplegar un cambio asi a un entorno compartido, comparar
+`AlarmConfigurationUpdatedTimestamp` (o el analogo del recurso) contra la fecha
+del defecto que se esta corrigiendo: si el entorno ya paso por ahi despues de esa
+fecha, no necesita el arreglo y el arreglo lo rompe.
+
+Y si el bloqueo ya ocurrio: **borrar el recurso fisico a mano no ayuda**, porque
+el conflicto vive en el registro de la pila, no en el proveedor. La salida
+limpia es un nombre intermedio que nunca haya existido, para que el borrado del
+id viejo se complete como parte normal de un `UPDATE_COMPLETE`, y solo despues
+volver al nombre definitivo en un segundo despliegue.
