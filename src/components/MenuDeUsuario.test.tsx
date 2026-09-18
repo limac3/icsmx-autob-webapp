@@ -2,21 +2,15 @@ import { act } from "react";
 import { describe, expect, it } from "vitest";
 import { obtenerDiccionario } from "@/dictionaries";
 import { genericTests, getTestContext } from "@/utils/testHelpers";
-import MenuDeUsuario, { type EnlaceDeMenu } from "./MenuDeUsuario";
+import MenuDeUsuario from "./MenuDeUsuario";
 
 const context = getTestContext();
 
 const diccionario = obtenerDiccionario("es");
 const etiquetas = diccionario.navegacion;
 
-const enlaces: EnlaceDeMenu[] = [
-  { href: "/convocatorias", etiqueta: etiquetas.convocatorias },
-  { href: "/tesoreria/verificacion", etiqueta: etiquetas.tesoreria },
-];
-
 const propsBase = {
   nombre: "Ana Alcantara" as string | null,
-  enlaces,
   diccionario,
 };
 
@@ -58,38 +52,13 @@ describe("MenuDeUsuario", () => {
     expect(context.container.textContent).toContain("Ana Alcantara");
   });
 
-  it("al abrirlo aparecen los enlaces recibidos y los de la cuenta", async () => {
+  it("al abrirlo muestra solo los accesos fijos de la cuenta", async () => {
+    // Los enlaces que dependen de permisos ya no viven aqui, sino en
+    // `NavegacionPrincipal`: este menu es solo la cuenta.
     await renderizar();
     await abrir();
 
     expect(disparador()?.getAttribute("aria-expanded")).toBe("true");
-    expect(hrefs()).toEqual([
-      "/convocatorias",
-      "/tesoreria/verificacion",
-      "/sesion",
-      "/auth/logout",
-    ]);
-  });
-
-  it("no inventa enlaces: solo muestra los que le pasaron", async () => {
-    await renderizar({
-      enlaces: [{ href: "/aprobaciones", etiqueta: etiquetas.aprobaciones }],
-    });
-    await abrir();
-
-    expect(hrefs()).toEqual(["/aprobaciones", "/sesion", "/auth/logout"]);
-    expect(context.container.textContent).not.toContain(
-      etiquetas.convocatorias,
-    );
-  });
-
-  it("con la lista vacia lo dice, y deja los enlaces de la cuenta", async () => {
-    // Una sesion autenticada sin permisos es un caso real y distinto de un EAS
-    // caido (`session.ts`): tiene que poder ver su sesion y salir.
-    await renderizar({ enlaces: [] });
-    await abrir();
-
-    expect(context.container.textContent).toContain(etiquetas.sinAccesos);
     expect(hrefs()).toEqual(["/sesion", "/auth/logout"]);
   });
 

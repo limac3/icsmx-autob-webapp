@@ -4,17 +4,19 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { ContextualMenu } from "@churchofjesuschrist/eden-contextual-menu";
 import { Ghost } from "@churchofjesuschrist/eden-buttons";
-import { Text2, Text3 } from "@churchofjesuschrist/eden-text";
+import { Text2 } from "@churchofjesuschrist/eden-text";
 import type { Diccionario } from "@/dictionaries";
 import "./MenuDeUsuario.css";
 
 /**
- * Menu de la aplicacion, en el slot `tools` del `WorkforceHeader`.
+ * Menu de cuenta, en el slot `tools` del `WorkforceHeader`, junto a
+ * `NavegacionPrincipal`.
  *
- * **No recibe permisos, recibe enlaces.** El filtrado ya ocurrio en el
- * servidor (`EncabezadoAplicacion.tsx` con `entradasVisibles`), asi que este
- * componente no puede equivocarse al decidir quien ve que: no tiene con que
- * decidirlo. De paso, la lista de permisos de la sesion no cruza al cliente.
+ * **Solo los accesos fijos de la cuenta** — "Mi sesion" y "Cerrar sesion".
+ * Los enlaces que dependen de permisos viven en `NavegacionPrincipal` y no
+ * aqui: antes compartian este menu y quedaban escondidos detras de un clic
+ * sobre el nombre, cuando el requerimiento es que se vean siempre, junto al
+ * nombre.
  *
  * Patron de **divulgacion** (boton `aria-expanded` + panel), no `role="menu"`:
  * el contenido son enlaces de navegacion, y un menu ARIA obligaria a
@@ -24,24 +26,13 @@ import "./MenuDeUsuario.css";
  * una `ref` al elemento que lo ancla.
  */
 
-export type EnlaceDeMenu = {
-  readonly href: string;
-  readonly etiqueta: string;
-};
-
 export type MenuDeUsuarioProps = {
   /** `null` sin sesion: el menu se reduce a un enlace de entrada. */
   nombre: string | null;
-  /** Ya filtrados por permiso en el servidor. Puede venir vacio. */
-  enlaces: readonly EnlaceDeMenu[];
   diccionario: Diccionario;
 };
 
-const MenuDeUsuario = ({
-  nombre,
-  enlaces,
-  diccionario,
-}: MenuDeUsuarioProps) => {
+const MenuDeUsuario = ({ nombre, diccionario }: MenuDeUsuarioProps) => {
   const etiquetas = diccionario.navegacion;
   const [abierto, setAbierto] = useState(false);
   const ancla = useRef<HTMLSpanElement>(null);
@@ -84,27 +75,7 @@ const MenuDeUsuario = ({
 
       <ContextualMenu open={abierto} forRef={ancla} onClickOutside={cerrar}>
         <nav aria-label={etiquetas.menu} className="menu-usuario__panel">
-          {enlaces.length === 0 ? (
-            <Text3 renderAs="p" className="menu-usuario__vacio">
-              {etiquetas.sinAccesos}
-            </Text3>
-          ) : (
-            <ul className="menu-usuario__lista">
-              {enlaces.map((enlace) => (
-                <li key={enlace.href}>
-                  <Link
-                    className="menu-usuario__enlace"
-                    href={enlace.href}
-                    onClick={cerrar}
-                  >
-                    {enlace.etiqueta}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <ul className="menu-usuario__lista menu-usuario__lista--cuenta">
+          <ul className="menu-usuario__lista">
             <li>
               <Link
                 className="menu-usuario__enlace"

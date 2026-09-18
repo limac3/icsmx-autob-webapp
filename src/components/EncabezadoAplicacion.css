@@ -1,0 +1,8 @@
+/* Encabezado de la aplicacion. Solo layout; la apariencia la ponen los
+   componentes de Eden (regla 10). */
+
+.encabezado-aplicacion__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--unity-spacing16, 1rem);
+}

@@ -66,8 +66,20 @@ encabezado la sesion, el pie el idioma— y ninguno debe retrasar el contenido, 
 persona vino a ver. El contenido lo envuelve un `<div>`, no un `<main>`: cada pantalla monta el
 suyo con su propia clase, y anidar landmarks `main` seria HTML invalido.
 
-**Navegacion por permiso.** El menu vive en el slot `tools` del `WorkforceHeader`, como un
-desplegable (`MenuDeUsuario.tsx`). Solo se muestran las secciones que la persona puede usar.
+**Navegacion por permiso, en dos componentes separados dentro del slot `tools` del
+`WorkforceHeader`.** Solo se muestran las secciones que la persona puede usar.
+
+- **`NavegacionPrincipal.tsx`** — las secciones por permiso, **siempre visibles junto al nombre
+  de usuario**, no escondidas detras de un clic. En pantalla ancha, una fila horizontal en blanco
+  alineada a la derecha. En pantalla angosta: si es una sola seccion, el enlace suelto —envolverlo
+  en un colapsable no ahorra nada—; si son varias, un `<details>` nativo (`Drawer`/`Summary` de
+  `eden-accordion`) cuyo resumen es solo vista previa de la primera: hay que expandirlo para
+  navegar a cualquiera, incluida esa primera. Server Component: el colapso no necesita
+  JavaScript de cliente. Dos variantes siempre renderizadas y el CSS decide cual se ve, el mismo
+  patron mobile-first que `Table`/`CardView`.
+- **`MenuDeUsuario.tsx`** — solo los accesos fijos de la cuenta, "Mi sesion" y "Cerrar sesion",
+  en el desplegable de siempre sobre el nombre. Antes compartia el desplegable con las secciones
+  por permiso; se separaron porque el pedido era que esas se vieran siempre, no en un menu.
 
 **Cada entrada declara la accion que abre su puerta, no una lista de permisos**
 (`src/lib/navegacion.ts`). Es lo que mantiene el menu pegado a la matriz: si

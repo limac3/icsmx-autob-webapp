@@ -5,6 +5,8 @@ import { obtenerDiccionario } from "@/dictionaries";
 import { getSession } from "@/lib/auth/session";
 import type { Permiso, Sesion } from "@/types/identidad";
 import EncabezadoAplicacion from "./EncabezadoAplicacion";
+import MenuDeUsuario from "./MenuDeUsuario";
+import NavegacionPrincipal from "./NavegacionPrincipal";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth/session", () => ({ getSession: vi.fn() }));
@@ -31,12 +33,32 @@ const sesionCon = (...permisos: Permiso[]): Sesion => ({
  */
 const montar = async () => EncabezadoAplicacion();
 
-const menu = (elemento: Awaited<ReturnType<typeof montar>>) =>
+/**
+ * El slot `tools` es ahora un `<div>` con dos hijos: `NavegacionPrincipal`
+ * (ausente sin sesion) y `MenuDeUsuario`. Se identifican por tipo en vez de
+ * por posicion, para que la prueba no dependa del orden en el que se
+ * declaran en el JSX.
+ */
+type HijoDeTools = { type: unknown; props: Record<string, unknown> };
+
+const menu = (elemento: Awaited<ReturnType<typeof montar>>) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (elemento.props as any).tools.props as {
-    nombre: string | null;
-    enlaces: { href: string; etiqueta: string }[];
+  const tools = (elemento.props as any).tools as {
+    props: { children: unknown[] };
   };
+  const hijos = tools.props.children.filter(Boolean) as HijoDeTools[];
+
+  const navegacion = hijos.find((h) => h.type === NavegacionPrincipal);
+  const cuenta = hijos.find((h) => h.type === MenuDeUsuario);
+
+  return {
+    nombre: (cuenta?.props.nombre ?? null) as string | null,
+    enlaces: (navegacion?.props.enlaces ?? []) as {
+      href: string;
+      etiqueta: string;
+    }[],
+  };
+};
 
 beforeEach(() => {
   sesionSimulada.mockReset();

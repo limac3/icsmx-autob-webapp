@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { WorkforceHeader } from "@churchofjesuschrist/eden-workforce-header";
-import MenuDeUsuario, { type EnlaceDeMenu } from "@/components/MenuDeUsuario";
+import MenuDeUsuario from "@/components/MenuDeUsuario";
+import NavegacionPrincipal, {
+  type EnlaceDeMenu,
+} from "@/components/NavegacionPrincipal";
 import { obtenerDiccionario } from "@/dictionaries";
 import { getSession } from "@/lib/auth/session";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
 import { entradasVisibles } from "@/lib/navegacion";
+import "./EncabezadoAplicacion.css";
 
 /**
  * Encabezado estandarizado de aplicacion de fuerza laboral.
@@ -13,6 +17,11 @@ import { entradasVisibles } from "@/lib/navegacion";
  * necesita los permisos de la sesion, que solo existen en el servidor; lo que
  * cruza al cliente es una lista de enlaces ya filtrada — nunca el conjunto de
  * permisos.
+ *
+ * **Dos componentes en el slot `tools`, no uno.** `NavegacionPrincipal` lleva
+ * los enlaces que dependen de permisos, siempre visibles junto al nombre;
+ * `MenuDeUsuario` solo lleva los accesos fijos de la cuenta ("Mi sesion",
+ * "Cerrar sesion"). Antes compartian un mismo menu desplegable.
  *
  * Sin sesion no lanza ni redirige: el encabezado se dibuja igual, con un
  * enlace de entrada. Vive en el layout raiz, asi que se renderiza tambien en
@@ -41,11 +50,15 @@ const EncabezadoAplicacion = async () => {
     <WorkforceHeader
       name={<Link href="/">{diccionario.comun.nombreAplicacion}</Link>}
       tools={
-        <MenuDeUsuario
-          nombre={sesion?.nombre ?? null}
-          enlaces={enlaces}
-          diccionario={diccionario}
-        />
+        <div className="encabezado-aplicacion__tools">
+          {sesion ? (
+            <NavegacionPrincipal enlaces={enlaces} diccionario={diccionario} />
+          ) : null}
+          <MenuDeUsuario
+            nombre={sesion?.nombre ?? null}
+            diccionario={diccionario}
+          />
+        </div>
       }
     />
   );

@@ -1,0 +1,43 @@
+/* Navegacion principal en el encabezado, junto al nombre de usuario.
+   Solo layout y color; el resto de la apariencia la ponen los componentes de
+   Eden (regla 10). El color blanco es adecuacion visual pedida explicitamente
+   para este encabezado, no un valor de Eden. */
+
+.navegacion-principal__lista {
+  display: flex;
+  align-items: center;
+  gap: var(--unity-spacing16, 1rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.navegacion-principal__enlace {
+  color: white;
+  white-space: nowrap;
+}
+
+.navegacion-principal__vacio {
+  margin: 0;
+  color: white;
+  white-space: nowrap;
+}
+
+/* Angosta por omision; la ancha se oculta hasta que el viewport alcance. */
+.navegacion-principal__angosta {
+  color: white;
+}
+
+.navegacion-principal__ancha {
+  display: none;
+}
+
+@media (width >= 48rem) {
+  .navegacion-principal__ancha {
+    display: block;
+  }
+
+  .navegacion-principal__angosta {
+    display: none;
+  }
+}
