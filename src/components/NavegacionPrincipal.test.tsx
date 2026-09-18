@@ -1,8 +1,9 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { obtenerDiccionario } from "@/dictionaries";
+import type { EnlaceDeMenu } from "@/types/navegacion";
 import { genericTests, getTestContext } from "@/utils/testHelpers";
-import NavegacionPrincipal, { type EnlaceDeMenu } from "./NavegacionPrincipal";
+import NavegacionPrincipal from "./NavegacionPrincipal";
 
 // `next/link` precarga por interseccion y aterriza fuera del `act` de la
 // prueba (mismo motivo que en `BandejaDeAdjudicacion.test.tsx`).
@@ -63,42 +64,36 @@ describe("NavegacionPrincipal", () => {
     ]);
   });
 
-  it("con un solo enlace, la variante angosta lo muestra suelto y navegable", async () => {
+  it("la variante ancha es una region de navegacion con nombre accesible", async () => {
+    await pintar({ enlaces });
+
+    const navegacion = context.container.querySelector(
+      ".navegacion-principal__ancha",
+    );
+    expect(navegacion?.tagName).toBe("NAV");
+    expect(navegacion?.getAttribute("aria-label")).toBe(etiquetas.menu);
+  });
+
+  it("la variante angosta delega en el desplegable, no repite la fila", async () => {
+    // La fila horizontal no cabe en un telefono: al expandirse hacia los
+    // lados empujaba el nombre de usuario fuera de la pantalla.
+    await pintar({ enlaces });
+
+    const angosta = context.container.querySelector(
+      ".navegacion-principal__angosta",
+    );
+    expect(angosta?.querySelector("button[aria-expanded]")).not.toBeNull();
+    // Colapsada no ofrece enlaces: hay que expandirla.
+    expect(hrefsDe(angosta)).toEqual([]);
+  });
+
+  it("con un solo enlace la variante angosta lo muestra suelto y navegable", async () => {
     await pintar({ enlaces: [enlaces[0]!] });
 
     const angosta = context.container.querySelector(
       ".navegacion-principal__angosta",
     );
     expect(hrefsDe(angosta)).toEqual(["/convocatorias"]);
-    // Sin `<details>`: envolver un unico enlace no ahorra nada.
-    expect(angosta?.querySelector("details")).toBeNull();
-  });
-
-  it("con mas de un enlace, la variante angosta los colapsa en un detalle", async () => {
-    await pintar({ enlaces });
-
-    const angosta = context.container.querySelector(
-      ".navegacion-principal__angosta",
-    );
-    const detalle = angosta?.querySelector("details");
-    expect(detalle).not.toBeNull();
-    // El resumen es solo vista previa: no hay enlace navegable antes de
-    // expandir, ni siquiera al primero.
-    expect(detalle?.querySelector("summary")?.textContent).toContain(
-      etiquetas.convocatorias,
-    );
-    expect(detalle?.querySelector("summary a")).toBeNull();
-    // Expandido, las dos opciones son navegables.
-    expect(hrefsDe(detalle ?? null)).toEqual([
-      "/convocatorias",
-      "/tesoreria/verificacion",
-    ]);
-  });
-
-  it("es una region de navegacion con nombre accesible", async () => {
-    await pintar({ enlaces });
-
-    const navegacion = context.container.querySelector("nav");
-    expect(navegacion?.getAttribute("aria-label")).toBe(etiquetas.menu);
+    expect(angosta?.querySelector("button[aria-expanded]")).toBeNull();
   });
 });

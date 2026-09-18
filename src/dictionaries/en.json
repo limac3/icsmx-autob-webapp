@@ -19,6 +19,7 @@
   },
   "navegacion": {
     "menu": "Application menu",
+    "menuCuenta": "Account menu",
     "entrar": "Sign in",
     "salir": "Sign out",
     "miSesion": "My session",

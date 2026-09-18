@@ -1,0 +1,41 @@
+/* Variante angosta de la navegacion principal: el mismo desplegable vertical
+   que el menu de cuenta. Solo layout; la apariencia la ponen los componentes
+   de Eden (regla 10). El blanco del enlace suelto es la adecuacion visual
+   pedida para este encabezado, igual que en la barra ancha. */
+
+.menu-secciones {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu-secciones__ancla {
+  display: inline-flex;
+}
+
+.menu-secciones__disparador {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--unity-spacing4, 0.25rem);
+}
+
+.menu-secciones__panel {
+  min-width: calc(220rem / 16);
+}
+
+.menu-secciones__lista {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu-secciones__enlace {
+  display: block;
+  padding: var(--unity-spacing8, 0.5rem) var(--unity-spacing12, 0.75rem);
+  white-space: nowrap;
+}
+
+.menu-secciones__suelto {
+  padding-inline: var(--unity-spacing8, 0.5rem);
+  color: white;
+  white-space: nowrap;
+}

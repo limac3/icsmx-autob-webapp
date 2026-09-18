@@ -1,13 +1,12 @@
 import Link from "next/link";
 import { WorkforceHeader } from "@churchofjesuschrist/eden-workforce-header";
 import MenuDeUsuario from "@/components/MenuDeUsuario";
-import NavegacionPrincipal, {
-  type EnlaceDeMenu,
-} from "@/components/NavegacionPrincipal";
+import NavegacionPrincipal from "@/components/NavegacionPrincipal";
 import { obtenerDiccionario } from "@/dictionaries";
 import { getSession } from "@/lib/auth/session";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
 import { entradasVisibles } from "@/lib/navegacion";
+import type { EnlaceDeMenu } from "@/types/navegacion";
 import "./EncabezadoAplicacion.css";
 
 /**

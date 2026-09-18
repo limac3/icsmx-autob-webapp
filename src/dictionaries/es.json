@@ -19,6 +19,7 @@
   },
   "navegacion": {
     "menu": "Menú de la aplicación",
+    "menuCuenta": "Menú de la cuenta",
     "entrar": "Iniciar sesión",
     "salir": "Cerrar sesión",
     "miSesion": "Mi sesión",

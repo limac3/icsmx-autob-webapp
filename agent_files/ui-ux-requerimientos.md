@@ -70,16 +70,27 @@ suyo con su propia clase, y anidar landmarks `main` seria HTML invalido.
 `WorkforceHeader`.** Solo se muestran las secciones que la persona puede usar.
 
 - **`NavegacionPrincipal.tsx`** — las secciones por permiso, **siempre visibles junto al nombre
-  de usuario**, no escondidas detras de un clic. En pantalla ancha, una fila horizontal en blanco
-  alineada a la derecha. En pantalla angosta: si es una sola seccion, el enlace suelto —envolverlo
-  en un colapsable no ahorra nada—; si son varias, un `<details>` nativo (`Drawer`/`Summary` de
-  `eden-accordion`) cuyo resumen es solo vista previa de la primera: hay que expandirlo para
-  navegar a cualquiera, incluida esa primera. Server Component: el colapso no necesita
-  JavaScript de cliente. Dos variantes siempre renderizadas y el CSS decide cual se ve, el mismo
-  patron mobile-first que `Table`/`CardView`.
+  de usuario**, no escondidas detras de un clic. Dos variantes siempre renderizadas y el CSS
+  decide cual se ve, el mismo patron mobile-first que `Table`/`CardView`: en pantalla ancha una
+  fila horizontal en blanco alineada a la derecha (Server Component, son enlaces); en pantalla
+  angosta delega en `MenuDeSecciones`.
+- **`MenuDeSecciones.tsx`** — la variante angosta. Con **una sola** seccion la muestra suelta y
+  navegable, porque envolverla solo agregaria un clic. Con **varias**, las colapsa en un
+  desplegable **vertical, hacia abajo**, con la misma forma que el menu de la cuenta
+  (`ContextualMenu` + disparador con `aria-expanded`, cierre con Escape y al elegir). El
+  disparador muestra la primera seccion como **vista previa, no como enlace**: para navegar
+  —incluso a esa primera— hay que expandirlo.
+
+  **El primer intento fue un `<details>` de `eden-accordion` reutilizando la misma fila.** No
+  sirvio: la lista seguia siendo horizontal, asi que al expandirse crecia hacia los costados,
+  se salia de la pantalla y empujaba el nombre de usuario fuera de vista. Vertical, y con el
+  desplegable que la aplicacion ya usa para lo mismo.
 - **`MenuDeUsuario.tsx`** — solo los accesos fijos de la cuenta, "Mi sesion" y "Cerrar sesion",
   en el desplegable de siempre sobre el nombre. Antes compartia el desplegable con las secciones
   por permiso; se separaron porque el pedido era que esas se vieran siempre, no en un menu.
+
+  Cada menu **se nombra distinto** (`menu` y `menuCuenta`): dos landmarks de navegacion con el
+  mismo nombre accesible no se distinguirian con un lector de pantalla.
 
 **Cada entrada declara la accion que abre su puerta, no una lista de permisos**
 (`src/lib/navegacion.ts`). Es lo que mantiene el menu pegado a la matriz: si

@@ -74,7 +74,10 @@ const MenuDeUsuario = ({ nombre, diccionario }: MenuDeUsuarioProps) => {
       </span>
 
       <ContextualMenu open={abierto} forRef={ancla} onClickOutside={cerrar}>
-        <nav aria-label={etiquetas.menu} className="menu-usuario__panel">
+        {/* Etiqueta propia, distinta de la de `NavegacionPrincipal`: desde que
+            son dos menus, dos landmarks de navegacion con el mismo nombre
+            accesible no se distinguirian con un lector de pantalla. */}
+        <nav aria-label={etiquetas.menuCuenta} className="menu-usuario__panel">
           <ul className="menu-usuario__lista">
             <li>
               <Link

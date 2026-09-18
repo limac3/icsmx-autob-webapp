@@ -62,12 +62,15 @@ describe("MenuDeUsuario", () => {
     expect(hrefs()).toEqual(["/sesion", "/auth/logout"]);
   });
 
-  it("el panel es una region de navegacion con nombre accesible", async () => {
+  it("el panel se nombra como menu de cuenta, distinto del de secciones", async () => {
+    // Dos landmarks de navegacion con el mismo nombre accesible no se
+    // distinguirian con un lector de pantalla, y desde que las secciones
+    // salieron de aqui son dos.
     await renderizar();
     await abrir();
 
     const navegacion = context.container.querySelector("nav");
-    expect(navegacion?.getAttribute("aria-label")).toBe(etiquetas.menu);
+    expect(navegacion?.getAttribute("aria-label")).toBe(etiquetas.menuCuenta);
   });
 
   it("cierra con Escape", async () => {
