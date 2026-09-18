@@ -484,9 +484,21 @@ Solo existe para convocatorias de modalidad `MANUAL` (R-23).
   | --- | --- |
   | Turno y **hora exacta de llegada, con milisegundos** | Distinguir que tan cerca llegaron dos solicitudes en la rafaga de apertura — `turno` sigue siendo la unica fuente de verdad del orden (regla 3); esto es para que quien decide entienda el margen, no para que lo reordene |
   | Nombre o correo, y su identificador | Para saber a quien se le adjudica |
-  | Su orden dentro de la convocatoria | Los turnos son por lote y no se comparan entre si (R-22) |
   | Cuantas adjudicaciones lleva | Su cupo consumido en esta convocatoria (R-09) |
-  | **Sus otras solicitudes aqui, con su orden y el vehiculo de cada una** | El cruce que el requerimiento pidio. Cada una enlaza al detalle de ese otro lote —dentro de la misma convocatoria—, porque un numero de solicitud sin decir de que vehiculo se trata no le sirve a quien decide |
+  | **Sus otras solicitudes aqui, cada una identificando su vehiculo** | El cruce que el requerimiento pidio. Un ordinal de solicitud sin decir de que vehiculo se trata no le sirve a quien decide, asi que se quito de la pantalla (no se muestra en ningun otro lado) |
+
+  El ordinal de la solicitud (`ordenEnConvocatoria`) **ya no se muestra**: no aparecia en ninguna
+  otra pantalla y por si solo no dice nada. Sigue existiendo como dato del servicio —ordena "sus
+  otras solicitudes" por como llegaron— pero es un detalle de implementacion, no un dato de
+  pantalla.
+
+  **Cada "otra solicitud" es una fila expandible (`eden-accordion`), no un enlace.** Colapsada
+  muestra `marca version modelo numeroEconomico`; con un clic se expande y agrega, en un segundo
+  renglon, `numeroDeSerie`, `turno N de <tamaño de esa fila>` y el precio publicado de ese lote.
+  Se decidio expandir en el lugar y no navegar al detalle de ese otro lote: quien adjudica esta
+  decidiendo sobre **este** lote, y saltar de pantalla para ver que vehiculo es la otra solicitud
+  interrumpe esa decision sin necesidad — los datos ya bastan para entender el contexto sin salir
+  de aqui.
 
   **Se advierte cuando la venta sigue abierta**, porque puede decidir de todas formas y la fila que
   tiene delante puede no ser la ultima. **El motivo es obligatorio**: una decision humana sin razon

@@ -138,6 +138,31 @@ describe("lo que el adjudicador necesita ver", () => {
     ).toEqual([1, 2]);
   });
 
+  it("dice cuantos siguen EN_FILA en cada otro lote, no el total historico", async () => {
+    // "turno 3 de 8" necesita el tamano **vigente** de la fila del otro lote:
+    // una solicitud terminal (cancelada, vencida) ya no cuenta.
+    const falso = crearClienteFalso({
+      responder: responder({
+        L1: [solicitud("L1", 1, "P1")],
+        L2: [
+          solicitud("L2", 1, "P1"),
+          solicitud("L2", 2, "P2"),
+          solicitud("L2", 3, "P3", { estatus: "CANCELADA_POR_PARTICIPANTE" }),
+        ],
+      }),
+    });
+
+    const resultado = await leerFilaParaAdjudicar(
+      { lote: lote("L1"), lotesDeLaConvocatoria: [lote("L1"), lote("L2")] },
+      { cliente: falso.cliente as never },
+    );
+
+    if (!resultado.ok) throw new Error("se esperaba exito");
+    expect(resultado.data.candidatos[0]?.otrasParticipaciones).toMatchObject([
+      { loteId: "L2", tamanoFila: 2 },
+    ]);
+  });
+
   it("no mezcla las solicitudes de otras personas en el cruce", async () => {
     const falso = crearClienteFalso({
       responder: responder({

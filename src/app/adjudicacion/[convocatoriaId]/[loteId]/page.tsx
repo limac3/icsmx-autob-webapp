@@ -8,6 +8,7 @@ import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
+import { formatearPrecio } from "@/lib/domain/dinero";
 import { desdeIso, formatearFechaHoraPrecisa } from "@/lib/domain/fechas";
 import { ventaAbierta } from "@/lib/domain/ventanas";
 import { rotuloVehiculo } from "@/lib/domain/vehiculos";
@@ -70,16 +71,28 @@ const DetalleDeAdjudicacion = async ({
   });
   if (!fila.ok) throw new Error(fila.error);
 
-  // Como se nombra cada lote de la convocatoria, para el encabezado y para
-  // "otras participaciones": sin esto, la unica pista era el `loteId` interno,
-  // que no dice a quien decide de que vehiculo se trata.
-  const vehiculosPorLote = new Map<string, string>();
+  // Como se identifica cada lote de la convocatoria, para el encabezado y
+  // para "otras participaciones": sin esto, la unica pista era el `loteId`
+  // interno, que no dice a quien decide de que vehiculo se trata.
+  type DatosDeLote = {
+    vehiculo: string;
+    numeroEconomico?: string;
+    numeroDeSerie?: string;
+    precio: string;
+  };
+  const datosPorLote = new Map<string, DatosDeLote>();
   for (const unLote of convocatoria.lotes) {
     const vehiculo = await obtenerVehiculo(unLote.vehiculoId);
-    vehiculosPorLote.set(
-      unLote.loteId,
-      vehiculo.ok ? rotuloVehiculo(vehiculo.data) : unLote.vehiculoId,
-    );
+    datosPorLote.set(unLote.loteId, {
+      vehiculo: vehiculo.ok ? rotuloVehiculo(vehiculo.data) : unLote.vehiculoId,
+      ...(vehiculo.ok
+        ? {
+            numeroEconomico: vehiculo.data.numeroEconomico,
+            numeroDeSerie: vehiculo.data.numeroDeSerie,
+          }
+        : {}),
+      precio: formatearPrecio(unLote.precio, idioma),
+    });
   }
 
   // El permiso de decidir se evalua aparte del de ver: `Autob_Auditar` ve la
@@ -108,15 +121,24 @@ const DetalleDeAdjudicacion = async ({
       solicitadoEn: llegada
         ? formatearFechaHoraPrecisa(llegada)
         : c.solicitadoEn,
-      ...(c.ordenEnConvocatoria === undefined
-        ? {}
-        : { ordenEnConvocatoria: c.ordenEnConvocatoria }),
       adjudicacionesEnConvocatoria: c.adjudicacionesEnConvocatoria,
       sinCupo: c.sinCupo,
-      otrasParticipaciones: c.otrasParticipaciones.map((otra) => ({
-        ...otra,
-        vehiculo: vehiculosPorLote.get(otra.loteId) ?? otra.loteId,
-      })),
+      otrasParticipaciones: c.otrasParticipaciones.map((otra) => {
+        const datos = datosPorLote.get(otra.loteId);
+        return {
+          loteId: otra.loteId,
+          turno: otra.turno,
+          tamanoFila: otra.tamanoFila,
+          vehiculo: datos?.vehiculo ?? otra.loteId,
+          ...(datos?.numeroEconomico
+            ? { numeroEconomico: datos.numeroEconomico }
+            : {}),
+          ...(datos?.numeroDeSerie
+            ? { numeroDeSerie: datos.numeroDeSerie }
+            : {}),
+          precio: datos?.precio ?? "",
+        };
+      }),
     };
   });
 
@@ -126,7 +148,7 @@ const DetalleDeAdjudicacion = async ({
         <H1>{etiquetas.tituloDetalle}</H1>
         <Text2 renderAs="p">
           {convocatoria.nombre} ·{" "}
-          {vehiculosPorLote.get(loteId) ?? lote.vehiculoId}
+          {datosPorLote.get(loteId)?.vehiculo ?? lote.vehiculoId}
         </Text2>
       </header>
 

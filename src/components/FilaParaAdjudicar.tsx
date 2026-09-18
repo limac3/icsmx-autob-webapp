@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useTransition } from "react";
+import { Drawer, Summary } from "@churchofjesuschrist/eden-accordion";
 import {
   Error as AlertaError,
   Success,
@@ -54,10 +54,15 @@ import "./FilaParaAdjudicar.css";
 export type OtraParticipacionVista = {
   loteId: string;
   turno: number;
-  estatus: string;
-  ordenEnConvocatoria?: number;
+  /** Cuantos siguen `EN_FILA` en ese otro lote: "turno 3 de 8". */
+  tamanoFila: number;
   /** Como se nombra ese otro vehiculo: marca, version y modelo. */
   vehiculo: string;
+  /** Ausentes si el vehiculo no se pudo leer — `vehiculo` ya cae al `loteId`. */
+  numeroEconomico?: string;
+  numeroDeSerie?: string;
+  /** Precio publicado de ese lote, ya formateado en el idioma de la sesion. */
+  precio: string;
 };
 
 export type CandidatoVista = {
@@ -66,7 +71,6 @@ export type CandidatoVista = {
   correoTitular?: string;
   /** Hora exacta de llegada, ya formateada en hora de negocio. */
   solicitadoEn: string;
-  ordenEnConvocatoria?: number;
   adjudicacionesEnConvocatoria: number;
   sinCupo: boolean;
   otrasParticipaciones: readonly OtraParticipacionVista[];
@@ -183,12 +187,6 @@ const FilaParaAdjudicar = ({
                 <TD>
                   {etiquetas.adjudicacionesQueLleva}{" "}
                   {candidato.adjudicacionesEnConvocatoria}
-                  {candidato.ordenEnConvocatoria === undefined ? null : (
-                    <Text4 renderAs="p">
-                      {etiquetas.ordenEnConvocatoria}{" "}
-                      {candidato.ordenEnConvocatoria}
-                    </Text4>
-                  )}
                   {candidato.sinCupo ? (
                     <Text4 renderAs="p">{etiquetas.sinCupo}</Text4>
                   ) : null}
@@ -200,20 +198,22 @@ const FilaParaAdjudicar = ({
                     <ul className="fila-adjudicar__otras">
                       {candidato.otrasParticipaciones.map((otra) => (
                         <li key={`${otra.loteId}-${String(otra.turno)}`}>
-                          <Link
-                            href={`/adjudicacion/${convocatoriaId}/${otra.loteId}`}
-                          >
-                            {otra.vehiculo}
-                          </Link>
-                          <Text4 renderAs="p">
-                            {otra.ordenEnConvocatoria === undefined
-                              ? ""
-                              : `${etiquetas.ordenEnConvocatoria} ${String(otra.ordenEnConvocatoria)} · `}
-                            {etiquetas.turnoAbreviado} {otra.turno} ·{" "}
-                            {diccionario.estatusSolicitud[
-                              otra.estatus as keyof typeof diccionario.estatusSolicitud
-                            ] ?? otra.estatus}
-                          </Text4>
+                          <Drawer>
+                            <Summary>
+                              {otra.vehiculo}
+                              {otra.numeroEconomico
+                                ? ` ${otra.numeroEconomico}`
+                                : ""}
+                            </Summary>
+                            <Text4 renderAs="p">
+                              {otra.numeroDeSerie
+                                ? `${etiquetas.numeroSerieAbreviado} ${otra.numeroDeSerie} `
+                                : ""}
+                              {etiquetas.turnoAbreviado} {otra.turno}{" "}
+                              {etiquetas.deTotal} {otra.tamanoFila},{" "}
+                              {etiquetas.precioAbreviado} {otra.precio}
+                            </Text4>
+                          </Drawer>
                         </li>
                       ))}
                     </ul>

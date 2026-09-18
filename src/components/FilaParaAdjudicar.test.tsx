@@ -8,18 +8,6 @@ vi.mock("@/app/actions/adjudicacion", () => ({
   adjudicarManualmente: vi.fn(),
 }));
 
-// Misma razon que en `BandejaDeAdjudicacion.test.tsx`: `next/link` precarga
-// por interseccion y aterriza fuera del `act` de la prueba.
-vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-  }: {
-    href: string;
-    children: React.ReactNode;
-  }) => <a href={href}>{children}</a>,
-}));
-
 // `CardView` arrastra `Fade`, que mide el desbordamiento con un `setTimeout` de
 // 50 ms y aterriza fuera del `act` de la prueba.
 vi.mock("@churchofjesuschrist/eden-has-overflow", () => ({
@@ -34,7 +22,6 @@ const candidato = (cambios: Partial<CandidatoVista> = {}): CandidatoVista => ({
   participanteId: "P1",
   correoTitular: "ana@ejemplo.invalid",
   solicitadoEn: "6 oct 2026, 09:00:01",
-  ordenEnConvocatoria: 2,
   adjudicacionesEnConvocatoria: 0,
   sinCupo: false,
   otrasParticipaciones: [],
@@ -89,10 +76,9 @@ describe("la informacion que el adjudicador necesita", () => {
     expect(context.container.textContent).toContain("2");
   });
 
-  it("muestra sus otras solicitudes en la convocatoria, con su orden", async () => {
+  it("muestra sus otras solicitudes en la convocatoria, identificando el vehiculo", async () => {
     // El cruce que el requerimiento pidio explicitamente: "si hay otras
-    // solicitudes del mismo usuario dentro de la misma convocatoria y en que
-    // orden estan".
+    // solicitudes del mismo usuario dentro de la misma convocatoria".
     await pintar({
       candidatos: [
         candidato({
@@ -100,9 +86,11 @@ describe("la informacion que el adjudicador necesita", () => {
             {
               loteId: "L9",
               turno: 3,
-              estatus: "EN_FILA",
-              ordenEnConvocatoria: 1,
+              tamanoFila: 8,
               vehiculo: "Nissan NP300 2019",
+              numeroEconomico: "VEH-042",
+              numeroDeSerie: "3N6AD33A9KK870001",
+              precio: "$150,000.00",
             },
           ],
         }),
@@ -110,16 +98,37 @@ describe("la informacion que el adjudicador necesita", () => {
     });
 
     const texto = context.container.textContent ?? "";
-    // El vehiculo, no el `loteId`: sin esto "#1" no decia de cual se trataba.
-    expect(texto).toContain("Nissan NP300 2019");
-    expect(texto).toContain(
-      `${diccionario.adjudicacion.ordenEnConvocatoria} 1`,
-    );
-    expect(texto).toContain(diccionario.estatusSolicitud.EN_FILA);
-    // Y lleva al detalle de ese otro lote, dentro de la misma convocatoria.
-    expect(
-      context.container.querySelector('a[href="/adjudicacion/C1/L9"]'),
-    ).not.toBeNull();
+    // El vehiculo y su ID en la linea colapsada: sin esto "#1" no decia de
+    // cual se trataba.
+    expect(texto).toContain("Nissan NP300 2019 VEH-042");
+    // El resto -- serie, turno de cuantos, precio -- en la linea expandida.
+    expect(texto).toContain("3N6AD33A9KK870001");
+    expect(texto).toContain("turno 3");
+    expect(texto).toContain("de 8");
+    expect(texto).toContain("$150,000.00");
+    // No navega: es un `<details>`, no un enlace al detalle de ese otro lote.
+    expect(context.container.querySelector("a")).toBeNull();
+    expect(context.container.querySelector("details")).not.toBeNull();
+  });
+
+  it("no deja de mostrar el vehiculo cuando no se pudo leer su registro", async () => {
+    await pintar({
+      candidatos: [
+        candidato({
+          otrasParticipaciones: [
+            {
+              loteId: "L9",
+              turno: 3,
+              tamanoFila: 1,
+              vehiculo: "L9",
+              precio: "",
+            },
+          ],
+        }),
+      ],
+    });
+
+    expect(context.container.textContent).toContain("L9");
   });
 
   it("dice cuando no tiene otras solicitudes, en vez de dejar la celda vacia", async () => {

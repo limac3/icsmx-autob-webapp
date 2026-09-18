@@ -44,6 +44,8 @@ export type OtraParticipacion = {
   loteId: string;
   turno: number;
   estatus: string;
+  /** Cuantos siguen `EN_FILA` en ese otro lote. */
+  tamanoFila: number;
   ordenEnConvocatoria?: number;
 };
 
@@ -103,6 +105,8 @@ export const leerFilaParaAdjudicar = async (
     if (otro.loteId === lote.loteId) continue;
     const suFila = await leerFilaCompleta(otro.loteId, deps);
     if (!suFila.ok) continue;
+    // Cuantos siguen `EN_FILA` en ese otro lote: "turno 3 de 8", no solo "3".
+    const enEseLote = suFila.data.filter((s) => s.estatus === "EN_FILA").length;
     for (const solicitud of suFila.data) {
       if (!interesados.has(solicitud.participanteId)) continue;
       const lista = otrasPorParticipante.get(solicitud.participanteId) ?? [];
@@ -110,6 +114,7 @@ export const leerFilaParaAdjudicar = async (
         loteId: otro.loteId,
         turno: solicitud.turno,
         estatus: solicitud.estatus,
+        tamanoFila: enEseLote,
         ...(solicitud.ordenEnConvocatoria === undefined
           ? {}
           : { ordenEnConvocatoria: solicitud.ordenEnConvocatoria }),
