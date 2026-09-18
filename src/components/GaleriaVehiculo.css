@@ -1,62 +1,151 @@
 /* Galeria de fotografias. Mobile-first: una columna en el telefono, rejilla
    fluida a partir de ahi. Solo layout (regla 10). */
 
+/* La linea separa la galeria del formulario del vehiculo, que es otra cosa: uno
+   se guarda con su boton y la otra escribe al momento. Es la **misma** regla que
+   ya separa el retiro mas abajo —mismo grosor, mismo token de color, mismos
+   margenes— para que la pantalla se lea como tres bloques y no como tres
+   estilos distintos.
+
+   Un borde y no un componente: Eden no tiene separador de proposito general
+   —`Divider` solo existe dentro de `eden-vertical-tiles`, que es una tarjeta de
+   media— y la regla 10 admite CSS propio para adecuacion visual. Ver
+   `desafios-implementacion.md` 25. */
 .galeria-vehiculo {
+  border-top: 1px solid var(--unity-color-line-neutral, #d8d8d8);
   display: grid;
   gap: 1.5rem;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+}
+
+/* Titulo y boton de agregar en una fila, con el boton pegado al titulo y no al
+   borde: en una pantalla ancha, separarlos los desvincula a la vista. */
+.galeria-vehiculo__encabezado {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
 }
 
 .galeria-vehiculo__lista {
   display: grid;
-  gap: 1rem;
+  gap: 1.5rem;
   grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
+/* `align-content: start` deja el pie pegado a su fotografia: sin eso, en una
+   fila donde una descripcion ocupa tres lineas y otra ninguna, la rejilla
+   reparte el alto sobrante y los botones de editar quedan a distinta altura de
+   sus imagenes. */
 .galeria-vehiculo__item {
+  align-content: start;
   display: grid;
   gap: 0.5rem;
   justify-items: start;
 }
 
-/* Arrastre: atajo de raton encima de los botones de mover, nunca en su lugar.
-   Solo hay senal visual porque el arrastre no tiene semantica accesible que
-   dar; quien no usa raton reordena con los botones. */
-
-.galeria-vehiculo__item--movible {
-  cursor: grab;
+/* Contenedor de posicionamiento del distintivo. Es `relative` y nada mas: el
+   tamano lo fija la imagen. */
+.galeria-vehiculo__marco {
+  position: relative;
+  width: 100%;
 }
 
-.galeria-vehiculo__item--arrastrando {
-  cursor: grabbing;
-  opacity: 0.4;
-}
-
-/* `outline` y no `border`: no ocupa espacio, asi que la rejilla no salta
-   mientras se pasa por encima de cada destino posible. */
-.galeria-vehiculo__item--destino {
-  outline: 2px dashed currentcolor;
-  outline-offset: 3px;
-}
-
+/* **Todas del mismo tamano**, sea cual sea la proporcion del original: el
+   recorte lo hace el navegador y no el servidor, que conserva la relacion de
+   aspecto real de los bytes. */
 .galeria-vehiculo__imagen {
   aspect-ratio: 4 / 3;
   border-radius: 0.25rem;
+  display: block;
   height: auto;
   object-fit: cover;
   width: 100%;
 }
 
-.galeria-vehiculo__acciones {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
+/* En el modal de edicion la fotografia se ve entera y acotada en alto: ahi no
+   es una celda de rejilla sino la referencia de que se esta editando. */
+.galeria-vehiculo__imagen--modal {
+  aspect-ratio: auto;
+  max-height: 40vh;
+  object-fit: contain;
 }
 
-.galeria-vehiculo__subida {
+/* Dentro de la fotografia, arriba a la izquierda. La sombra es lo que lo
+   mantiene legible sobre una imagen clara: sin ella, un distintivo verde sobre
+   un cofre blanco desaparece. */
+.galeria-vehiculo__insignia {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 40%);
+  left: 0.5rem;
+  position: absolute;
+  top: 0.5rem;
+}
+
+/* La descripcion completa, ajustada en varias lineas. `overflow-wrap` corta una
+   palabra sin espacios mas larga que la celda —un numero de serie pegado, por
+   ejemplo— en vez de desbordar la rejilla. */
+.galeria-vehiculo__pie {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.galeria-vehiculo__pie--vacio {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* A la derecha, para que quede junto al tope que cuenta y no compita con la
+   ayuda del campo, que esta a la izquierda. */
+.galeria-vehiculo__contador {
+  margin: 0;
+  text-align: right;
+}
+
+/* Las fotografias elegidas y aun no subidas. Miniaturas chicas y en rejilla:
+   con siete archivos, una columna de imagenes a tamano completo empujaria los
+   campos del formulario fuera de la vista del modal. */
+.galeria-vehiculo__elegidas {
   display: grid;
   gap: 0.75rem;
-  max-width: 30rem;
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* El nombre del archivo debajo, cortado con puntos suspensivos y con el nombre
+   completo en el `title` del elemento: es lo que permite distinguir dos fotos
+   que se llaman parecido, que es justo el caso que la deduplicacion por nombre
+   vuelve peligroso. */
+.galeria-vehiculo__elegida {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.galeria-vehiculo__elegida span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* El archivo que el servidor rechazaria por su formato. El contorno marca cual
+   es entre siete miniaturas; el motivo va debajo, porque el color por si solo
+   no dice nada a quien no lo distingue. */
+.galeria-vehiculo__elegida--rechazada .galeria-vehiculo__imagen {
+  opacity: 0.5;
+  outline: 2px solid var(--unity-color-border-error, #c8102e);
+  outline-offset: 2px;
+}
+
+/* El motivo si se ajusta en varias lineas: recortarlo dejaria "Solo se
+   admiten…" sin decir que se admite. */
+.galeria-vehiculo__rechazo {
+  color: var(--unity-color-text-error, #c8102e);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }

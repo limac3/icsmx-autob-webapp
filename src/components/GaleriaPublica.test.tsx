@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { obtenerDiccionario } from "@/dictionaries";
 import { genericTests, getTestContext } from "@/utils/testHelpers";
 import GaleriaPublica from "./GaleriaPublica";
+import { fuentesDePrueba } from "@/utils/fotografiaDePrueba";
 
 // Igual ruido que en `TablaConvocatorias.test.tsx`: `useHasOverflow` arranca
 // un `setTimeout` de 50 ms que en jsdom no tiene nada que redimensione y
@@ -16,8 +17,8 @@ const context = getTestContext();
 genericTests(context, GaleriaPublica, {
   titulo: "Nissan NP300 2019",
   fotografias: [
-    { fotoId: "F1", url: "https://cdn/foto1.jpg", descripcion: "Frente" },
-    { fotoId: "F2", url: "https://cdn/foto2.jpg" },
+    { fotoId: "F1", fuentes: fuentesDePrueba("F1"), descripcion: "Frente" },
+    { fotoId: "F2", fuentes: fuentesDePrueba("F2") },
   ],
   diccionario: obtenerDiccionario("es"),
 });
@@ -38,18 +39,50 @@ describe("GaleriaPublica", () => {
     );
   });
 
-  it("pinta cada fotografia con su URL ya firmada", async () => {
+  it("la tira pide la variante chica, no la del visor ampliado", async () => {
+    // **El mayor ahorro de toda la aplicacion.** La miniatura mide 100 x 100 px
+    // y antes descargaba la fotografia original completa. `MediaThumbnailGallery`
+    // parsea el `srcSet` y elige la primera candidata de mas de 100w.
     await act(async () => {
       context.root.render(
         <GaleriaPublica
           titulo="Nissan NP300 2019"
-          fotografias={[{ fotoId: "F1", url: "https://cdn/foto1.jpg" }]}
+          fotografias={[{ fotoId: "F1", fuentes: fuentesDePrueba("F1") }]}
           diccionario={obtenerDiccionario("es")}
         />,
       );
     });
     const imagen = context.container.querySelector("img");
-    expect(imagen?.getAttribute("src")).toBe("https://cdn/foto1.jpg");
+    expect(imagen?.getAttribute("src")).toBe("https://cdn/F1-min.webp?firma");
+    // **Eden resuelve el `srcSet` el mismo y no lo reenvia a la miniatura**:
+    // `getThumbnailImage` elige la primera candidata de mas de 100w y le pasa
+    // solo `{src, alt}`. Por eso el atributo no llega al DOM de la tira, y por
+    // eso basta con que la candidata mas chica sea la de 480 para que la
+    // miniatura deje de bajar la fotografia grande.
+    expect(imagen?.getAttribute("srcset")).toBeNull();
+  });
+
+  it("una fotografia con una sola variante no emite srcSet", async () => {
+    // **Regresion de una trampa de Eden.** Con un `srcSet` de una sola
+    // candidata, `getThumbnailImage` devuelve `{src, size}` sin `alt`, la
+    // imagen queda `role="presentation"` y el boton que la envuelve se queda
+    // sin nombre accesible: axe lo marca como `button-name`. Ocurre de verdad,
+    // porque la normalizacion no agranda y un original chico produce tres
+    // variantes del mismo ancho.
+    await act(async () => {
+      context.root.render(
+        <GaleriaPublica
+          titulo="Nissan NP300 2019"
+          fotografias={[{ fotoId: "F1", fuentes: fuentesDePrueba("F1", 1) }]}
+          diccionario={obtenerDiccionario("es")}
+        />,
+      );
+    });
+
+    const imagen = context.container.querySelector("img");
+    expect(imagen?.getAttribute("srcset")).toBeNull();
+    // Y conserva su nombre accesible, que es lo que la trampa se llevaba.
+    expect(imagen?.getAttribute("alt")).toBe("Nissan NP300 2019");
   });
 
   it("escribe la descripcion de cada foto debajo de su miniatura", async () => {
@@ -63,12 +96,12 @@ describe("GaleriaPublica", () => {
           fotografias={[
             {
               fotoId: "F1",
-              url: "https://cdn/foto1.jpg",
+              fuentes: fuentesDePrueba("F1"),
               descripcion: "Frente",
             },
             {
               fotoId: "F2",
-              url: "https://cdn/foto2.jpg",
+              fuentes: fuentesDePrueba("F2"),
               descripcion: "Motor",
             },
           ]}
@@ -95,7 +128,7 @@ describe("GaleriaPublica", () => {
       context.root.render(
         <GaleriaPublica
           titulo="Nissan NP300 2019"
-          fotografias={[{ fotoId: "F1", url: "https://cdn/foto1.jpg" }]}
+          fotografias={[{ fotoId: "F1", fuentes: fuentesDePrueba("F1") }]}
           diccionario={obtenerDiccionario("es")}
         />,
       );
@@ -107,5 +140,33 @@ describe("GaleriaPublica", () => {
     expect(context.container.querySelector("img")?.getAttribute("alt")).toBe(
       "Nissan NP300 2019",
     );
+  });
+
+  it("el visor ampliado si recibe el srcSet completo", async () => {
+    // La otra mitad del reparto: la tira se queda con una candidata ya elegida
+    // por Eden, y el visor recibe el hijo completo, asi que ahi el navegador si
+    // puede subir a la variante grande. Es lo que permite que la miniatura sea
+    // barata **sin** que el zoom se vea borroso.
+    await act(async () => {
+      context.root.render(
+        <GaleriaPublica
+          titulo="Nissan NP300 2019"
+          fotografias={[{ fotoId: "F1", fuentes: fuentesDePrueba("F1") }]}
+          diccionario={obtenerDiccionario("es")}
+        />,
+      );
+    });
+
+    await act(async () => {
+      context.container
+        .querySelector("button")
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const conSrcSet = [...context.container.querySelectorAll("img")].find(
+      (imagen) => imagen.getAttribute("srcset"),
+    );
+    expect(conSrcSet?.getAttribute("srcset")).toContain("2048w");
+    expect(conSrcSet?.getAttribute("sizes")).toBe("100vw");
   });
 });

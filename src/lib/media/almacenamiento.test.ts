@@ -4,15 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   borrarObjeto,
+  CACHE_DE_FOTOGRAFIA,
   claveDeFotografia,
-  esTipoDeImagen,
   guardarObjeto,
   MAXIMO_BYTES_FOTOGRAFIA,
   nombreDeBucket,
   obtenerClienteS3,
-  TIPOS_DE_IMAGEN,
   __test__,
 } from "./almacenamiento";
+import { NOMBRES_DE_VARIANTE } from "@/types/vehiculo";
 import { crearClienteFalso } from "@/utils/clienteDynamoFalso";
 
 vi.mock("server-only", () => ({}));
@@ -27,49 +27,55 @@ afterEach(() => {
   __test__.reiniciar();
 });
 
-describe("tipos admitidos", () => {
-  it.each(Object.keys(TIPOS_DE_IMAGEN))("acepta %s", (tipo) => {
-    expect(esTipoDeImagen(tipo)).toBe(true);
-  });
-
-  it.each(["image/gif", "application/pdf", "text/html", "", "image/svg+xml"])(
-    "rechaza %j",
-    (tipo) => {
-      // `image/svg+xml` merece mencion: un SVG es un documento con script, y
-      // servirlo desde el mismo origen que la aplicacion seria una via de XSS.
-      expect(esTipoDeImagen(tipo)).toBe(false);
-    },
-  );
-
-  it("el maximo por fotografia son 10 MB", () => {
+describe("tope por fotografia", () => {
+  it("son 10 MB, derivados del dominio", () => {
+    // La lista blanca de tipos ya no vive aqui: se movio a
+    // `src/lib/domain/vehiculos.ts` para que la pantalla pueda aplicarla antes
+    // de subir. Sus pruebas se fueron con ella.
     expect(MAXIMO_BYTES_FOTOGRAFIA).toBe(10 * 1024 * 1024);
   });
 });
 
 describe("claveDeFotografia", () => {
   it("la arma el servidor con los identificadores que genero", () => {
-    expect(claveDeFotografia("V1", "F1", "image/jpeg")).toBe(
-      "vehiculos/V1/F1.jpg",
+    expect(claveDeFotografia("V1", "F1", "max")).toBe(
+      "vehiculos/V1/F1-max.webp",
     );
   });
 
-  it.each([
-    ["image/jpeg", "jpg"],
-    ["image/png", "png"],
-    ["image/webp", "webp"],
-  ] as const)("deriva la extension de %s", (tipo, extension) => {
-    // La extension sale del tipo declarado, no del nombre del archivo: un
-    // `.jpg` en el nombre no dice nada del contenido, y un nombre con `../`
-    // fabricaria una clave que no corresponde.
-    expect(claveDeFotografia("V1", "F1", tipo)).toBe(
-      `vehiculos/V1/F1.${extension}`,
+  it.each(NOMBRES_DE_VARIANTE)("distingue la variante %s", (variante) => {
+    // Una fotografia son tres objetos, y el borrado tiene que alcanzar los
+    // tres: las claves se deducen del nombre de la variante.
+    expect(claveDeFotografia("V1", "F1", variante)).toBe(
+      `vehiculos/V1/F1-${variante}.webp`,
     );
+  });
+
+  it("la extension no la decide el cliente: la salida siempre es WebP", () => {
+    // Antes salia del tipo declarado por el navegador. Ahora ni eso: el
+    // servidor recodifica, asi que la extension refleja lo que de verdad hay en
+    // el objeto. Un `.jpg` en el nombre del archivo nunca dijo nada del
+    // contenido, y un nombre con `../` fabricaria una clave que no corresponde.
+    for (const variante of NOMBRES_DE_VARIANTE) {
+      expect(claveDeFotografia("V1", "F1", variante).endsWith(".webp")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("las tres claves de una fotografia son distintas", () => {
+    // Si coincidieran, una variante sobrescribiria a otra y el objeto
+    // inmutable dejaria de serlo.
+    const claves = NOMBRES_DE_VARIANTE.map((v) =>
+      claveDeFotografia("V1", "F1", v),
+    );
+    expect(new Set(claves).size).toBe(NOMBRES_DE_VARIANTE.length);
   });
 
   it("queda bajo el prefijo que sirve CloudFront", () => {
-    expect(
-      claveDeFotografia("V1", "F1", "image/png").startsWith("vehiculos/"),
-    ).toBe(true);
+    expect(claveDeFotografia("V1", "F1", "min").startsWith("vehiculos/")).toBe(
+      true,
+    );
   });
 });
 
@@ -112,6 +118,41 @@ describe("escritura y borrado", () => {
     expect(falso.comandos[0]?.input).toMatchObject({
       Bucket: "bucket-de-prueba",
       Key: "vehiculos/V1/F1.jpg",
+    });
+  });
+
+  it("una fotografia se guarda como inmutable, para que el navegador la reuse", async () => {
+    const falso = crearClienteFalso<S3Client>();
+    await guardarObjeto(
+      {
+        clave: "vehiculos/V1/F1.webp",
+        cuerpo: new Uint8Array([1]),
+        contentType: "image/webp",
+        cacheControl: CACHE_DE_FOTOGRAFIA,
+      },
+      { cliente: falso.cliente },
+    );
+
+    expect(falso.comandos[0]?.input).toMatchObject({
+      CacheControl: "public, max-age=31536000, immutable",
+    });
+  });
+
+  it("un comprobante no hereda la cache publica de las fotografias", async () => {
+    // Comparten `guardarObjeto`, y es la razon por la que el encabezado es un
+    // parametro: un comprobante de pago no puede salir con `public`.
+    const falso = crearClienteFalso<S3Client>();
+    await guardarObjeto(
+      {
+        clave: "comprobantes/S1/C1.pdf",
+        cuerpo: new Uint8Array([1]),
+        contentType: "application/pdf",
+      },
+      { cliente: falso.cliente },
+    );
+
+    expect(falso.comandos[0]?.input).toMatchObject({
+      CacheControl: undefined,
     });
   });
 

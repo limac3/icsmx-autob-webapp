@@ -9,6 +9,17 @@ import "server-only";
 //
 // Se hace en **una sola transaccion** porque un reordenamiento a medias dejaria
 // dos fotografias en la misma posicion o una desaparecida.
+//
+// **La principal es la primera, y se actualiza aqui.** Desde que la pantalla
+// 4.2 cambio el orden y la designacion por un solo campo —"la posicion 1 es la
+// principal"—, mover una fotografia al frente **es** designarla. Si el puntero
+// se actualizara aparte, habria dos fuentes de verdad para lo mismo y un
+// reordenamiento a medias dejaria el listado mostrando una fotografia que ya no
+// esta primero. Por eso el `Update` del vehiculo viaja en esta transaccion y no
+// en otra llamada.
+//
+// Es la misma regla que `eliminarFotografia` ya aplicaba al promover la de menor
+// orden cuando se borra la principal.
 
 import { clave } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
@@ -31,13 +42,18 @@ export type EntradaReordenarFotografias = {
 
 /**
  * Cada movimiento cuesta dos items —el `Delete` de la posicion vieja y el `Put`
- * de la nueva— mas el evento. Con el limite de 100 de `TransactWriteItems`, el
- * tope efectivo es menor que `MAXIMO_FOTOGRAFIAS`, asi que en la practica nunca
- * se alcanza; la comprobacion existe para que, si alguien sube ese maximo, el
- * fallo sea un mensaje claro y no una excepcion del SDK.
+ * de la nueva— mas el evento **y** el posible `Update` de la principal. Con el
+ * limite de 100 de `TransactWriteItems`, el tope efectivo es menor que
+ * `MAXIMO_FOTOGRAFIAS`, asi que en la practica nunca se alcanza; la comprobacion
+ * existe para que, si alguien sube ese maximo, el fallo sea un mensaje claro y
+ * no una excepcion del SDK.
+ *
+ * Se descuentan **dos** items fijos y no uno, aunque el de la principal sea
+ * condicional: reservar el sitio siempre es lo que evita que el tope dependa de
+ * si la primera fotografia cambio o no.
  */
 export const MAXIMO_MOVIMIENTOS = Math.floor(
-  (MAXIMO_ITEMS_POR_TRANSACCION - 1) / 2,
+  (MAXIMO_ITEMS_POR_TRANSACCION - 2) / 2,
 );
 
 /**
@@ -122,6 +138,43 @@ export const reordenarFotografias = async (
     });
   }
 
+  // La que queda primera es la principal. Solo se escribe si cambia: un
+  // reordenamiento que no toca la cabeza no tiene por que mover
+  // `actualizadoEn` del vehiculo ni competir con otras escrituras suyas.
+  const primera = ordenFotoIds[0];
+  const cambiaLaPrincipal =
+    primera !== undefined && primera !== actual.fotografiaPrincipalId;
+
+  if (cambiaLaPrincipal) {
+    items.push({
+      item: {
+        Update: {
+          TableName: tabla,
+          Key: clave.vehiculo(actual.vehiculoId),
+          UpdateExpression:
+            "SET #principal = :fotoId, #actualizadoEn = :momento," +
+            " #actualizadoPor = :actor",
+          ConditionExpression:
+            "attribute_exists(PK) AND #estatus = :estatusEsperado",
+          ExpressionAttributeNames: {
+            "#principal": "fotografiaPrincipalId",
+            "#estatus": "estatus",
+            "#actualizadoEn": "actualizadoEn",
+            "#actualizadoPor": "actualizadoPor",
+          },
+          ExpressionAttributeValues: {
+            ":fotoId": primera,
+            ":estatusEsperado": actual.estatus,
+            ":momento": ahora.toISOString(),
+            ":actor": entrada.actor.id,
+          },
+        },
+      },
+      siFalla: "invalid_state",
+      descripcion: `vehiculo ${actual.vehiculoId} en ${actual.estatus}`,
+    });
+  }
+
   items.push(
     eventoParaTransaccion({
       tipo: "VEHICULO_EDITADO",
@@ -133,7 +186,21 @@ export const reordenarFotografias = async (
       vehiculoId: actual.vehiculoId,
       estadoAnterior: actual.estatus,
       estadoNuevo: actual.estatus,
-      datos: { campos: ["ordenFotografias"], ordenFotoIds: [...ordenFotoIds] },
+      datos: {
+        campos: cambiaLaPrincipal
+          ? ["ordenFotografias", "fotografiaPrincipalId"]
+          : ["ordenFotografias"],
+        ordenFotoIds: [...ordenFotoIds],
+        // La bitacora dice **que** quedo primera, no solo que el orden cambio:
+        // sin esto, reconstruir quien era la principal en una fecha exigiria
+        // replicar la regla de "la primera de la lista" al leer.
+        ...(cambiaLaPrincipal
+          ? {
+              anterior: actual.fotografiaPrincipalId ?? null,
+              nueva: primera,
+            }
+          : {}),
+      },
     }),
   );
 

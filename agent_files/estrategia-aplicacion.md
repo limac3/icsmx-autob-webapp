@@ -209,6 +209,67 @@ dentro de un bloque `"use cache"`.
 Una URL firmada es una credencial con vencimiento: cachearla la reparte entre usuarios y la
 deja viva mas alla de su proposito; persistirla la convierte en un permiso permanente.
 
+**El vencimiento se redondea a una cubeta de una hora**, no se cuenta desde el instante de la
+peticion: `floor(ahora / 1h) * 1h + 1h + 1h de gracia`. Asi la URL queda byte-identica durante
+toda la hora en curso **para todos los usuarios**, y el cache del navegador por fin acierta —
+antes la firma cambiaba en cada render y volver al catalogo re-descargaba todo. De paso, la
+validez minima sube de 10 minutos a una hora, que es lo que arreglaba las "fotos que no se ven":
+el visor ampliado de Eden se monta al hacer clic, no al renderizar, asi que leer una ficha y
+abrir las fotos once minutos despues daba 403 garantizado.
+
+El redondeo es sobre el epoch, **no** sobre la hora local: una cubeta de una hora es agnostica de
+zona y la regla 9 no interviene aqui. Sin esta nota alguien lo "arregla" con `Intl`.
+
+> **Que se determine no relaja la regla 13.** La URL sigue firmandose en SSR en cada peticion y
+> sigue sin poder persistirse ni entrar en un bloque `"use cache"`. Que dos peticiones de la misma
+> hora produzcan la misma cadena es una propiedad del calculo, no un permiso para guardarla: el
+> dia que se cambie la cubeta, lo persistido queda firmado con una regla que ya no existe.
+>
+> Lo que si se paga, explicito: una URL filtrada vale hasta dos horas en vez de diez minutos. Lo
+> que protege el acceso es el gating triple del servidor (regla 8), no el vencimiento, y el objeto
+> expuesto es la foto de un vehiculo en venta, sin PII. Los comprobantes de pago no entran por
+> este camino. Residuo honesto: una pestana abierta tres horas sigue rompiendose — se eleva el
+> piso, no se elimina el modo de fallo.
+
+El destino correcto de este camino son las **cookies firmadas**, que harian las URLs estables para
+siempre. Hoy no se pueden: `cloudfront.net` y `amplifyapp.com` estan en la Public Suffix List, asi
+que ningun navegador acepta una cookie para ese dominio. Lo que lo volveria viable es servir la
+distribucion desde un subdominio del mismo dominio registrable que la aplicacion.
+
+### 5.4 Las imagenes se normalizan en la subida
+
+**El original no se conserva.** `agregarFotografia` decodifica lo que llega, hornea la orientacion
+EXIF, produce tres variantes WebP de 480 / 1280 / 2048 px de ancho y guarda solo esas. El byte que
+subio el operador no queda en ninguna parte.
+
+Tres razones, en orden de peso:
+
+1. **Peso.** Antes se servia el original a todas las superficies, incluida la tira de miniaturas de
+   100x100 px: una foto de celular de 8 MB se descargaba entera para pintarse en un cuadrito, y con
+   veinte fotografias por vehiculo el detalle de un lote pasaba de 100 MB.
+2. **Privacidad.** El EXIF de una foto de celular publica las coordenadas GPS del patio donde se
+   tomo. Decodificar y recomprimir lo elimina; `.rotate()` conserva la orientacion, que es lo unico
+   de ese bloque que hace falta.
+3. **Confianza en el `contentType`.** El que llega viene de `File.type`, o sea del navegador.
+   Decodificando se sabe **que es de verdad** y se puede rechazar la discrepancia. La lista blanca
+   de tipos se queda como guarda barata antes de gastar CPU, y sigue siendo lo que impide que un
+   SVG decodifique: librsvg esta dentro de libvips.
+
+**Sincrono, dentro de la Server Action**, y no en un Lambda disparado por `s3:ObjectCreated`. Lo
+asincrono es la arquitectura correcta a largo plazo, pero exige un estado `PROCESANDO`, una UI de
+espera y un camino de fallo sin usuario a quien reportarlo; hoy la galeria se repinta con la foto
+ya puesta. El costo medido es de unos 400 ms por variante.
+
+**WebP y no AVIF**, medido sobre la misma foto de 12 MP: WebP 385 ms por variante, AVIF 8 647 ms —
+catorce veces el CPU por un 10 % menos de bytes. WebP tiene soporte universal desde 2020 y no
+necesita `<picture>`.
+
+La consecuencia que sostiene la cache de la seccion 5.3: **los bytes de una fotografia son
+inmutables**. Se borra, nunca se reemplaza, asi que las claves de S3 son estables y
+`Cache-Control: immutable` es correcto. La descripcion no es parte de los bytes —vive en el item de
+DynamoDB y editarla no toca S3—. "Reemplazar la foto" es borrar y volver a subir, con `fotoId`
+nuevo, jamas un `PutObject` sobre la misma clave.
+
 ---
 
 ## 6. Decisiones arquitectonicas

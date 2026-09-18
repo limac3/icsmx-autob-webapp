@@ -6,8 +6,9 @@ import { clave } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
 import { eventoParaTransaccion, nuevaCorrelacion } from "@/lib/data/eventos";
 import { ejecutarTransaccion } from "@/lib/data/transacciones";
+import { clavesDeLaFotografia } from "@/lib/domain/vehiculos";
 import {
-  borrarObjeto,
+  borrarObjetos,
   type DepsDeAlmacenamiento,
 } from "@/lib/media/almacenamiento";
 import { exito, fallo, type Resultado } from "@/types/resultado";
@@ -121,6 +122,11 @@ export const eliminarFotografia = async (
           eraPrincipal,
           nuevaPrincipal: sucesora?.fotoId ?? null,
           claveS3: foto.claveS3,
+          // Las tres claves, no solo la principal: si el borrado de S3 de abajo
+          // falla, este evento es lo unico que queda diciendo que objetos
+          // habia que borrar. Sin ellas, recuperarlo exigiria reconstruir las
+          // claves a mano desde el `fotoId`.
+          clavesDeVariantes: clavesDeLaFotografia(foto),
         },
       }),
     ],
@@ -133,7 +139,9 @@ export const eliminarFotografia = async (
   // un item apuntando a un objeto ya borrado y la galeria mostraria una imagen
   // rota. Asi, lo peor que queda es un objeto sin referencia, que nadie puede
   // alcanzar porque su URL nunca se vuelve a firmar.
-  await borrarObjeto(foto.claveS3, { cliente: deps.s3 }).catch(() => undefined);
+  //
+  // Se borran las **tres variantes**: una fotografia es un item y tres objetos.
+  await borrarObjetos(clavesDeLaFotografia(foto), { cliente: deps.s3 });
 
   return exito({ fotoId });
 };

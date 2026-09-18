@@ -11,6 +11,7 @@ import {
   type ClienteFalso,
 } from "@/utils/clienteDynamoFalso";
 import type { Fotografia, VehiculoConFotografias } from "@/types/vehiculo";
+import { clavesDePrueba, fotografiaDePrueba } from "@/utils/fotografiaDePrueba";
 
 vi.mock("server-only", () => ({}));
 
@@ -22,16 +23,7 @@ const actor: ActorUsuario = {
   permisos: ["Autob_Administrar_Vehiculos"],
 };
 
-const foto = (fotoId: string, orden: number): Fotografia => ({
-  fotoId,
-  vehiculoId: "V1",
-  orden,
-  claveS3: `vehiculos/V1/${fotoId}.jpg`,
-  contentType: "image/jpeg",
-  bytes: 1000,
-  subidaEn: "2026-01-10T10:00:00.000Z",
-  subidaPor: "P0",
-});
+const foto = fotografiaDePrueba;
 
 const vehiculo = (
   fotografias: Fotografia[],
@@ -134,7 +126,17 @@ describe("baja correcta", () => {
     );
 
     expect(dynamo.comandos).toHaveLength(1);
-    expect(s3.comandos[0]?.input).toMatchObject({ Key: "vehiculos/V1/F2.jpg" });
+    // **Las tres variantes**, no solo la principal: una fotografia es un item y
+    // tres objetos, y dejar dos fuera los abandonaria para siempre en un bucket
+    // sin reglas de ciclo de vida.
+    expect(s3.comandos.map((c) => c.nombre)).toEqual([
+      "DeleteObjectCommand",
+      "DeleteObjectCommand",
+      "DeleteObjectCommand",
+    ]);
+    expect(s3.comandos.map((c) => (c.input as { Key: string }).Key)).toEqual(
+      clavesDePrueba("F2"),
+    );
   });
 
   it("escribe el evento en la misma transaccion", async () => {

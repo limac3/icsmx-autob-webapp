@@ -18,8 +18,8 @@ import type { Accion } from "@/lib/auth/permisos";
 import { agregarFotografia as agregarFotografiaServicio } from "@/lib/vehiculos/agregarFotografia";
 import { crearVehiculo as crearVehiculoServicio } from "@/lib/vehiculos/crearVehiculo";
 import { editarVehiculo as editarVehiculoServicio } from "@/lib/vehiculos/editarVehiculo";
+import { editarDescripcionFotografia as editarDescripcionFotografiaServicio } from "@/lib/vehiculos/editarDescripcionFotografia";
 import { eliminarFotografia as eliminarFotografiaServicio } from "@/lib/vehiculos/eliminarFotografia";
-import { marcarFotografiaPrincipal as marcarFotografiaPrincipalServicio } from "@/lib/vehiculos/marcarFotografiaPrincipal";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import { reordenarFotografias as reordenarFotografiasServicio } from "@/lib/vehiculos/reordenarFotografias";
 import { retirarVehiculo as retirarVehiculoServicio } from "@/lib/vehiculos/retirarVehiculo";
@@ -50,7 +50,13 @@ const conVehiculo = async (
     return { ok: false, error: fallo("unauthorized") };
   }
 
-  const lectura = await obtenerVehiculo(vehiculoId);
+  // **Lectura consistente: lo que se lee aqui decide una escritura.** Por esta
+  // funcion pasan todas las mutaciones del vehiculo, y tres de ellas calculan a
+  // partir de la galeria leida —el `orden` de una fotografia nueva, si es la
+  // primera, y la permutacion al reordenar—. Con una lectura eventual, dos
+  // mutaciones seguidas sobre el mismo vehiculo se pisan: es lo que rompia la
+  // subida de varias fotografias de un tiro (`desafios-implementacion.md` 88).
+  const lectura = await obtenerVehiculo(vehiculoId, {}, { consistente: true });
   if (!lectura.ok) return { ok: false, error: lectura };
 
   const permiso = await exigirPermiso(accion, {
@@ -170,17 +176,29 @@ export const eliminarFotografia = async (
   return resultado;
 };
 
-export const marcarFotografiaPrincipal = async (
+// **No hay `marcarFotografiaPrincipal`, y antes si la habia.** Desde que la
+// pantalla 4.2 designa la principal por la **posicion** —"la 1 es la
+// principal"—, una action que apunte el puntero a otra fotografia seria la unica
+// forma de romper ese invariante: dejaria el listado mostrando una que no esta
+// primero, hasta el siguiente reordenamiento, que la snapearia de vuelta sin
+// que nadie entienda por que. Designar es ahora mover al frente, y eso lo hace
+// `reordenarFotografias` en la misma transaccion.
+
+export const editarDescripcionFotografia = async (
   vehiculoId: string,
   fotoId: string,
+  descripcion: string,
 ): Promise<Resultado<{ fotoId: string }>> => {
-  // Designar la principal es gestion de galeria: mismo permiso que subir.
+  // Editar el pie es gestion de galeria: mismo permiso que subir, igual que
+  // designar la principal. Un permiso propio para "cambiar un pie de foto"
+  // fragmentaria una capacidad que en la practica se concede junta (regla 17).
   const contexto = await conVehiculo("vehiculo:subir-fotografia", vehiculoId);
   if (!contexto.ok) return contexto.error;
 
-  const resultado = await marcarFotografiaPrincipalServicio({
+  const resultado = await editarDescripcionFotografiaServicio({
     actual: contexto.vehiculo,
     fotoId,
+    descripcion,
     actor: contexto.actor,
   });
   if (resultado.ok) invalidar(vehiculoId);
@@ -301,13 +319,10 @@ export const guardarVehiculoDesdeFormulario = async (
   );
 };
 
-export const retirarVehiculoDesdeFormulario = async (
-  _estadoPrevio: EstadoFormularioVehiculo,
-  formData: FormData,
-): Promise<EstadoFormularioVehiculo> =>
-  aEstado(
-    await retirarVehiculo(
-      texto(formData, "vehiculoId").trim(),
-      texto(formData, "motivo"),
-    ),
-  );
+// **No hay envoltura de formulario para el retiro, y antes si la habia.** El
+// operador pidio que el retiro se confirme en un modal con el motivo dentro
+// (`ui-ux-requerimientos.md` 4.2), y un modal es un control del cliente: no hay
+// forma de exigir la confirmacion y a la vez conservar el envio por `<form>`
+// puro. `RetirarVehiculo` llama directo a `retirarVehiculo`, que es la action
+// tipada. Lo que se pierde es el camino sin JavaScript, no ninguna validacion:
+// permiso, estado y motivo se siguen comprobando en el servidor.

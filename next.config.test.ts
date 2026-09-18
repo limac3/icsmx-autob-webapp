@@ -147,6 +147,34 @@ describe("tope del cuerpo de las Server Actions", () => {
   });
 });
 
+describe("binarios nativos de sharp en el artefacto", () => {
+  // Misma clase de defecto que el `bodySizeLimit` de arriba, y por eso vive en
+  // el mismo archivo: una configuracion de transporte cuya ausencia **no falla
+  // en local**. `sharp` funciona en `next dev` porque resuelve desde el
+  // `node_modules` real; el trazado solo importa al empaquetar, y en Windows
+  // tampoco se nota porque ahi el `.dll` de libvips esta junto al `.node`.
+  //
+  // Esta prueba comprueba solo que la declaracion siga puesta. Que el `.so`
+  // acabe de verdad en el artefacto lo comprueba `scripts/verificar-sharp.mjs`
+  // dentro del contenedor de build, que es el unico sitio donde se puede.
+  const trazadoExtra = (): string[] =>
+    Object.values(config.outputFileTracingIncludes ?? {}).flat();
+
+  it("declara el paquete hermano que trae libvips", () => {
+    // El caso especial de sharp en `@vercel/nft` busca `sharp/lib/index.js`,
+    // que ya no existe, y su camino generico no mira dentro de otro paquete de
+    // `node_modules`. Sin esta entrada el artefacto lleva el `.node` y no la
+    // biblioteca que ese `.node` abre por `dlopen`.
+    expect(trazadoExtra().join(" ")).toContain("sharp-libvips-linux");
+  });
+
+  it("no arrastra los binarios de otras plataformas", () => {
+    // El runtime es Linux. Incluir win32 o darwin infla el artefacto ~20 MB por
+    // plataforma para nada.
+    expect(trazadoExtra().join(" ")).not.toMatch(/win32|darwin/);
+  });
+});
+
 describe("variables incrustadas para el servidor", () => {
   // Las variables de la consola de Amplify **no llegan al computo SSR**, y Next
   // no incrusta `process.env.X` por su cuenta: la aplicacion desplegada

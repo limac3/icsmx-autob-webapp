@@ -4,16 +4,23 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   configuracionDeFirma,
+  CUBETA_DE_FIRMA_MS,
   desfasesConElSandbox,
   firmarFotografia,
+  GRACIA_DE_FIRMA_MS,
   normalizarLlave,
   rutaPublica,
-  VIGENCIA_DE_FIRMA_MS,
+  vencimientoDeFirma,
 } from "./cloudfrontSigner";
 
 vi.mock("server-only", () => ({}));
 
 const AHORA = new Date("2026-09-05T18:00:00.000Z");
+
+// `AHORA` cae justo en el inicio de una cubeta de una hora, que es el borde. Lo
+// que hay que ejercitar casi siempre es el interior, asi que se desplaza a
+// proposito.
+const DENTRO_DE_LA_CUBETA = new Date(AHORA.getTime() + 7 * 60 * 1000);
 
 let llavePrivada: string;
 
@@ -76,32 +83,87 @@ describe("firma", () => {
     expect(url.searchParams.get("Expires")).toBeTruthy();
   });
 
-  it("caduca a los diez minutos del instante dado", () => {
-    // Corta porque una URL firmada es una credencial portatil: quien la copia
-    // entra sin sesion.
+  it("caduca al final de la cubeta en curso, mas la gracia", () => {
     const url = new URL(
       firmarFotografia("vehiculos/V1/F1.jpg", {
-        ahora: () => AHORA,
+        ahora: () => DENTRO_DE_LA_CUBETA,
         configuracion: configuracion(),
       }),
     );
 
     const expira = Number(url.searchParams.get("Expires")) * 1000;
-    expect(expira).toBe(AHORA.getTime() + VIGENCIA_DE_FIRMA_MS);
-    expect(VIGENCIA_DE_FIRMA_MS).toBe(600_000);
+    expect(expira).toBe(
+      AHORA.getTime() + CUBETA_DE_FIRMA_MS + GRACIA_DE_FIRMA_MS,
+    );
   });
 
-  it("dos peticiones en instantes distintos producen firmas distintas", () => {
+  it("dos renders de la misma cubeta producen la misma URL, byte a byte", () => {
+    // **Esta es la invariante que hace que el cache del navegador acierte**, y
+    // la razon de ser de la cubeta: con un `Expires` calculado desde el instante
+    // exacto, cada render cambiaba la URL y volver al catalogo volvia a
+    // descargar todas las fotografias.
+    const primera = firmarFotografia("vehiculos/V1/F1.jpg", {
+      ahora: () => DENTRO_DE_LA_CUBETA,
+      configuracion: configuracion(),
+    });
+    const segunda = firmarFotografia("vehiculos/V1/F1.jpg", {
+      ahora: () => new Date(DENTRO_DE_LA_CUBETA.getTime() + 60_000),
+      configuracion: configuracion(),
+    });
+    expect(primera).toBe(segunda);
+  });
+
+  it("dos peticiones en cubetas distintas producen firmas distintas", () => {
     // Es lo que hace inutil persistir una URL firmada: la de ayer ya no sirve.
     const primera = firmarFotografia("vehiculos/V1/F1.jpg", {
       ahora: () => AHORA,
       configuracion: configuracion(),
     });
     const segunda = firmarFotografia("vehiculos/V1/F1.jpg", {
-      ahora: () => new Date(AHORA.getTime() + 60_000),
+      ahora: () => new Date(AHORA.getTime() + CUBETA_DE_FIRMA_MS),
       configuracion: configuracion(),
     });
     expect(primera).not.toBe(segunda);
+  });
+});
+
+describe("vencimientoDeFirma", () => {
+  it("toda peticion de la cubeta conserva al menos la gracia", () => {
+    // Lo que fija la vigencia **minima**. Sin la gracia, quien pide en el ultimo
+    // segundo de la cubeta recibe una URL que vence en un segundo, que es
+    // exactamente el 403 que esta cubeta existe para evitar.
+    for (let minuto = 0; minuto < 60; minuto += 1) {
+      const instante = new Date(AHORA.getTime() + minuto * 60 * 1000);
+      const restante =
+        vencimientoDeFirma(instante).getTime() - instante.getTime();
+
+      expect(restante).toBeGreaterThanOrEqual(GRACIA_DE_FIRMA_MS);
+    }
+  });
+
+  it("la validez nunca pasa de cubeta mas gracia", () => {
+    for (let minuto = 0; minuto < 60; minuto += 1) {
+      const instante = new Date(AHORA.getTime() + minuto * 60 * 1000);
+      const restante =
+        vencimientoDeFirma(instante).getTime() - instante.getTime();
+
+      expect(restante).toBeLessThanOrEqual(
+        CUBETA_DE_FIRMA_MS + GRACIA_DE_FIRMA_MS,
+      );
+    }
+  });
+
+  it("el instante exacto de inicio de cubeta ya cuenta como dentro", () => {
+    // Y el milisegundo anterior pertenece a la cubeta previa: son vencimientos
+    // distintos separados por 1 ms de reloj.
+    const antes = new Date(AHORA.getTime() - 1);
+
+    expect(vencimientoDeFirma(AHORA).getTime()).toBe(
+      AHORA.getTime() + CUBETA_DE_FIRMA_MS + GRACIA_DE_FIRMA_MS,
+    );
+    expect(vencimientoDeFirma(antes).getTime()).toBe(
+      AHORA.getTime() + GRACIA_DE_FIRMA_MS,
+    );
   });
 });
 

@@ -167,7 +167,12 @@ export const incluirVehiculo = async (entrada: {
   // El vehiculo se lee antes del permiso porque la guarda exige su estatus.
   if (!(await getSession())) return fallo("unauthorized");
 
-  const vehiculo = await obtenerVehiculo(entrada.vehiculoId);
+  // Consistente: el estatus leido decide si el vehiculo puede entrar al lote.
+  const vehiculo = await obtenerVehiculo(
+    entrada.vehiculoId,
+    {},
+    { consistente: true },
+  );
   if (!vehiculo.ok) return vehiculo;
 
   const contexto = await conConvocatoria(
@@ -212,7 +217,12 @@ export const retirarVehiculoDeConvocatoria = async (entrada: {
   );
   if (!contexto.ok) return contexto.error;
 
-  const vehiculo = await obtenerVehiculo(lote.vehiculoId);
+  // Consistente: el estatus leido decide la transicion que se va a escribir.
+  const vehiculo = await obtenerVehiculo(
+    lote.vehiculoId,
+    {},
+    { consistente: true },
+  );
   if (!vehiculo.ok) return vehiculo;
 
   const resultado = await retirarVehiculoServicio({

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { obtenerVehiculo } from "./obtenerVehiculo";
 import { comandoDe, crearClienteFalso } from "@/utils/clienteDynamoFalso";
+import { fotografiaDePrueba } from "@/utils/fotografiaDePrueba";
 
 vi.mock("server-only", () => ({}));
 
@@ -23,17 +24,15 @@ const meta = {
   actualizadoPor: "P1",
 };
 
+// Item **crudo** de DynamoDB, con las claves de particion: lo que este archivo
+// prueba es el mapeo, asi que se construye a mano y no con `fotografiaDePrueba`,
+// que devuelve el tipo ya mapeado.
 const foto = (orden: string, fotoId: string) => ({
   PK: "VEH#V1",
   SK: `FOTO#${orden}#${fotoId}`,
-  fotoId,
-  vehiculoId: "V1",
-  orden: Number(orden),
-  claveS3: `vehiculos/V1/${fotoId}.jpg`,
-  contentType: "image/jpeg",
+  ...fotografiaDePrueba(fotoId, Number(orden)),
   bytes: 120_000,
   subidaEn: "2026-01-10T10:05:00.000Z",
-  subidaPor: "P0",
 });
 
 beforeEach(() => {
@@ -59,6 +58,42 @@ describe("lectura de la particion", () => {
     expect(comandoDe(falso, "QueryCommand")).toMatchObject({
       KeyConditionExpression: "PK = :pk",
       ExpressionAttributeValues: { ":pk": "VEH#V1" },
+    });
+  });
+
+  it("por omision no pide lectura consistente", async () => {
+    // Casi todos los once llamadores son de presentacion, y el catalogo la
+    // invoca **una vez por lote**: encenderla para todos duplicaria el consumo
+    // en la lectura mas caliente de la aplicacion.
+    const falso = crearClienteFalso({
+      respuestas: [{ Items: [meta, foto("0001", "F1")] }],
+    });
+
+    await obtenerVehiculo("V1", { cliente: falso.cliente });
+
+    expect(comandoDe(falso, "QueryCommand")).not.toHaveProperty(
+      "ConsistentRead",
+    );
+  });
+
+  it("con `consistente` pide ConsistentRead", async () => {
+    // **Lo que alimenta una escritura se lee consistente.** Una `Query` es
+    // eventualmente consistente por omision, y esta alimenta tres calculos de
+    // leer-y-decidir: el `orden` de una fotografia nueva, si es la primera, y
+    // la permutacion al reordenar. Sin esto, dos mutaciones seguidas sobre el
+    // mismo vehiculo se pisan (`desafios-implementacion.md` 88).
+    const falso = crearClienteFalso({
+      respuestas: [{ Items: [meta, foto("0001", "F1")] }],
+    });
+
+    await obtenerVehiculo(
+      "V1",
+      { cliente: falso.cliente },
+      { consistente: true },
+    );
+
+    expect(comandoDe(falso, "QueryCommand")).toMatchObject({
+      ConsistentRead: true,
     });
   });
 

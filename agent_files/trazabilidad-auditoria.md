@@ -104,6 +104,26 @@ Motivo obligatorio marcado con **M**.
 | `VEHICULO_FOTOGRAFIA_AGREGADA` / `_ELIMINADA` | Gestion de galeria |
 | `VEHICULO_RETIRADO` **M** | Salida del catalogo |
 
+`VEHICULO_EDITADO` cubre tambien los cambios sobre la galeria que **no** tienen tipo propio, y
+`datos.campos` dice cual: reordenar (`ordenFotografias`) y editar el pie de una fotografia
+(`fotografia.descripcion`). El pie ademas lleva el `fotoId` en `datos`, para que la bitacora diga
+de que fotografia se habla, y `anterior`/`nueva` con el rastro completo; al vaciarlo, `nueva` queda
+en **`null` y no ausente** — `null` dice "se quito", un campo ausente diria "no se sabe".
+
+**La designacion de la principal ya no es un evento aparte: viaja en el del reordenamiento.** Desde
+que la posicion 1 **es** la principal, mover una fotografia al frente la designa, asi que el evento
+de reordenamiento lleva `campos: ["ordenFotografias", "fotografiaPrincipalId"]` mas `anterior` y
+`nueva` cuando la cabeza cambia. Eso importa para leer la bitacora: sin el par anterior/nueva,
+reconstruir quien era la principal en una fecha exigiria replicar la regla de "la primera de la
+lista" al leer, en vez de encontrarlo escrito.
+
+**Ninguno escribe evento si el valor no cambio.** Una bitacora que registra actos sin efecto
+entrena a quien la lee a ignorarla.
+
+Los dos eventos de fotografia llevan `clavesDeVariantes` —las tres claves de S3 de la foto—, y en
+el de eliminacion eso es lo unico que queda como rastro de que objetos habia que borrar si el
+borrado de S3 fallo.
+
 ### Convocatorias
 
 | Tipo | Cuando |

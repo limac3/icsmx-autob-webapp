@@ -6,6 +6,7 @@ import { Text2, Text4 } from "@churchofjesuschrist/eden-text";
 import type { Diccionario } from "@/dictionaries";
 import { formatearEntero, formatearPrecio } from "@/lib/domain/dinero";
 import type { EstatusLote } from "@/types/lote";
+import type { FuentesDeImagen } from "@/types/media";
 import "./RejillaDeLotes.css";
 
 /**
@@ -41,8 +42,55 @@ export type LoteEnCatalogo = {
   precio: number;
   estatus: EstatusLote;
   tamanoFila: number;
-  fotografiaPrincipalUrl?: string;
+  /**
+   * Fuentes ya firmadas de la fotografia principal, o ausente si el vehiculo no
+   * tiene galeria o no se pudo leer.
+   *
+   * Un objeto y no cuatro campos paralelos opcionales: `src` sin `ancho` es un
+   * estado que no queremos poder representar.
+   */
+  fotografiaPrincipal?: FuentesDeImagen;
 };
+
+/**
+ * Cuanto mide la tarjeta, traducido a viewport.
+ *
+ * **`eden-grid` usa container queries y `sizes` no las sabe expresar**, asi que
+ * hay que traducir asumiendo el cromo de la pagina. La derivacion, para poder
+ * revisarla cuando alguien cambie un padding:
+ *
+ *   contenedor C = min(100vw, 1600) - 2*padding(.envoltura__contenido) - 2*1.5rem(.catalogo)
+ *
+ * o sea `100vw - 80px` hasta 600 px de viewport y `min(100vw,1600) - 96px` por
+ * encima. Con `Item small=4 medium=4 large=4` sobre una rejilla que pasa de 4 a
+ * 8 columnas en 30rem y a 12 en 52.5rem, la tarjeta mide C, C/2 y C/3, con las
+ * fronteras de viewport en ~561 px y ~936 px.
+ *
+ * El techo se declara en **480 px y no en los 485 que da la cuenta**:
+ * sub-declarar un 1 % es invisible con `object-fit: cover` y evita que una
+ * pantalla de densidad 1 salte a la variante de 1280 —unas seis veces el peso—
+ * por cinco pixeles.
+ *
+ * **Ninguna prueba puede comprobar que esta traduccion siga siendo cierta.** Si
+ * cambia el padding de la envoltura o el `span` del `Item`, esto miente y el
+ * unico sintoma es que las imagenes pesan un poco mas o se ven un poco blandas.
+ */
+const TAMANOS_DE_TARJETA = [
+  "(min-width: 1584px) 480px",
+  "(min-width: 936px) calc((100vw - 96px) / 3 - 16px)",
+  "(min-width: 561px) calc((100vw - 96px) / 2 - 12px)",
+  "calc(100vw - 80px)",
+].join(", ");
+
+/**
+ * Cuantas tarjetas se cargan con prioridad.
+ *
+ * El LCP de esta pantalla es la primera fotografia, y estaba marcada `lazy`:
+ * el navegador la posterga hasta despues del layout y con prioridad baja, que
+ * es el antipatron conocido. Tres cubre la primera fila en escritorio; el resto
+ * sigue diferido, que es lo que hace util el diferimiento.
+ */
+const TARJETAS_PRIORITARIAS = 3;
 
 export type RejillaDeLotesProps = {
   /**
@@ -80,21 +128,35 @@ const RejillaDeLotes = ({
 
   return (
     <Grid>
-      {lotes.map((lote) => (
+      {lotes.map((lote, indice) => (
         <Item key={lote.loteId} small={4} medium={4} large={4} xlarge={4}>
           <Link
             href={`${rutaBase}/lotes/${lote.loteId}`}
             className="rejilla-lotes__enlace"
           >
             <Card renderAs="article" className="rejilla-lotes__tarjeta">
-              {lote.fotografiaPrincipalUrl ? (
-                // `next/image` no aplica: la URL firmada caduca en minutos
-                // (regla 13), igual que en `GaleriaVehiculo`.
+              {lote.fotografiaPrincipal ? (
+                // `next/image` no aplica: la URL firmada caduca (regla 13) y,
+                // desde que las variantes se generan al subir, el optimizador
+                // no tendria nada que aportar. Igual que en `GaleriaVehiculo`.
                 <img
                   className="rejilla-lotes__foto"
-                  src={lote.fotografiaPrincipalUrl}
+                  src={lote.fotografiaPrincipal.src}
+                  {...(lote.fotografiaPrincipal.srcSet
+                    ? {
+                        srcSet: lote.fotografiaPrincipal.srcSet,
+                        sizes: TAMANOS_DE_TARJETA,
+                      }
+                    : {})}
+                  width={lote.fotografiaPrincipal.ancho}
+                  height={lote.fotografiaPrincipal.alto}
                   alt={`${lote.marca} ${lote.version} ${String(lote.modelo)}`}
-                  loading="lazy"
+                  {...(indice < TARJETAS_PRIORITARIAS
+                    ? {
+                        loading: "eager" as const,
+                        fetchPriority: "high" as const,
+                      }
+                    : { loading: "lazy" as const })}
                 />
               ) : (
                 <Text4 renderAs="p">{etiquetas.sinFotografias}</Text4>

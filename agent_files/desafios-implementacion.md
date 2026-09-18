@@ -4741,3 +4741,430 @@ construye el objeto campo por campo en vez de pasar la entidad completa: `convoc
 lado de un `modalidadAdjudicacion` que falta compila igual. Y cuando el valor por omision del
 formulario coincide con el dato mas comun, la ausencia del campo se disfraza de exito — hace falta
 un caso de prueba con un valor **distinto** al por omision para que el hueco se note.
+
+## 84) `sharp` habria funcionado en local y dado 500 en cada subida desplegada
+
+### Problema
+La normalizacion de imagenes en la subida (Etapa de fotografias) necesita `sharp` dentro del
+computo SSR. Se esperaba que bastara declararlo en `dependencies`: Next traza el grafo de modulos
+con `@vercel/nft` y copia al artefacto lo que la aplicacion importa, incluidos los `.node`.
+
+### Sintoma
+**Ninguno todavia, y eso es lo que lo hace grave.** Se detecto leyendo el trazador antes de
+escribir el codigo que depende de el. El sintoma que habria dado es un 500 en cada subida del
+entorno desplegado, con la aplicacion entera sana y la pantalla de fotografias como unico lugar
+roto — y funcionando perfectamente en la maquina de desarrollo.
+
+### Causa raiz
+Son dos defectos encadenados, y el segundo esta enmascarado por la topologia de Windows.
+
+1. **El caso especial de `sharp` en `@vercel/nft` no se activa.** El trazador tiene una rama
+   dedicada a `sharp`, cuyo trabajo es copiar los paquetes `@img/*` hermanos, y su guarda es
+   `id.endsWith("sharp/lib/index.js")`. Ese archivo **dejo de existir en sharp 0.34**: el punto de
+   entrada paso a `dist/index.cjs` y `lib/` solo conserva un `.d.ts`. La rama quedo muerta sin que
+   nadie lo anuncie.
+2. **El camino generico traza el `.node` pero no su biblioteca.** `dist/sharp.cjs` pide el `.node`
+   con un literal estatico, asi que ese si viaja. Al ver un `.node`, nft busca bibliotecas
+   compartidas con `glob("<paquete del .node>/**/*.so?(.*)")` y **excluye `node_modules`**. En
+   Linux, `libvips-cpp.so.42` no vive en `@img/sharp-linux-x64` sino en el paquete **hermano**
+   `@img/sharp-libvips-linux-x64`: el `.node` lo carga por `dlopen` a traves de su `DT_RPATH`, que
+   es invisible para un trazador de JavaScript.
+
+**En Windows el segundo defecto no se manifiesta**, y ahi esta la trampa: `libvips-42.dll` esta
+junto al `.node`, en el mismo paquete, asi que el glob si lo alcanza. Probar en local no prueba
+nada sobre el artefacto de Linux.
+
+### Solucion aplicada
+Tres piezas, y las tres hacen falta:
+
+- `outputFileTracingIncludes: { "/**": [...] }` en `next.config.ts` con los globs de
+  `@img/sharp-libvips-linux*`, `@img/sharp-linux*` y `@img/colour`. Clave `/**` porque la
+  normalizacion vive en una Server Action y el mapeo de una action a la ruta que la sirve no es
+  algo en lo que convenga apostar. Solo Linux: win32 y darwin inflarian el artefacto ~20 MB por
+  plataforma sin que el runtime los use.
+- `sharp` en **version exacta sin `^`**. El par `sharp` <-> `@img/sharp-libvips-*` esta acoplado a
+  nivel de ABI; un rango deja que npm resuelva una combinacion que no arranca.
+- `scripts/verificar-sharp.mjs`, ejecutado en `amplify.yml` **despues** de `npm run build`: lee los
+  `.next/**/*.nft.json`, falla si no hay entrada que case el `.so`, y luego hace un round-trip real
+  `sharp(...).rotate().resize(64).webp().toBuffer()` **en el contenedor Linux**.
+
+Lo que prueba que el glob de verdad se aplica y no es decorativo: en el manifiesto trazado
+aparecen `@img/colour/LICENSE.md`, `README.md` e `index.d.ts` — archivos que ningun trazador de
+JavaScript seguiria por si mismo.
+
+### Regla para futuro
+**Una dependencia con binario nativo no se considera desplegada hasta que una compuerta de build la
+ejercita en el contenedor de destino.** El trazado es una heuristica sobre `require` estaticos y
+`dlopen` esta fuera de su alcance por construccion. Y cuando el defecto depende de la topologia de
+paquetes por plataforma —biblioteca junto al `.node` en Windows, en un paquete hermano en Linux—,
+la maquina de desarrollo no es evidencia: hay que mirar el `.nft.json` o ejecutar el round-trip
+donde va a correr.
+
+Corolario para `next.config.ts`: la declaracion de `NATIVOS_DE_SHARP` es exactamente la clase de
+linea que alguien borra en un ano por "parece redundante". Lleva el motivo escrito al lado y dos
+pruebas que la vigilan por los dos lados: `next.config.test.ts` que siga declarada, y el script
+que el `.so` acabe en el artefacto.
+
+## 85) Tres trampas al servir la variante correcta de cada fotografia
+
+### Problema
+Con las fotografias normalizadas en tres variantes (480 / 1280 / 2048), cada pantalla tiene que
+ofrecer al navegador las candidatas que le sirven y ninguna mas: `srcSet` con descriptores `w` y
+un `sizes` que diga cuanto mide el hueco. Se esperaba que fuera mecanico.
+
+### Sintoma
+Dos cosas distintas, ninguna evidente:
+
+1. Una fotografia cuyo original mide menos de 480 px produce **tres variantes del mismo ancho**
+   (por `withoutEnlargement`). Al deduplicar queda una sola candidata, y con un `srcSet` de una
+   entrada el boton que envuelve la miniatura de `MediaThumbnailGallery` **se queda sin nombre
+   accesible**: violacion `button-name` de axe.
+2. El `sizes` de la rejilla del catalogo no se puede escribir de forma correcta.
+
+### Causa raiz
+1. **`getThumbnailImage` pierde el `alt`.** Con varias candidatas devuelve el hijo completo; con
+   una sola devuelve `{src, size}` y **descarta el resto de las props**. `eden-image` sin `alt`
+   pone `role="presentation"`, y el boton que envuelve la miniatura se queda sin texto. El caso no
+   es teorico: basta una foto tomada en formato pequeno.
+2. **`eden-grid` reparte con container queries y `sizes` no las sabe expresar.** `sizes` solo
+   admite media queries sobre el viewport. La rejilla decide sus columnas por el ancho del
+   *contenedor*, asi que traducir exige asumir todo el cromo de la pagina: el `max-width` de la
+   envoltura, sus dos paddings y el del catalogo.
+
+### Solucion aplicada
+1. **`src/lib/media/fuentesDeImagen.ts` nunca emite un `srcSet` de una sola candidata.** Deduplica
+   por ancho y, si queda una, devuelve `src` a secas. La regla vive en un modulo compartido por las
+   tres pantallas, no en cada componente, con una prueba que la fija. Ese mismo modulo firma cada
+   variante **una sola vez** y reutiliza la cadena: firmar la menor dos veces —para `src` y dentro
+   del `srcSet`— daba dos entradas de cache para el mismo objeto.
+2. El `sizes` de `RejillaDeLotes` lleva **la derivacion escrita al lado de los numeros**, porque si
+   alguien cambia un padding el `sizes` queda mintiendo y **ninguna prueba lo detecta**: el unico
+   sintoma es que las imagenes pesan un poco mas o se ven un poco blandas. El techo se declara en
+   480 px y no en los 485 que da la cuenta: sub-declarar un 1 % es invisible con
+   `object-fit: cover` y evita que una pantalla de densidad 1 salte a la variante de 1280 —unas
+   seis veces el peso— por cinco pixeles.
+
+> **Aqui iba un tercer punto sobre el `maxLength` de `Input`, y estaba de mas: es la seccion 19,
+> escrita hace tiempo.** Ademas la seccion 19 ya traia la salida —"`TextArea` declara
+> `maxLength?: number` y funciona"— que este trabajo no leyo antes de concluir que el tope no se
+> podia poner en el campo. Lo corrigio el operador al pedir que el limite se aplicara ahi: el campo
+> de pie es hoy un `TextArea` con su `maxLength`. **Antes de anotar un hallazgo, buscarlo en este
+> documento**; y antes de darse por vencido con un componente de Eden, leer la seccion que ya
+> describe el problema hasta el final.
+
+Un cuarto detalle del mismo orden, por si alguien va a "arreglar" la miniatura: la tira de
+`MediaThumbnailGallery` **no recibe `srcset`** y eso es correcto. El componente resuelve el
+conjunto por su cuenta y le pasa al `<img>` de la miniatura solo la candidata que le sirve; el
+`srcSet` completo llega al visor ampliado. La prueba afirma las dos cosas por separado.
+
+### Regla para futuro
+**Antes de calcular un `sizes` o un `srcSet` contra un componente de terceros, leer el paquete.**
+En este trabajo un agente de exploracion afirmo que el visor ampliado de Eden usa `width: 60vw`
+con canaletas de `minmax(5.5rem, 1fr)`; leyendo `eden-media-modal`, esta version usa
+`width: 100vw` en una sola columna. Un `sizes` mal calculado no falla: sirve imagenes del tamano
+equivocado y no hay prueba que lo note.
+
+Y el `alt` de una imagen decorada por un componente de terceros no esta garantizado por pasar la
+prop: depende de la rama interna que el componente tome segun las demas props. Cuando una rama se
+activa solo con un dato poco comun —una candidata unica, una lista vacia—, hay que provocarla en
+prueba a proposito.
+
+---
+
+## 86) El `onChange` de `FileInput` no entrega lo que su tipo promete
+
+### Problema
+La pantalla de edicion debia mostrar la fotografia elegida **antes** de subirla. Con un `<input
+type="file">` eso es leer `event.target.files[0]` y pasarlo por `URL.createObjectURL`. El
+`FileInput` de Eden declara `onChange?: (event: React.ChangeEvent<HTMLInputElement>) => void`, asi
+que se escribio exactamente eso.
+
+### Sintoma
+Ningun error, ninguna advertencia y ninguna vista previa: al elegir un archivo no pasaba nada. En
+TypeScript compila, porque el tipo declarado dice que llega un evento de cambio de un `<input>`.
+
+### Causa raiz
+`FileInput` **no reenvia el evento nativo**. Mantiene el archivo en estado interno y avisa desde un
+`useEffect` con un objeto fabricado:
+
+```js
+onChange?.({ target: { value: innerValue, name } });
+```
+
+`innerValue` es el `File` —o un arreglo de `File`, con `multiple`—. En un `<input>` nativo,
+`target.value` es la ruta como cadena y los archivos viven en `target.files`, asi que el tipo
+declarado describe algo distinto de lo que llega: `target.files` es `undefined` y leerlo con `?.`
+falla en silencio.
+
+Cuatro comportamientos mas del mismo componente, que se descubrieron escribiendo las pruebas y
+sondeandolo, y que cambian lo que se puede esperar de el:
+
+- **Un cambio con cero archivos se ignora.** `changeHandler` devuelve el valor anterior cuando la
+  lista llega vacia, asi que despachar un `change` sin archivos **no** limpia nada. Quitar el
+  archivo tiene su propio camino interno (`setInnerValue(undefined)`), que es el que dispara el
+  aviso de limpieza.
+- **El aviso esta memorizado por `[innerValue?.length, innerValue?.name]`**: elegir otro archivo
+  con el **mismo nombre** no vuelve a notificar. Con `multiple`, cambiar dos archivos por otros dos
+  tampoco, porque la cantidad no cambia.
+- **Con `multiple` entrega la seleccion acumulada, no la ultima tanda.** Elegir `a` y `b`, y luego
+  `c`, produce `[a, b, c]`. Quien lo consuma debe **reemplazar** su estado, no concatenarlo:
+  concatenar duplica todo lo anterior en cada eleccion.
+- **Con `multiple` deduplica por *nombre de archivo*, no por contenido.** Volver a elegir `a.jpg`
+  no agrega nada — correcto— pero **dos fotografias distintas que se llamen igual tambien colapsan
+  a una**, y eso es el caso comun: `IMG_0001.jpg` saliendo de dos camaras, o de la misma camara
+  tras reiniciar el contador. La segunda se pierde sin ningun aviso.
+
+### Solucion aplicada
+Se lee el archivo de donde de verdad viaja, con comprobacion **en ejecucion** y no con un cast:
+
+```ts
+const archivoElegido = (valor: unknown): File | undefined => {
+  if (valor instanceof File) return valor;
+  if (Array.isArray(valor)) {
+    const primero: unknown = valor[0];
+    return primero instanceof File ? primero : undefined;
+  }
+  return undefined;
+};
+```
+
+`instanceof File` es lo unico que sabe de verdad que llego; un `as File` habria compilado igual y
+habria vuelto a mentir. El manejador declara su parametro como `{ target: { value?: unknown } }`,
+que sigue siendo asignable donde se espera un `ChangeEvent`, asi que no hace falta silenciar nada.
+
+La otra mitad es la memoria: `URL.createObjectURL` **retiene el archivo hasta que se revoca**, y el
+documento vive lo que dure la pantalla. La revocacion va atada al valor en un `useEffect` con
+limpieza, no a un manejador, porque asi cubre los tres caminos con un solo mecanismo —elegir otro
+archivo, subir, y salir de la pantalla sin subir nada—. Dos pruebas lo fijan: elegir un segundo
+archivo revoca la URL del primero, y reemplazar el arbol revoca la que estaba viva.
+
+Y contra la deduplicacion por nombre no hay arreglo posible desde fuera —es estado interno del
+componente—, asi que la mitigacion es **mostrar todas las elegidas con su nombre**: la que falta se
+ve antes de guardar. Lo pidio el operador al enterarse del defecto, y es la respuesta correcta:
+cuando un componente de terceros pierde datos en silencio y no se puede evitar, lo que queda es
+hacer visible el resultado.
+
+### Regla para futuro
+**El tipo de una prop de Eden describe como se llama, no que llega.** Es el mismo genero de trampa
+que la seccion 19 con `maxLength`, y de nuevo la unica forma de saberlo fue leer el `.js` del
+paquete — no los `.d.ts`, que es donde estaba la promesa incumplida. Cuando un manejador de Eden no
+haga nada y no falle, imprimir lo que recibe antes de buscar el defecto en el codigo propio.
+
+Y para las props que **si** funcionan: sondearlas antes de disenar encima. `multiple` se comprobo
+con una prueba desechable que elegia archivos y registraba lo que llegaba al `onChange`; de ahi
+salieron la acumulacion y la deduplicacion por nombre, ninguna de las dos documentada en el tipo.
+Media hora de sonda contra un defecto que en produccion se habria visto como "subi siete fotos y
+solo aparecieron cinco".
+
+---
+
+## 87) jsdom no implementa `showModal`, asi que un modal abierto y uno cerrado son indistinguibles
+
+### Problema
+El operador pidio confirmacion antes de eliminar una fotografia y antes de retirar un vehiculo.
+Las pruebas tenian que comprobar lo obvio: que el modal aparece al pulsar el boton, y que la
+mutacion **no** ocurre sin pasar por el.
+
+### Sintoma
+`expect(dialog.hasAttribute("open")).toBe(true)` fallaba con el modal funcionando. Y al reves,
+mas peligroso: el boton de confirmar se podia pulsar **sin haber abierto el modal**, porque estaba
+en el DOM desde el primer render. Una prueba escrita sin cuidado pasaba sin comprobar nada.
+
+Ademas aparecia un error no capturado intermitente, de `eden-has-overflow`, solo al correr varios
+archivos a la vez: `An update to Fade inside a test was not wrapped in act(...)`.
+
+### Causa raiz
+Dos cosas que se suman:
+
+1. **jsdom no implementa `HTMLDialogElement.showModal`** — no es que lance, es que `typeof
+   d.showModal` es `undefined`, comprobado con una prueba de sonda. El modal de Eden lo llama con
+   `dialog.showModal?.()`, asi que la llamada se descarta sin ruido y el `<dialog>` nunca recibe el
+   atributo `open`. **La optional chaining de Eden es lo que convierte una carencia del entorno en
+   una diferencia invisible.**
+2. **Un `<dialog>` cerrado conserva sus hijos en el DOM.** Lo que los oculta en un navegador es
+   `dialog:not([open]) { display: none }`, que es estilo, no estructura. En jsdom no hay estilo que
+   aplique, asi que el contenido del modal y sus botones estan siempre presentes y son siempre
+   pulsables.
+
+El error intermitente es aparte: `eden-has-overflow` comprueba el desbordamiento con un `throttle`
+de 50 ms, asi que un modal montado agenda un `setState` que vence **despues** de terminar la
+prueba, fuera de `act`. Por eso solo se veia con varios archivos en paralelo, cuando la maquina va
+mas lenta.
+
+### Solucion aplicada
+**Los modales se montan solo cuando hay algo que confirmar**, no siempre con un `open` variable:
+
+```tsx
+{porEliminar !== undefined ? <DialogModal open …/> : null}
+```
+
+Resuelve las tres cosas de un golpe y ninguna es un arreglo para la prueba: veinte fotografias
+dejan de poner veinte `<dialog>` en el arbol, no queda contenido de modal accesible mientras esta
+cerrado, y sin modal montado no hay temporizador que vencer. Es ademas el patron que
+`AccionesDeConvocatoria` ya usaba para su `ToolModal`.
+
+Las pruebas comprueban entonces lo que si es observable —**que el `<dialog>` este montado o no**— y
+nunca el atributo `open`, con el motivo escrito al lado para que nadie lo "arregle" anadiendo la
+asercion que parece natural.
+
+### Regla para futuro
+**Una asercion sobre visibilidad en jsdom no comprueba visibilidad.** No hay estilo aplicado, asi
+que "esta oculto" no se puede leer del DOM: hay que apoyarse en presencia, en atributos propios o
+en el efecto observable de la accion. Y cuando una prueba de confirmacion se escriba, comprobar que
+**falla** si se quita la confirmacion — aqui la version ingenua pasaba con el modal desconectado.
+
+Corolario: un `?.()` sobre una API del navegador hace que la ausencia de esa API sea silenciosa. Es
+lo correcto en produccion y es lo que hace que el entorno de prueba se comporte distinto sin
+avisar; ante una asercion que falla contra un componente de terceros, sondear primero si la API
+existe (`typeof elemento.metodo`).
+
+---
+
+## 88) La lectura del vehiculo era eventual, y alimentaba tres decisiones de escritura
+
+> **Aviso sobre esta seccion: nacio de un diagnostico equivocado.** Se escribio atribuyendole el
+> fallo de subida multiple que en realidad causaba un archivo `.avif` (seccion 89). El defecto que
+> describe **es real y estaba latente**, pero no era el que el operador estaba sufriendo. Se
+> conserva porque la correccion se mantuvo y la regla que deja vale por si sola; se corrige el
+> relato porque una seccion que atribuye mal una causa es peor que no tenerla.
+>
+> La leccion de metodo, que es la mas cara: **una hipotesis que explica todos los sintomas no es
+> por eso la causa.** La consistencia eventual encajaba con los cuatro rasgos del reporte y se dio
+> por confirmada sin poder reproducirla. Lo que si encontro la causa fue mostrar en pantalla el
+> `detalles` del rechazo — el servidor llevaba todo el tiempo diciendo `tipo_no_admitido`.
+
+### Problema
+La pantalla de edicion permite elegir varias fotografias y subirlas de un tiro. Cada una viaja en
+su propia peticion, en serie, y al final un solo reordenamiento coloca el bloque en la posicion
+elegida. Dos mutaciones seguidas sobre el mismo vehiculo, que es algo que ninguna pantalla hacia
+antes.
+
+### Sintoma
+**Ninguno observado.** Se encontro leyendo el camino de escritura mientras se investigaba otra
+cosa. El sintoma que habria dado, cuando dos peticiones caen lo bastante juntas: fotografias con el
+mismo `orden`, dos reclamando ser la principal sobre una galeria vacia, y un reordenamiento
+rechazado con `no_es_permutacion` porque la lista enviada trae mas identificadores que la galeria
+que el servidor acaba de leer.
+
+### Causa raiz
+`obtenerVehiculo` hacia una `QueryCommand` **sin `ConsistentRead`**, y una `Query` de DynamoDB es
+**eventualmente consistente por omision**. Esa lectura alimenta tres calculos de leer-y-decidir:
+
+- el `orden` de una fotografia nueva, que es `maximo + 1` sobre la galeria leida;
+- si es la primera y por tanto la principal (`fotografias.length === 0`);
+- la comprobacion `esPermutacion` al reordenar, que exige que la lista enviada y la galeria leida
+  tengan **los mismos identificadores**.
+
+Subiendo de una en una nunca se notaba: entre clic y clic del operador pasan segundos, de sobra
+para que la replica se ponga al dia. Con una tanda, las peticiones van pegadas y la segunda lectura
+puede no ver lo que acaba de escribir la primera. De ahi salen los tres rasgos:
+
+- **el error** es el reordenamiento final, rechazado con `validation_failed` y
+  `{ ordenFotoIds: "no_es_permutacion" }`, porque la lista enviada trae mas identificadores que la
+  galeria que el servidor acaba de leer;
+- **"la posicion no se registra"** es consecuencia directa: el unico paso que la aplica es el que
+  falla;
+- **"nunca todas"** es la galeria repintada **sobre una lectura igual de atrasada**: las
+  fotografias si estaban escritas, y recargando aparecian. Efectos colaterales de la misma causa:
+  dos fotografias con el mismo `orden`, y sobre una galeria vacia dos reclamando ser la principal.
+
+**Lo que hizo el diagnostico caro fue otra cosa, y es la mitad util de esta seccion:** la galeria
+guardaba del rechazo **solo el codigo general** y descartaba `detalles`. En pantalla aparecia
+"Revisa los datos capturados" sobre un modal donde no hay nada evidente que revisar, y el motivo
+real —`no_es_permutacion`, que no habla de ningun campo del formulario— era imposible de adivinar
+desde la interfaz.
+
+### Solucion aplicada
+`obtenerVehiculo` acepta `{ consistente: true }` y lo enciende **`conVehiculo`**, que es por donde
+pasan todas las mutaciones del vehiculo; igual las dos lecturas de `actions/convocatorias.ts` que
+deciden una transicion. Es exactamente lo que `leerFila` hace desde la Etapa 8 y por el mismo
+motivo (`modelo-datos-dynamodb.md` 8).
+
+**Apagado por omision y no al reves.** `obtenerVehiculo` lo llaman once lugares y casi todos son de
+presentacion; el catalogo lo invoca **una vez por lote**, que es la lectura mas caliente de la
+aplicacion. Una lectura consistente cuesta el doble de RCU y no se sirve desde replica: encenderla
+para todos duplicaria el consumo ahi para arreglar un problema que solo tiene el camino de
+escritura. Dos pruebas fijan las dos mitades — que por omision **no** la pide, y que `conVehiculo`
+**si**.
+
+Y la galeria ahora conserva `detalles` y los pinta traducidos por diccionario, nunca el codigo
+crudo (regla 11).
+
+### Regla para futuro
+**Una lectura que decide una escritura se lee consistente; una que solo se muestra, no.** Es la
+regla que el motor de fila ya tenia y que el resto del codigo no habia necesitado, porque ninguna
+otra pantalla encadenaba dos mutaciones sobre el mismo agregado. Al agregar una que lo haga, hay
+que revisar cada lectura del camino: **la consistencia eventual no se manifiesta hasta que dos
+escrituras se acercan en el tiempo**, asi que el defecto llega tarde, en produccion, y se ve como
+"a veces falla".
+
+Segunda regla, mas barata y mas general: **cuando un servicio devuelve un motivo por campo, la
+pantalla lo muestra.** Descartar `detalles` no ahorra nada y convierte cualquier rechazo en una
+adivinanza — el dato que resolvio el caso lo estaba mandando el servidor desde el principio.
+
+---
+
+## 89) Una tanda de fotografias se rompia entera por un `.avif`
+
+### Problema
+Subir varias fotografias de un tiro. Cada una viaja en su propia peticion, en serie; al terminar,
+un solo reordenamiento coloca el bloque en la posicion elegida.
+
+### Sintoma
+Reporte del operador, textual: *"cuando subo mas de 1 foto la aplicacion responde **Revisa los
+datos capturados** y en ocasiones sube algunas fotos, otras ninguna, pero **nunca todas**; cuando
+son varias fotos, la posicion de insercion no se registra. Cuando subo una por una funciona
+correctamente."*
+
+### Causa raiz
+Uno de los archivos era **`.avif`**, y `image/avif` no estaba en la lista blanca de tipos. El
+servidor lo rechazaba en la primera guarda con `tipo_no_admitido`, y el bucle de subida se detenia
+ahi. Eso produce los cuatro rasgos, y de forma **determinista**:
+
+| Rasgo del reporte | Por que |
+| --- | --- |
+| El mensaje | `validation_failed` con `{ archivo: "tipo_no_admitido" }` |
+| "A veces algunas, a veces ninguna" | Depende de en que lugar de la seleccion cayera el AVIF: sube todo lo anterior y ahi se detiene |
+| **"Nunca todas"** | El AVIF falla siempre |
+| "La posicion no se registra" | El reordenamiento va despues del bucle y nunca se alcanza |
+| "Una por una si funciona" | Los JPG pasan sueltos; el AVIF habria fallado igual, pero suelto no se probo |
+
+Tres cosas dejaron que llegara hasta ahi:
+
+1. **`accept` no filtra lo que se arrastra.** Solo condiciona el dialogo del explorador, y se salta
+   eligiendo "Todos los archivos". La zona de caida que se acababa de agregar no filtra nada.
+2. **`FileInput` sabe marcar lo que no cumple el `accept`, pero no llego a hacerlo.** Expone
+   `fileMatchesAccept` y `setInvalidFiles` a traves de `_edenOnValidateDetails`, que consume su
+   maquinaria de validacion; en este modal los botones viven en el pie con `onClick` y nunca se
+   dispara un evento `validate`. El archivo entraba a la seleccion como cualquier otro.
+3. **La pantalla no validaba el tipo**, asi que el primer "no" llegaba del servidor, con media
+   tanda ya subida.
+
+**Y que AVIF estuviera fuera no era una limitacion tecnica.** Comprobado ejecutandolo: sharp 0.35.4
+con libvips 8.18.6 decodifica AVIF y lo convierte a WebP sin problema. Estaba fuera porque nadie
+lo habia pedido — al contrario que HEIC, que si es imposible aqui (libheif sin decodificador HEVC).
+
+### Solucion aplicada
+Dos cosas, y la segunda vale mas que la primera:
+
+- **`image/avif` entra a la lista blanca.** Con una trampa que costo su propia prueba:
+  `metadata().format` devuelve **`"heif"`, no `"avif"`**, porque AVIF es un contenedor HEIF con
+  carga AV1. Con `"avif"` en `FORMATO_ESPERADO`, **todos** los AVIF se habrian rechazado con
+  `tipo_no_coincide` — un motivo que manda a buscar el defecto al lado contrario.
+- **La pantalla comprueba el tipo antes de empezar.** El archivo no admitido se marca **en su
+  miniatura**, con el motivo debajo, y el boton de guardar se deshabilita: no se sube nada. Con
+  siete archivos, saber que uno sobra no dice cual.
+
+La lista blanca se movio a `src/lib/domain/vehiculos.ts` para que la pantalla pueda aplicarla:
+vivia en `almacenamiento.ts`, que es `server-only`. El `accept` del control se **deriva** de ella,
+para que no puedan separarse.
+
+### Regla para futuro
+**Un `accept` no es una validacion: es una sugerencia al dialogo del explorador.** Con arrastrar y
+soltar no filtra nada. Toda pantalla que acepte archivos tiene que comprobar el tipo con la misma
+lista que aplica el servidor, y hacerlo **antes** de empezar un trabajo por lotes — un rechazo a la
+mitad deja un estado parcial que alguien tiene que ir a limpiar.
+
+Y la que hace barato el resto: **cuando una operacion procesa N cosas, un fallo en la numero k no
+puede ser la primera senal.** Lo que se pueda saber antes de la primera escritura, se comprueba
+antes de la primera escritura.

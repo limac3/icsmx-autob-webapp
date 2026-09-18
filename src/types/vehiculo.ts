@@ -86,16 +86,75 @@ export type Vehiculo = DatosVehiculo & {
   motivoRetiro?: string;
 };
 
+/**
+ * Anchos de las tres variantes que se generan al subir una fotografia, y a que
+ * superficie sirve cada una.
+ *
+ * Calculados contra el CSS y contra los componentes de Eden:
+ *
+ * - `min` (480): la tira de `MediaThumbnailGallery`, que dibuja 100x100 px, y
+ *   la celda de la galeria de administracion, de 14 a 21 rem.
+ * - `med` (1280): la tarjeta del catalogo en telefono, donde `eden-grid` le da
+ *   el ancho completo (una columna en movil), y el visor ampliado en telefono.
+ * - `max` (2048): la tarjeta del catalogo en escritorio y el visor ampliado.
+ *
+ * **Viven aqui y no junto al normalizador** a proposito: ese modulo importa
+ * `sharp`, y los componentes que consumen `Fotografia` son de cliente. Un
+ * `import` en esa direccion arrastraria una dependencia nativa al navegador.
+ */
+export const ANCHOS_DE_VARIANTE = {
+  min: 480,
+  med: 1280,
+  max: 2048,
+} as const;
+
+export type NombreDeVariante = keyof typeof ANCHOS_DE_VARIANTE;
+
+/** Del mas chico al mas grande, que es el orden que pide un `srcSet`. */
+export const NOMBRES_DE_VARIANTE = [
+  "min",
+  "med",
+  "max",
+] as const satisfies readonly NombreDeVariante[];
+
+/** Una variante renderizable de una fotografia. */
+export type VarianteImagen = {
+  /** Ruta en S3. **Nunca** una URL firmada. */
+  claveS3: string;
+  /**
+   * Medidos, no derivados de `ANCHOS_DE_VARIANTE`: la normalizacion no agranda,
+   * asi que un original de 400 px produce tres variantes de 400. Guardar la
+   * constante dejaria a las vistas emitiendo un `width` que miente.
+   */
+  ancho: number;
+  alto: number;
+  bytes: number;
+};
+
 /** Una fotografia de la galeria, en `VEH#<id> / FOTO#<orden>#<fotoId>`. */
 export type Fotografia = {
   fotoId: string;
   vehiculoId: string;
   /** Posicion en la galeria. Va en la clave, asi que la Query ya las ordena. */
   orden: number;
-  /** Ruta en S3. **Nunca** una URL firmada: esas se generan por peticion. */
+  /**
+   * Ruta en S3 del objeto principal — la variante `max`. **Nunca** una URL
+   * firmada: esas se generan por peticion.
+   *
+   * Se conserva aparte de `variantes` para que borrar, firmar y auditar sigan
+   * teniendo una sola nocion de "la clave de esta fotografia".
+   */
   claveS3: string;
   contentType: string;
   bytes: number;
+  /**
+   * Las tres variantes, **siempre las tres**.
+   *
+   * Es un `Record` completo y no un arreglo porque un arreglo permitiria
+   * representar "tengo `min` y `max` pero no `med`", un estado que no queremos
+   * poder escribir ni tener que manejar al leer.
+   */
+  variantes: Readonly<Record<NombreDeVariante, VarianteImagen>>;
   descripcion?: string;
   subidaEn: string;
   subidaPor: string;

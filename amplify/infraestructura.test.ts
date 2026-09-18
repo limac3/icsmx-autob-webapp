@@ -2,6 +2,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { App, Stack } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
+import { CachePolicy } from "aws-cdk-lib/aws-cloudfront";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { clave, PREFIJO_PARTICION_AUDITORIA } from "@/lib/data/claves";
 import { AlmacenamientoAutob } from "./almacenamiento";
@@ -300,6 +301,24 @@ describe("almacenamiento", () => {
     // Origin Access Control: el bucket sigue privado y solo CloudFront lo alcanza.
     expect(distribucion.Origins[0].OriginAccessControlId).toBeDefined();
     plantilla.resourceCountIs("AWS::CloudFront::KeyGroup", 1);
+  });
+
+  it("la politica de cache es la administrada que ignora el query string", () => {
+    // Cada URL firmada trae `Expires`, `Signature` y `Key-Pair-Id` distintos. Si
+    // la politica los metiera en la clave de cache, el borde se partiria por
+    // usuario y por ventana de firma y cada render iria a S3.
+    //
+    // La plantilla solo lleva el **identificador** de la politica administrada,
+    // asi que esto no comprueba su contenido —eso lo define AWS— pero si que la
+    // distribucion sigue apuntando a la que se eligio: cambiarla por otra, o
+    // quitarla y volver a heredarla, hace fallar esta prueba y obliga a mirar.
+    const distribucion = Object.values(
+      sintetizar().findResources("AWS::CloudFront::Distribution"),
+    )[0].Properties.DistributionConfig;
+
+    expect(distribucion.DefaultCacheBehavior.CachePolicyId).toBe(
+      CachePolicy.CACHING_OPTIMIZED.cachePolicyId,
+    );
   });
 });
 

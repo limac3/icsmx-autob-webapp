@@ -12,6 +12,17 @@
   padding: var(--unity-spacing16, 1rem);
 }
 
+/* El `aspect-ratio` gana sobre el `width`/`height` del atributo, a proposito:
+   esos estan para que el navegador reserve el hueco antes de aplicar esta hoja,
+   y el recorte a 4:3 lo hace `cover` aqui — nunca el servidor, o el visor
+   ampliado del detalle mostraria la fotografia mutilada.
+
+   **El `sizes` del componente traduce esta maquetacion a viewport**, porque
+   `eden-grid` usa container queries y `sizes` no las sabe expresar. La cuenta
+   esta en `TAMANOS_DE_TARJETA`, en `RejillaDeLotes.tsx`, y depende del padding
+   de `.envoltura__contenido`, del de `.catalogo` y del `span` del `Item`. Si
+   cambias cualquiera de los tres, revisala: ninguna prueba lo detecta, y el
+   unico sintoma es que las imagenes pesan algo mas o se ven algo blandas. */
 .rejilla-lotes__foto {
   width: 100%;
   aspect-ratio: 4 / 3;

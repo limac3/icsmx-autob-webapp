@@ -14,7 +14,11 @@ import {
   normalizarIdentificadorDeNegocio,
   prepararIdentificadorDeNegocio,
 } from "./identificadorDeNegocio";
-import type { DatosVehiculo } from "@/types/vehiculo";
+import {
+  NOMBRES_DE_VARIANTE,
+  type DatosVehiculo,
+  type Fotografia,
+} from "@/types/vehiculo";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 
 /**
@@ -47,7 +51,89 @@ export const LIMITES = {
    * dos millones de kilometros es un error de captura, no un caso real.
    */
   kilometrajeMaximo: 2_000_000,
+  /**
+   * Pie de una fotografia de la galeria.
+   *
+   * **A diferencia de los demas, este no es una cota de tamano: es de
+   * presentacion.** El pie se pinta debajo de una miniatura de 100 x 100 px en
+   * la galeria publica y hace tambien de texto alternativo. Con los 200
+   * caracteres que tenia, un pie ocupaba cinco o seis renglones y media mas que
+   * la propia fotografia; 120 dan para una frase completa con detalle sin
+   * convertir la tira en un parrafo, y son una longitud sana como alternativa
+   * para un lector de pantalla.
+   *
+   * Vive aqui y no en `agregarFotografia` porque desde que la descripcion se
+   * puede editar lo consumen dos servicios y la interfaz.
+   */
+  descripcionFotografia: 120,
+  /**
+   * Bytes de una fotografia, y **tambien** de una tanda completa.
+   *
+   * Es el mismo numero con dos lecturas. En el servidor acota **cada archivo**,
+   * que es la frontera real: `agregarFotografia` recibe uno por llamada y lo
+   * rechaza con `muy_grande`. En la pantalla acota la **suma de lo elegido**,
+   * porque la subida multiple manda una peticion por fotografia y sin un tope
+   * agregado nada impediria arrastrar cuarenta imagenes de 9 MB.
+   *
+   * Vive aqui y no solo en `src/lib/media/almacenamiento.ts` porque ese modulo
+   * es `server-only` y el tope lo necesita ahora tambien el navegador. La
+   * constante de alla se deriva de esta, para que no puedan separarse.
+   *
+   * **No confundir con `bodySizeLimit` de `next.config.ts`**, que son 11 MB: el
+   * margen de 1 MB cubre las fronteras de `multipart/form-data` y existe para
+   * que un archivo pasado de tamano llegue al servidor y lo rechace la
+   * validacion del dominio, en vez de morir en el framework sin explicacion.
+   * `next.config.test.ts` ata los dos numeros.
+   */
+  bytesDeFotografia: 10 * 1024 * 1024,
+  /**
+   * Fotografias por vehiculo.
+   *
+   * Aqui por lo mismo que `bytesDeFotografia`: desde que se pueden subir varias
+   * de un tiro, la pantalla tiene que poder decir "con estas te pasas del
+   * maximo" **antes** de empezar, en vez de subir las primeras y que la
+   * vigesimoprimera falle a mitad de la tanda.
+   */
+  fotografiasPorVehiculo: 20,
 } as const;
+
+/**
+ * Formatos que se admiten al subir una fotografia.
+ *
+ * **Es una lista blanca, y por eso importa lo que *no* esta.** `image/svg+xml`
+ * quedaria fuera aunque librsvg viva dentro de libvips y por tanto un SVG si
+ * decodificaria: un SVG es un documento con script, no una fotografia. Lo que
+ * entra aqui se decodifica, se recomprime a WebP y el original se descarta
+ * (`estrategia-aplicacion.md` 5.4), asi que la lista describe **entradas**, no
+ * lo que se guarda.
+ *
+ * **`image/avif` se agrego despues**, cuando un operador subio uno en una tanda
+ * y se llevo un rechazo que no explicaba nada. No era una limitacion tecnica:
+ * sharp lo decodifica aqui sin problema —comprobado ejecutandolo— y sale por el
+ * mismo camino que los demas. Estaba fuera porque nadie lo habia pedido.
+ * `image/heic` sigue fuera, y eso si es una limitacion: libvips trae libheif
+ * pero sin un decodificador HEVC (`api-contracts.md` seccion 2).
+ *
+ * **Vive en el dominio y no en `src/lib/media/almacenamiento.ts`**, que es
+ * `server-only`: la pantalla necesita la misma lista para marcar un archivo no
+ * admitido **antes** de empezar a subir la tanda. Con dos copias, agregar un
+ * formato en un lado y olvidarlo en el otro dejaria la pantalla rechazando lo
+ * que el servidor acepta, o al reves.
+ */
+export const TIPOS_DE_IMAGEN = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/avif": "avif",
+} as const;
+
+export type TipoDeImagen = keyof typeof TIPOS_DE_IMAGEN;
+
+export const esTipoDeImagen = (tipo: string): tipo is TipoDeImagen =>
+  Object.hasOwn(TIPOS_DE_IMAGEN, tipo);
+
+/** Para el `accept` del selector de archivos, derivado de la lista blanca. */
+export const ACEPTA_IMAGENES = Object.keys(TIPOS_DE_IMAGEN).join(",");
 
 /**
  * Motivos de rechazo. Son claves de diccionario, no texto: la interfaz nunca
@@ -216,3 +302,20 @@ export const validarDatosVehiculo = (
 export const rotuloVehiculo = (
   vehiculo: Pick<DatosVehiculo, "marca" | "version" | "modelo">,
 ): string => `${vehiculo.marca} ${vehiculo.version} ${String(vehiculo.modelo)}`;
+
+/**
+ * Las claves de S3 de una fotografia: **las tres**, del mas chico al mas grande.
+ *
+ * Una fotografia es un item de DynamoDB y tres objetos de S3. Los dos sitios
+ * que borran —la compensacion de una subida a medias y la baja de una
+ * fotografia— tienen que alcanzar los tres, y derivarlas en cada uno invitaba a
+ * que uno se quedara borrando solo `claveS3` y dejando dos huerfanos para
+ * siempre en un bucket sin reglas de ciclo de vida.
+ *
+ * Se leen del item y no se reconstruyen desde el `fotoId`: si algun dia cambia
+ * el formato de la clave, lo escrito sigue siendo la verdad.
+ */
+export const clavesDeLaFotografia = (
+  foto: Pick<Fotografia, "variantes">,
+): readonly string[] =>
+  NOMBRES_DE_VARIANTE.map((nombre) => foto.variantes[nombre].claveS3);

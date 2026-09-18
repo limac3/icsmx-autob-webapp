@@ -565,6 +565,14 @@ Al **2026-09-11**: app `icsmx-autob-webapp` (`d2i0gloex3vqjp`, plataforma `WEB_C
 sin hacer— y por tanto **nada desplegado**: ni frontend ni backend. Mas un sandbox personal aparte
 (`amplify-icsmxautobwebapp-CesarLima-sandbox-cbbf835390`), que no tiene relacion con la app.
 
+Al **2026-09-17**: la misma app **desplegada y en uso**, frontend y backend, con el operador
+entrando por Okta real. La pila es
+`amplify-d2i0gloex3vqjp-main-branch-560c6f168e` y el ultimo job cerro en `SUCCEED`. Es un entorno
+de **pruebas**: `APP_ENV=pruebas` y `ENABLE_DEV_TOOLS=FULL`, o sea que los permisos salen del
+roster simulado y no de EAS — util para recorrer flujos con varias identidades, e insuficiente
+para dar por probado el adaptador real de EAS. Lo que falta del paso 7 no es el despliegue sino
+la **prueba de humo del ciclo completo**.
+
 ### Paso 1 — Un remoto que Amplify pueda leer · **[OPERADOR]** — hecho
 
 **Es el bloqueo primero y no tiene rodeo:** Amplify Hosting construye desde un repositorio Git

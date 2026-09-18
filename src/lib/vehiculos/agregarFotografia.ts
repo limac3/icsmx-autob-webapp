@@ -9,21 +9,32 @@ import {
   ejecutarTransaccion,
   type ItemDeTransaccion,
 } from "@/lib/data/transacciones";
+import { esTipoDeImagen, LIMITES } from "@/lib/domain/vehiculos";
 import {
-  borrarObjeto,
+  borrarObjetos,
+  CACHE_DE_FOTOGRAFIA,
   claveDeFotografia,
-  esTipoDeImagen,
   guardarObjeto,
   MAXIMO_BYTES_FOTOGRAFIA,
   type DepsDeAlmacenamiento,
 } from "@/lib/media/almacenamiento";
+import {
+  CONTENT_TYPE_DE_VARIANTE,
+  normalizarImagen,
+  type Normalizador,
+} from "@/lib/media/normalizarImagen";
 import { exito, fallo, type Resultado } from "@/types/resultado";
-import type { VehiculoConFotografias } from "@/types/vehiculo";
+import type { Fotografia, VehiculoConFotografias } from "@/types/vehiculo";
 import { resolver, type ActorUsuario, type DepsDeVehiculos } from "./deps";
 
-/** Tope de fotografias por vehiculo. */
-export const MAXIMO_FOTOGRAFIAS = 20;
-export const LIMITE_DESCRIPCION = 200;
+/**
+ * Tope de fotografias por vehiculo.
+ *
+ * Derivado del dominio y no escrito aqui otra vez: este modulo es `server-only`
+ * y la pantalla necesita el mismo numero para avisar antes de empezar una tanda
+ * de subida multiple.
+ */
+export const MAXIMO_FOTOGRAFIAS = LIMITES.fotografiasPorVehiculo;
 
 export type EntradaAgregarFotografia = {
   /** El vehiculo con su galeria, tal como se leyo para decidir el permiso. */
@@ -43,6 +54,17 @@ export type EntradaAgregarFotografia = {
  */
 export type DepsAgregarFotografia = DepsDeVehiculos & {
   s3?: DepsDeAlmacenamiento["cliente"];
+  /**
+   * El normalizador de imagenes, inyectable.
+   *
+   * **No es un adorno de pureza: sin esto las pruebas de este servicio se
+   * vuelven pruebas de sharp.** Su fixture es un `Uint8Array` de cuatro bytes
+   * —la firma de un PNG—, que no es una imagen decodificable, y lo que este
+   * archivo prueba es la transaccion, el orden de los items, la principal y la
+   * compensacion. El pipeline real se prueba aparte, en
+   * `normalizarImagen.test.ts`, con imagenes de verdad.
+   */
+  normalizar?: Normalizador;
 };
 
 export const agregarFotografia = async (
@@ -50,6 +72,7 @@ export const agregarFotografia = async (
   deps: DepsAgregarFotografia = {},
 ): Promise<Resultado<{ fotoId: string }>> => {
   const { cliente, ahora, nuevoId } = resolver(deps);
+  const normalizar = deps.normalizar ?? normalizarImagen;
   const { actual, archivo } = entrada;
 
   if (!esTipoDeImagen(archivo.contentType)) {
@@ -65,16 +88,50 @@ export const agregarFotografia = async (
     return fallo("validation_failed", { fotografias: "demasiadas" });
   }
   const descripcion = entrada.descripcion?.trim();
-  if (descripcion && descripcion.length > LIMITE_DESCRIPCION) {
+  if (descripcion && descripcion.length > LIMITES.descripcionFotografia) {
     return fallo("validation_failed", { descripcion: "muy_largo" });
   }
 
+  // **Normalizar antes de tocar S3.** El fallo mas probable de todo este camino
+  // es que el archivo no sea una imagen utilizable, y ocurriendo aqui no hay
+  // nada que compensar: todavia no se escribio ningun objeto. Es la misma
+  // logica que ya ordena las guardas de arriba, un paso mas alla.
+  const normalizada = await normalizar({
+    bytes: archivo.bytes,
+    contentType: archivo.contentType,
+  });
+  if (!normalizada.ok) {
+    return fallo("validation_failed", { archivo: normalizada.motivo });
+  }
+
   const fotoId = nuevoId();
-  const claveS3 = claveDeFotografia(
-    actual.vehiculoId,
-    fotoId,
-    archivo.contentType,
-  );
+
+  const variantesConClave = normalizada.imagen.variantes.map((variante) => ({
+    ...variante,
+    claveS3: claveDeFotografia(actual.vehiculoId, fotoId, variante.nombre),
+  }));
+
+  // `claveS3` del item sigue siendo una sola, y es la mayor: lo que firma,
+  // borra y audita el resto del codigo no tiene que saber de variantes.
+  const mayor = variantesConClave.at(-1);
+  if (!mayor) {
+    // Inalcanzable: `normalizarImagen` devuelve las tres o un fallo. Se
+    // comprueba porque el tipo lo permite y un `!` aqui seria una promesa que
+    // nadie vuelve a revisar.
+    return fallo("validation_failed", { archivo: "no_decodificable" });
+  }
+
+  const variantes = Object.fromEntries(
+    variantesConClave.map((variante) => [
+      variante.nombre,
+      {
+        claveS3: variante.claveS3,
+        ancho: variante.ancho,
+        alto: variante.alto,
+        bytes: variante.bytes,
+      },
+    ]),
+  ) as Fotografia["variantes"];
 
   // La primera fotografia es la principal aunque nadie lo pida: un vehiculo con
   // galeria y sin principal no se puede representar en el listado, y dejar esa
@@ -98,10 +155,31 @@ export const agregarFotografia = async (
   // fotografia apuntando a un objeto inexistente y la galeria mostraria una
   // imagen rota. Un objeto huerfano en S3 es invisible —nadie firmara jamas su
   // URL— y ademas se compensa abajo.
-  await guardarObjeto(
-    { clave: claveS3, cuerpo: archivo.bytes, contentType: archivo.contentType },
-    { cliente: deps.s3 },
-  );
+  //
+  // **En serie y acumulando lo ya escrito.** En paralelo, un fallo de la segunda
+  // subida deja las otras dos en vuelo y no se sabe que compensar sin esperarlas
+  // igual. Y la lista de claves a borrar se acumula en vez de derivarse de
+  // `variantes`: derivarla mandaria borrados de objetos que nunca se escribieron
+  // —correcto, porque borrar lo que no existe es exito en S3, pero oscurece la
+  // intencion y triplica las llamadas del camino de error.
+  const escritas: string[] = [];
+  for (const variante of variantesConClave) {
+    try {
+      await guardarObjeto(
+        {
+          clave: variante.claveS3,
+          cuerpo: variante.cuerpo,
+          contentType: CONTENT_TYPE_DE_VARIANTE,
+          cacheControl: CACHE_DE_FOTOGRAFIA,
+        },
+        { cliente: deps.s3 },
+      );
+      escritas.push(variante.claveS3);
+    } catch {
+      await borrarObjetos(escritas, { cliente: deps.s3 });
+      return fallo("dependencia_no_disponible");
+    }
+  }
 
   const items: ItemDeTransaccion[] = [
     {
@@ -113,9 +191,10 @@ export const agregarFotografia = async (
             fotoId,
             vehiculoId: actual.vehiculoId,
             orden,
-            claveS3,
-            contentType: archivo.contentType,
-            bytes: archivo.bytes.byteLength,
+            claveS3: mayor.claveS3,
+            contentType: CONTENT_TYPE_DE_VARIANTE,
+            bytes: mayor.bytes,
+            variantes,
             descripcion,
             subidaEn: momento,
             subidaPor: entrada.actor.id,
@@ -161,16 +240,26 @@ export const agregarFotografia = async (
       ocurridoEn: ahora,
       correlacionId: nuevaCorrelacion(ahora),
       vehiculoId: actual.vehiculoId,
-      datos: { fotoId, orden, esPrincipal: seraPrincipal, claveS3 },
+      datos: {
+        fotoId,
+        orden,
+        esPrincipal: seraPrincipal,
+        claveS3: mayor.claveS3,
+        // Las tres claves en el evento, no solo la principal: si el borrado de
+        // S3 fallara alguna vez, la bitacora es lo unico que dice que objetos
+        // habia que borrar.
+        clavesDeVariantes: escritas,
+        formatoDeOrigen: normalizada.imagen.formatoDetectado,
+      },
     }),
   ];
 
   const resultado = await ejecutarTransaccion(items, { cliente });
 
   if (!resultado.ok) {
-    // Compensacion de mejor esfuerzo. Si tambien falla, queda un objeto
-    // inalcanzable en un bucket versionado, que es el peor caso aceptable.
-    await borrarObjeto(claveS3, { cliente: deps.s3 }).catch(() => undefined);
+    // Compensacion de mejor esfuerzo. Si tambien falla, quedan objetos
+    // inalcanzables en un bucket versionado, que es el peor caso aceptable.
+    await borrarObjetos(escritas, { cliente: deps.s3 });
     return fallo(resultado.error);
   }
 

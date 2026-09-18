@@ -48,6 +48,13 @@ frontend:
         - npm run typecheck
         - npm run test
         - npm run build
+        # Despues del build a proposito: inspecciona el artefacto. Comprueba que
+        # los binarios nativos de `sharp` viajen completos —el trazador de Next
+        # deja `libvips-cpp.so` fuera y el sintoma solo aparece desplegado— y
+        # ejecuta un ciclo real de imagen en **este** contenedor, que es la unica
+        # plataforma que importa. En Windows no se puede comprobar: ahi el
+        # trazado sale bien por como esta empaquetado el binario.
+        - node scripts/verificar-sharp.mjs
   artifacts:
     baseDirectory: .next
     files:

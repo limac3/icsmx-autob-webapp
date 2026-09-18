@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { RemovalPolicy } from "aws-cdk-lib";
 import {
   AllowedMethods,
+  CachePolicy,
   Distribution,
   KeyGroup,
   PriceClass,
@@ -111,6 +112,14 @@ export class AlmacenamientoAutob extends Construct {
         }),
         viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: AllowedMethods.ALLOW_GET_HEAD,
+        // **Declarada a proposito, aunque sea la que CDK pone por omision.** Lo
+        // que importa de `CACHING_OPTIMIZED` no es el TTL sino que **no incluye
+        // el query string en la clave de cache**: cada URL firmada trae
+        // `Expires`, `Signature` y `Key-Pair-Id` distintos, asi que una politica
+        // que si los incluyera partiria la cache por usuario y por ventana de
+        // firma, y convertiria cada render en un MISS contra S3. Heredarla por
+        // omision dejaba todo el esquema dependiendo de una suerte.
+        cachePolicy: CachePolicy.CACHING_OPTIMIZED,
         // Sin grupo de llaves de confianza la distribucion serviria las fotografias a
         // cualquiera que conociera la URL. Con el, solo pasan las URLs firmadas.
         trustedKeyGroups: [this.grupoDeLlaves],

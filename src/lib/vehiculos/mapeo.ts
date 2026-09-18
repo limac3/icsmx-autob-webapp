@@ -10,8 +10,10 @@ import "server-only";
 
 import {
   ESTATUS_VEHICULO,
+  NOMBRES_DE_VARIANTE,
   type EstatusVehiculo,
   type Fotografia,
+  type VarianteImagen,
   type Vehiculo,
 } from "@/types/vehiculo";
 
@@ -89,6 +91,41 @@ export const aVehiculo = (
   };
 };
 
+/**
+ * Convierte el mapa de variantes, o `undefined` si no esta completo y sano.
+ *
+ * **Aqui es donde se aplica la regla 15**, y el detalle importa: la tentacion es
+ * rellenar lo que falte —`ancho: entero(...) ?? 0`, como el `bytes ?? 0` de
+ * abajo— y eso seria justo el fallback silencioso que la regla prohibe. Un
+ * `ancho` de cero produce un `width="0"` en la pagina: rompe la maquetacion sin
+ * decir nada y sin dejar rastro de por que.
+ *
+ * Que falten las tres, que falte una, o que una traiga un ancho absurdo son el
+ * mismo caso: el item no se puede renderizar y desaparece del listado.
+ */
+const aVariantes = (valor: unknown): Fotografia["variantes"] | undefined => {
+  if (typeof valor !== "object" || valor === null) return undefined;
+  const crudo = valor as Record<string, unknown>;
+
+  const variantes: Record<string, VarianteImagen> = {};
+  for (const nombre of NOMBRES_DE_VARIANTE) {
+    const entrada = crudo[nombre];
+    if (typeof entrada !== "object" || entrada === null) return undefined;
+
+    const campos = entrada as Record<string, unknown>;
+    const claveS3 = texto(campos.claveS3);
+    const ancho = entero(campos.ancho);
+    const alto = entero(campos.alto);
+    const bytes = entero(campos.bytes);
+
+    if (!claveS3 || !ancho || !alto || bytes === undefined) return undefined;
+
+    variantes[nombre] = { claveS3, ancho, alto, bytes };
+  }
+
+  return variantes as Fotografia["variantes"];
+};
+
 export const aFotografia = (
   item: Record<string, unknown>,
 ): Fotografia | undefined => {
@@ -99,6 +136,7 @@ export const aFotografia = (
   const orden = entero(item.orden);
   const subidaEn = texto(item.subidaEn);
   const subidaPor = texto(item.subidaPor);
+  const variantes = aVariantes(item.variantes);
 
   if (
     !fotoId ||
@@ -107,7 +145,8 @@ export const aFotografia = (
     !contentType ||
     orden === undefined ||
     !subidaEn ||
-    !subidaPor
+    !subidaPor ||
+    !variantes
   ) {
     return undefined;
   }
@@ -119,6 +158,7 @@ export const aFotografia = (
     claveS3,
     contentType,
     bytes: entero(item.bytes) ?? 0,
+    variantes,
     descripcion: texto(item.descripcion),
     subidaEn,
     subidaPor,

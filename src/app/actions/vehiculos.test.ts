@@ -6,14 +6,15 @@ import { getSession } from "@/lib/auth/session";
 import { agregarFotografia as agregarFotografiaServicio } from "@/lib/vehiculos/agregarFotografia";
 import { crearVehiculo as crearVehiculoServicio } from "@/lib/vehiculos/crearVehiculo";
 import { editarVehiculo as editarVehiculoServicio } from "@/lib/vehiculos/editarVehiculo";
+import { editarDescripcionFotografia as editarDescripcionServicio } from "@/lib/vehiculos/editarDescripcionFotografia";
 import { eliminarFotografia as eliminarFotografiaServicio } from "@/lib/vehiculos/eliminarFotografia";
-import { marcarFotografiaPrincipal as marcarPrincipalServicio } from "@/lib/vehiculos/marcarFotografiaPrincipal";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import { reordenarFotografias as reordenarFotografiasServicio } from "@/lib/vehiculos/reordenarFotografias";
 import { retirarVehiculo as retirarVehiculoServicio } from "@/lib/vehiculos/retirarVehiculo";
 import { updateTag } from "next/cache";
 import type { Sesion } from "@/types/identidad";
 import type { VehiculoConFotografias } from "@/types/vehiculo";
+import { fotografiaDePrueba } from "@/utils/fotografiaDePrueba";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ updateTag: vi.fn() }));
@@ -35,8 +36,8 @@ vi.mock("@/lib/vehiculos/eliminarFotografia", () => ({
 vi.mock("@/lib/vehiculos/reordenarFotografias", () => ({
   reordenarFotografias: vi.fn(),
 }));
-vi.mock("@/lib/vehiculos/marcarFotografiaPrincipal", () => ({
-  marcarFotografiaPrincipal: vi.fn(),
+vi.mock("@/lib/vehiculos/editarDescripcionFotografia", () => ({
+  editarDescripcionFotografia: vi.fn(),
 }));
 
 const sesionSimulada = vi.mocked(getSession);
@@ -49,7 +50,7 @@ const servicios = {
   agregar: vi.mocked(agregarFotografiaServicio),
   eliminar: vi.mocked(eliminarFotografiaServicio),
   reordenar: vi.mocked(reordenarFotografiasServicio),
-  marcarPrincipal: vi.mocked(marcarPrincipalServicio),
+  editarDescripcion: vi.mocked(editarDescripcionServicio),
 };
 
 const sesion = (permisos: string[]): Sesion => ({
@@ -75,18 +76,7 @@ const vehiculo: VehiculoConFotografias = {
   actualizadoEn: "2026-01-10T10:00:00.000Z",
   actualizadoPor: "P0",
   fotografiaPrincipalId: "F1",
-  fotografias: [
-    {
-      fotoId: "F1",
-      vehiculoId: "V1",
-      orden: 1,
-      claveS3: "vehiculos/V1/F1.jpg",
-      contentType: "image/jpeg",
-      bytes: 100,
-      subidaEn: "2026-01-10T10:00:00.000Z",
-      subidaPor: "P0",
-    },
-  ],
+  fotografias: [fotografiaDePrueba("F1", 1)],
 };
 
 const datos = {
@@ -117,8 +107,8 @@ const invocar = {
     acciones.agregarFotografia({ vehiculoId: "V1", archivo }),
   eliminarFotografia: () => acciones.eliminarFotografia("V1", "F1"),
   reordenarFotografias: () => acciones.reordenarFotografias("V1", ["F1"]),
-  marcarFotografiaPrincipal: () =>
-    acciones.marcarFotografiaPrincipal("V1", "F1"),
+  editarDescripcionFotografia: () =>
+    acciones.editarDescripcionFotografia("V1", "F1", "Frente"),
 } as const;
 
 const NOMBRES = Object.keys(invocar) as (keyof typeof invocar)[];
@@ -138,7 +128,8 @@ describe("el barrido cubre el modulo entero", () => {
   it("invoca todas las actions exportadas", () => {
     // Sin esta comprobacion, agregar una action y olvidarla en `invocar` la
     // dejaria sin ninguna prueba de permiso, y las demas seguirian en verde.
-    // Paso exactamente eso al agregar `marcarFotografiaPrincipal`.
+    // Paso exactamente eso al agregar la de marcar la principal, que ya no
+    // existe: la designacion se hace por posicion desde `reordenarFotografias`.
     const exportadas = Object.entries(acciones)
       .filter(
         ([nombre, valor]) =>
@@ -149,12 +140,40 @@ describe("el barrido cubre el modulo entero", () => {
     expect([...NOMBRES].sort()).toEqual(exportadas.sort());
   });
 
-  it("los adaptadores de formulario delegan en las actions ya cubiertas", () => {
-    // Se excluyen del barrido a proposito: no comprueban permisos por su
-    // cuenta, se los delegan a `crearVehiculo`, `editarVehiculo` y
-    // `retirarVehiculo`, que si estan en el barrido.
+  it("el adaptador de formulario delega en las actions ya cubiertas", () => {
+    // Se excluye del barrido a proposito: no comprueba permisos por su cuenta,
+    // se los delega a `crearVehiculo` y `editarVehiculo`, que si estan en el
+    // barrido.
     expect(typeof acciones.guardarVehiculoDesdeFormulario).toBe("function");
-    expect(typeof acciones.retirarVehiculoDesdeFormulario).toBe("function");
+  });
+
+  it.each(NOMBRES)(
+    "%s lee el vehiculo con lectura consistente",
+    async (nombre) => {
+      // **Lo que alimenta una escritura se lee consistente.** Una `Query` de
+      // DynamoDB es eventualmente consistente por omision, y por aqui pasan todas
+      // las mutaciones del vehiculo — tres de ellas calculan a partir de la
+      // galeria leida. Sin esto, dos mutaciones seguidas sobre el mismo vehiculo
+      // se pisan, que es lo que rompia la subida de varias fotografias de un tiro
+      // (`desafios-implementacion.md` 88).
+      sesionSimulada.mockResolvedValue(sesion(["Autob_Administrar_Vehiculos"]));
+      await invocar[nombre]();
+
+      // `crearVehiculo` no lee un vehiculo previo: no tiene cual.
+      if (nombre === "crearVehiculo") {
+        expect(lectura).not.toHaveBeenCalled();
+        return;
+      }
+      expect(lectura).toHaveBeenCalledWith("V1", {}, { consistente: true });
+    },
+  );
+
+  it("el retiro ya no tiene adaptador de formulario", () => {
+    // Se retiro al pasar el motivo a un modal: un modal es un control del
+    // cliente, asi que el envio por `<form>` puro dejo de existir. La prueba
+    // fija la decision — si alguien vuelve a exportarlo, es que reintrodujo dos
+    // caminos para la misma mutacion.
+    expect(acciones).not.toHaveProperty("retirarVehiculoDesdeFormulario");
   });
 });
 
@@ -179,7 +198,7 @@ describe("sin sesion", () => {
 });
 
 describe("sin el permiso de administrar vehiculos", () => {
-  // La matriz concede estas seis acciones unicamente a
+  // La matriz concede estas siete acciones unicamente a
   // `Autob_Administrar_Vehiculos`. Un conjunto de permisos amplio pero
   // equivocado tiene que ser tan insuficiente como uno vacio.
   it.each(NOMBRES)("%s devuelve forbidden", async (nombre) => {

@@ -2,11 +2,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACEPTA_IMAGENES,
+  esTipoDeImagen,
   LIMITES,
   modeloMaximo,
   normalizarDatosVehiculo,
   revisarDatosVehiculo,
   rotuloVehiculo,
+  TIPOS_DE_IMAGEN,
   validarDatosVehiculo,
 } from "./vehiculos";
 import type { DatosVehiculo } from "@/types/vehiculo";
@@ -273,5 +276,53 @@ describe("validarDatosVehiculo", () => {
 describe("rotuloVehiculo", () => {
   it("junta marca, version y modelo, nunca el vehiculoId", () => {
     expect(rotuloVehiculo(validos)).toBe("Nissan NP300 Doble Cabina 2019");
+  });
+});
+
+/**
+ * La lista blanca de formatos de imagen.
+ *
+ * Vive en el dominio y no en `src/lib/media/almacenamiento.ts`, que es
+ * `server-only`: la pantalla la necesita para marcar un archivo no admitido
+ * antes de empezar a subir una tanda.
+ */
+describe("tipos de imagen admitidos", () => {
+  it.each(Object.keys(TIPOS_DE_IMAGEN))("acepta %s", (tipo) => {
+    expect(esTipoDeImagen(tipo)).toBe(true);
+  });
+
+  it("incluye AVIF", () => {
+    // Lo pidio un operador despues de que una tanda se le rechazara entera por
+    // un `.avif`. No era una limitacion: sharp lo decodifica y sale por el
+    // mismo camino que los demas, hacia WebP.
+    expect(esTipoDeImagen("image/avif")).toBe(true);
+  });
+
+  it.each(["image/gif", "application/pdf", "text/html", "", "image/svg+xml"])(
+    "rechaza %j",
+    (tipo) => {
+      // `image/svg+xml` merece mencion: un SVG es un documento con script, y
+      // servirlo desde el mismo origen que la aplicacion seria una via de XSS.
+      // Queda fuera **aunque librsvg viva dentro de libvips** y por tanto si
+      // decodificaria.
+      expect(esTipoDeImagen(tipo)).toBe(false);
+    },
+  );
+
+  it("HEIC sigue fuera, y eso si es una limitacion", () => {
+    // libvips trae libheif pero sin decodificador HEVC. A diferencia del SVG,
+    // aqui no se puede aunque se quisiera.
+    expect(esTipoDeImagen("image/heic")).toBe(false);
+  });
+
+  it("el `accept` del selector sale de la misma lista", () => {
+    // Con el `accept` escrito a mano, agregar un formato en un lado y olvidarlo
+    // en el otro deja el selector filtrando lo que el servidor si acepta.
+    for (const tipo of Object.keys(TIPOS_DE_IMAGEN)) {
+      expect(ACEPTA_IMAGENES).toContain(tipo);
+    }
+    expect(ACEPTA_IMAGENES.split(",")).toHaveLength(
+      Object.keys(TIPOS_DE_IMAGEN).length,
+    );
   });
 });

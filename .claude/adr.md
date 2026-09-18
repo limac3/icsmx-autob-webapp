@@ -71,6 +71,47 @@
 > depender de un `APP_ENV` declarado — decision **D-18**, con su matriz de verdad verificada por
 > enumeracion.
 >
+> **2026-09-18 — Etapa 17, fotografias.** Ocho decisiones nuevas, **D-22** a **D-29**, todas
+> nacidas de reportes del operador sobre el entorno desplegado: normalizar al subir y descartar
+> el original, WebP y no AVIF con la medicion que lo decide, el vencimiento de la firma en cubetas
+> de una hora, el trazado explicito de los binarios de `sharp` con su compuerta de build, el pie
+> editable sobre una imagen que no se reemplaza, un modulo unico que decide que variantes ofrece
+> cada pantalla, la confirmacion en modal de lo destructivo, y la vista previa antes de subir.
+> **D-22** y **D-26** son las dos caras de un mismo invariante —los bytes son inmutables, el pie
+> no—, **D-24** depende de eso para que `Cache-Control: immutable` sea correcto, y **D-29** existe
+> porque **D-28** volvio caro deshacer una subida equivocada.
+>
+> **D-28 registra una perdida, no solo una mejora:** el retiro de un vehiculo deja de funcionar sin
+> JavaScript, porque un modal de confirmacion no se puede exigir por `<form>` puro. Queda dicho
+> aqui para que quien lo note dentro de un ano sepa que fue una decision y no un descuido.
+>
+> **2026-09-18, tercera vuelta sobre la misma pantalla — D-30.** La galeria de edicion se rehizo
+> por tercera vez, y las tres veces el reporte del operador fue el mismo sintoma con distinta cara:
+> la pantalla pedia demasiado para mostrar poco. La version final separa mirar de editar, y trae
+> una consecuencia de modelo que no es cosmetica: **la posicion 1 es la principal**, asi que
+> `marcarFotografiaPrincipal` se elimino del contrato. Corrige tambien una linea de **D-26** que
+> proponia el campo de solo lectura que la tercera vuelta descarto.
+>
+> **D-31** cierra la misma pantalla con la subida de varias fotografias de un tiro, y trae consigo
+> el unico cambio de capas de todo este trabajo: `bytesDeFotografia` y `fotografiasPorVehiculo`
+> pasan a `LIMITES` del dominio, porque son topes que ahora aplica tambien el navegador y vivian en
+> un modulo `server-only`.
+>
+> **D-32 y D-33 salieron de un mismo reporte de campo, y conviene leerlas juntas.** El operador
+> reporto que subir varias fotografias fallaba; el diagnostico inicial fue la lectura eventual de
+> `obtenerVehiculo` (**D-32**) y **estaba equivocado** — la causa era un `.avif` fuera de la lista
+> blanca (**D-33**). D-32 se mantiene porque el defecto que corrige es real y estaba latente desde
+> la Etapa 5, pero no era el que se estaba sufriendo.
+>
+> Queda anotado aqui porque la leccion es de metodo y no de codigo: **una hipotesis que explica
+> todos los sintomas no es por eso la causa.** Lo que encontro la causa de verdad fue mostrar en
+> pantalla el `detalles` del rechazo, que el servidor llevaba todo el tiempo mandando y la interfaz
+> descartaba.
+>
+> Las anclas de estas seis **no estan todavia en el grafo**: el codigo esta sin confirmar, y el
+> reindexado se ancla al `head_sha`. Hasta que exista el commit, describen archivos que hay que
+> leer directamente — que es en todo caso lo que manda la cadena de autoridad del encabezado.
+>
 > Este archivo es la copia local y versionada del ADR. El ADR que vive en el grafo se pierde
 > en cada `index_repository`; se recarga desde aqui. Ver "Mantenimiento de este ADR" y
 > `agent_files/desafios-implementacion.md` seccion 21.
@@ -715,6 +756,406 @@ Anclas: `src/lib/convocatorias/mapeo.ts::camposFaltantesDeConvocatoria`,
 `::camposFaltantesDeLote`, `src/lib/convocatorias/listarConvocatorias.ts`,
 `src/lib/convocatorias/obtenerConvocatoria.ts`.
 
+### D-22 — Las imagenes se normalizan al subirlas, y el original se descarta
+`agregarFotografia` decodifica lo que llega, hornea la orientacion EXIF y guarda **tres variantes
+WebP** de 480 / 1280 / 2048 px de ancho. El byte que subio el operador no se conserva en ninguna
+parte, y `variantes` es **obligatorio** en el item `FOTO#`.
+Lo forzo un reporte del operador sobre el entorno desplegado: paginas pesadas, fotos que no se ven
+y lentitud. No existia resize, recompresion, miniatura ni strip de EXIF en ninguna parte del
+sistema; el escalado era puramente CSS, asi que una foto de celular de 8 MB se descargaba entera
+para pintarse en una tira de miniaturas de 100x100 px, y con veinte fotografias por vehiculo el
+detalle de un lote pasaba de 100 MB. Dos beneficios que nadie pidio y pesan igual: el EXIF
+publicaba las coordenadas GPS del patio donde se tomo cada foto, y decodificar es lo unico que
+permite **comparar** el `contentType` declarado —que viene de `File.type`, o sea del navegador— con
+el formato real.
+La consecuencia que sostiene toda la politica de cache: **los bytes de una fotografia son
+inmutables**. Se borra, nunca se reemplaza, asi que las claves de S3 son estables y
+`Cache-Control: immutable` es correcto. La descripcion no es parte de los bytes.
+Descartado:
+- **Lambda de transformacion disparada por `s3:ObjectCreated`.** Es la arquitectura correcta a
+  largo plazo y hoy no encaja: `agregarFotografia` es sincronica y la galeria se repinta con la
+  foto ya puesta. Asincrono exige un estado `PROCESANDO`, UI de espera y un camino de fallo sin
+  usuario a quien reportarlo. Plan B de segundo nivel.
+- **Conservar el original.** El operador confirmo que no hace falta; cuesta almacenamiento y un
+  camino de borrado mas. El bucket ademas esta versionado y sin reglas de ciclo de vida.
+- **`variantes` opcional, con rama de compatibilidad.** Habria que mantener y probar dos caminos
+  para siempre. Es viable porque no hay nada en produccion: las fotografias del entorno desplegado
+  son de prueba, asi que no hay relleno ni migracion.
+- **Un array de variantes en vez de un mapa completo.** El array permite representar "tengo `min`
+  y `max` pero no `med`", un estado que no queremos poder escribir.
+- **Derivar los anchos de las constantes.** Con `withoutEnlargement`, un original de 600 px
+  produce tres variantes de 600: un `srcSet` con los anchos nominales le mentiria al navegador. Los
+  anchos reales se guardan por variante, y el sufijo de la clave es el **nombre** de la variante y
+  no su ancho, para que la clave siga siendo predecible.
+- **Rellenar un ancho ausente con `?? 0`**, como ya hacia el habito de `bytes ?? 0`. Daria
+  `width="0"` y romperia la maquetacion en silencio: el fallback que la regla 15 prohibe. Se
+  descarta la fotografia entera, por D-21.
+Anclas: `src/lib/media/normalizarImagen.ts::normalizarImagen`,
+`src/lib/vehiculos/agregarFotografia.ts`, `src/lib/vehiculos/mapeo.ts::aFotografia`,
+`src/types/vehiculo.ts`.
+
+### D-23 — WebP y no AVIF, decidido con el numero en la mano
+Las tres variantes salen en WebP con calidad 78.
+Medido sobre la misma foto de 12 MP: **WebP 385 ms por variante, AVIF 8 647 ms** — catorce veces el
+CPU por alrededor de un 10 % menos de bytes, dentro de una Server Action sincronica que el operador
+espera. WebP tiene soporte universal desde 2020, ya estaba en la lista blanca de entrada y no
+necesita `<picture>`.
+Las variantes se generan **en serie y desde el origen**, no en paralelo ni en cascada: en paralelo
+se triplica el pico de memoria y los hilos se pelean, por 300 ms; en cascada no se gana nada (598
+contra 611 ms) porque se pierde el `shrink-on-load` del decodificador JPEG y se apilan perdidas de
+recompresion.
+Descartado:
+- **AVIF**, por el numero de arriba. No se descarta por falta de sitio en el marcado: Eden acepta
+  `srcSet`.
+- **HEIC como formato de entrada.** libvips trae libheif pero sin `de265` ni `dav1d`, asi que
+  `sharp.format.heif.input.fileSuffix` es solo `.avif`. Verificado de tres formas independientes.
+  Aceptarlo exigiria compilar libvips a mano con libde265, con las implicaciones de patentes HEVC
+  que los propios typings de sharp senalan. En su lugar, un mensaje con la accion concreta. En la
+  practica puede que no llegue nunca: iOS Safari convierte HEIC a JPEG cuando el `accept` lista
+  `image/jpeg`.
+- **Recortar a 4:3 en el servidor.** Rompe el visor ampliado. La relacion de aspecto se conserva y
+  el recorte lo hace el navegador con `object-fit: cover`.
+Anclas: `src/lib/media/normalizarImagen.ts::CALIDAD_WEBP`, `::ANCHOS_DE_VARIANTE`.
+
+### D-24 — El vencimiento de la firma se redondea a una cubeta de una hora
+`vencimientoDeFirma(ahora)` = `floor(ahora / 1h) * 1h + 1h + 1h de gracia`, en lugar de una
+vigencia contada desde el instante de la peticion.
+Dos defectos con una sola causa. La vigencia era de **diez minutos** y el visor ampliado de Eden
+**se monta al hacer clic, no al renderizar**: leer una ficha y abrir las fotos once minutos despues
+daba 403 garantizado, y eso era el "fotos que no se ven" del reporte. Y como la firma se
+recalculaba en cada render, la URL cambiaba siempre y el cache del navegador **nunca acertaba**:
+volver al catalogo re-descargaba todo. Con la cubeta la URL es byte-identica durante toda la hora
+en curso **para todos los usuarios**.
+El redondeo es sobre el epoch, **no** sobre la hora local: una cubeta de una hora es agnostica de
+zona y la regla 9 no interviene. Sin esa nota alguien lo "arregla" con `Intl`.
+**Que el resultado se determine no relaja la regla 13.** La URL sigue firmandose en SSR en cada
+peticion y sigue sin poder persistirse ni entrar en un bloque `"use cache"`: que dos peticiones de
+la misma hora coincidan es una propiedad del calculo, no un permiso para guardarla. El dia que
+cambie la cubeta, lo persistido queda firmado con una regla que ya no existe.
+Lo que se paga, explicito: una URL filtrada vale hasta dos horas en vez de diez minutos. Lo que
+protege el acceso es el gating triple del servidor (regla 8), no el vencimiento, y el objeto es la
+foto de un vehiculo en venta, sin PII; los comprobantes de pago no salen por CloudFront. Residuo
+honesto: una pestana abierta tres horas sigue rompiendose — se eleva el piso, no se elimina el modo
+de fallo.
+Lo que lo completa del lado de la infraestructura: `CachePolicy.CACHING_OPTIMIZED` se declara
+**explicita** aunque sea el valor por omision, porque todo el esquema depende de una propiedad de
+esa politica —los query strings no entran en la clave de cache— y la firma viaja en el query
+string. Es una linea que convierte una suerte en una decision.
+Descartado:
+- **Cookies firmadas.** Es el destino correcto de este camino: URLs estables para siempre y nada
+  que firmar por peticion. Hoy imposible — `cloudfront.net` y `amplifyapp.com` estan en la Public
+  Suffix List, asi que ningun navegador acepta una cookie para ese dominio. Lo volveria viable
+  servir la distribucion desde un subdominio del mismo dominio registrable que la aplicacion.
+- **Subir la vigencia sin cubeta.** Arregla los 403 y nada mas: la URL sigue cambiando en cada
+  render. Mismo costo de seguridad, la mitad del beneficio.
+- **Re-firmar desde el cliente con `onError`.** Volveria cliente a `RejillaDeLotes` y crearia un
+  **oraculo de firma**: una action que firme lo que le pidan tendria que re-verificar el gating en
+  cada llamada, o se convierte en la forma de firmar cualquier foto.
+Anclas: `src/lib/media/cloudfrontSigner.ts::vencimientoDeFirma`, `::CUBETA_DE_FIRMA_MS`,
+`src/lib/media/almacenamiento.ts::CACHE_DE_FOTOGRAFIA`, `amplify/almacenamiento.ts`.
+
+### D-25 — Los binarios nativos de `sharp` se declaran en el trazado, y una compuerta de build lo comprueba
+`outputFileTracingIncludes` en `next.config.ts` lista los paquetes `@img/*` de Linux, `sharp` se
+fija en version exacta sin `^`, y `scripts/verificar-sharp.mjs` corre en `amplify.yml` despues del
+build.
+**Sin esto, la normalizacion funciona en local y da 500 en cada subida del entorno desplegado.** El
+caso especial de `sharp` en `@vercel/nft` se activa con `id.endsWith("sharp/lib/index.js")`, archivo
+que dejo de existir en sharp 0.34; el camino generico si traza el `.node`, pero busca bibliotecas
+compartidas solo dentro del paquete del `.node` y excluyendo `node_modules`, y
+`libvips-cpp.so.42` vive en el paquete **hermano** `@img/sharp-libvips-linux-x64`, cargado por
+`dlopen` a traves del `DT_RPATH`. **En Windows el defecto no se manifiesta**, porque ahi el DLL esta
+junto al `.node`: probar en local no prueba nada sobre el artefacto de Linux. Version exacta porque
+el par `sharp` <-> `@img/sharp-libvips-*` esta acoplado a nivel de ABI.
+La compuerta es lo que convierte esto en una decision sostenible: exige el `.so` en los
+`.nft.json` y hace un round-trip real en el contenedor Linux, asi que un despliegue roto **falla en
+el build** en vez de fallar en la primera subida de un usuario. Detalle completo en
+`agent_files/desafios-implementacion.md` seccion 84.
+Descartado:
+- **Confiar en el trazado automatico.** Es el estado del que se partio y el que produce el fallo.
+- **Incluir win32 y darwin.** Inflan el artefacto unos 20 MB por plataforma sin que el runtime los
+  use.
+- **`@img/sharp-wasm32`.** Ya esta en el lock, sin `os`/`cpu`, y es un `.node` autocontenido sin
+  `.so` hermano, asi que el defecto de trazado no le aplica. Cuesta 3-5x mas lento —2-3 s por
+  subida, aceptable para una accion administrativa— con el mismo codigo de aplicacion. Queda como
+  plan B; no se necesito.
+- **Un test de Vitest en vez de una compuerta de build.** Vitest corre en Windows, donde el defecto
+  es invisible por construccion. Lo que hay que ejercitar es el artefacto del contenedor.
+Anclas: `next.config.ts::NATIVOS_DE_SHARP`, `scripts/verificar-sharp.mjs`, `amplify.yml`.
+
+### D-26 — El pie de una fotografia se edita; la fotografia no se reemplaza
+La descripcion se acota a **120 caracteres** —en `LIMITES` de `src/lib/domain/vehiculos.ts`, no en
+el servicio que la valida— y se edita en linea desde la pantalla de edicion del vehiculo, con
+`editarDescripcionFotografia`. La imagen en si no tiene camino de reemplazo: se borra y se sube
+otra, con `fotoId` nuevo.
+
+**El pie se muestra siempre**, debajo de su fotografia, como **parrafo completo**. Dos versiones
+fallaron antes por lo mismo: la primera lo mostraba solo dentro del formulario de edicion —en una
+galeria de veinte, saber que decia cada una obligaba a abrirlas de una en una— y la segunda lo saco
+a un campo de una linea, donde quedaba recortado justo en lo que se venia a leer. La tercera es un
+`<p>` que se ajusta y nunca se corta. Ver **D-30**.
+
+**El tope se aplica en tres lugares y los tres hacen falta.** `maxLength` en el campo frena el
+teclado; una comprobacion antes de enviar deshabilita guardar y conserva lo escrito; el servidor es
+la frontera que cuenta. El segundo existe porque `maxLength` **no recorta un valor que ya venia
+largo** —un pie capturado antes de que el tope bajara a 120—, y sin el se mandaba al servidor,
+volvia rechazado y se perdia lo escrito. El contador mide el texto **recortado**, igual que el
+servidor, para no marcar como excedido un pie que cabe.
+La asimetria es deliberada y es la contraparte de D-22: los bytes son inmutables porque de eso
+depende que las claves de S3 sean estables y que `immutable` sea correcto. El pie vive en el item de
+DynamoDB, asi que editarlo **no toca S3**. El tope es un requisito de presentacion —un pie largo
+desborda la tarjeta— y hasta ahora solo se podia fijar al subir: corregir una errata obligaba a
+borrar la foto entera.
+Tres comportamientos heredados de `marcarFotografiaPrincipal`, que es el analogo exacto: `not_found`
+se decide contra la galeria leida antes de escribir; **no se escribe evento si el pie no cambio**
+—una bitacora que registra actos sin efecto entrena a quien la lee a ignorarla—; y no se toca el
+item `META` del vehiculo, porque `actualizadoEn` describe el registro y un pie de foto no lo cambia.
+Descartado:
+- **Un tipo de evento nuevo.** `VEHICULO_EDITADO` con `campos: ["fotografia.descripcion"]` y el
+  `fotoId` en `datos` ya dice todo, con el precedente puesto. Un tipo nuevo obligaria a ampliar el
+  catalogo de auditoria y sus etiquetas de diccionario sin ganar informacion.
+- **Un permiso nuevo.** Editar el pie es gestion de galeria, igual que reordenar o marcar la
+  principal: va con `vehiculo:subir-fotografia`. Un permiso para "cambiar un pie de foto"
+  fragmentaria una capacidad que en la practica se concede junta (regla 17).
+- **`SET` a cadena vacia al vaciar el pie.** `descripcion` es opcional en el tipo, y `""` deja un
+  dato que se comporta como ausente sin serlo. Vaciar hace `REMOVE`; son dos `UpdateExpression`
+  distintas segun el valor nuevo, no una con truco. En el evento, el valor nuevo queda en `null`:
+  `null` dice "se quito", un campo ausente diria "no se sabe".
+- **Hacer la descripcion obligatoria.** Decision del operador: sigue siendo opcional. Cuando falta,
+  la galeria publica usa marca/version/modelo como texto alternativo.
+- **Un `Input` para el campo de edicion.** Su `maxLength` es inusable —lo declara `string` y React
+  `number`, y la interseccion no admite ningun valor (seccion 19 de `desafios-implementacion.md`)—,
+  asi que el campo editable es un `TextArea`, que lo declara `number`. Poner el tope en un `Input`
+  exigiria un cast sobre un componente de Eden, que es lo que la regla 10 evita.
+- **Mostrar el pie en un campo de solo lectura.** Se probo y se descarto: el `Input` de Eden lo
+  recorta a una linea, y el `TextArea` mide 8rem fijos, asi que bajo veinte fotografias serian
+  veinte cajas mas altas que sus propias miniaturas. Un parrafo no tiene ninguno de los dos
+  problemas y ademas se selecciona igual.
+Anclas: `src/lib/vehiculos/editarDescripcionFotografia.ts`,
+`src/lib/domain/vehiculos.ts::LIMITES`, `src/app/actions/vehiculos.ts`,
+`src/components/GaleriaVehiculo.tsx`.
+
+### D-30 — La galeria muestra y los modales editan; la posicion 1 es la principal
+La rejilla de `/admin/vehiculos/[id]/editar` no lleva controles: fotografias del mismo tamano, el
+distintivo de principal **dentro** de la imagen, la descripcion completa debajo y un solo boton
+("Editar"). Agregar vive en un boton junto al titulo. Editar, mover de posicion y eliminar viven en
+un modal. Y **la posicion 1 es la principal**: designar es mover al frente.
+Lo forzaron dos iteraciones fallidas sobre la misma pantalla, las dos reportadas por el operador.
+La version de la Etapa 5 repartia cinco controles bajo cada fotografia —subir, bajar, marcar
+principal, editar, eliminar— y solo mostraba el pie al entrar a editar. La siguiente saco el pie a
+un campo de una linea y quedaba recortado. Con veinte fotografias, la rejilla era un tablero de
+cien controles alrededor de lo unico que importa. **La leccion es de reparto, no de estilo: la
+rejilla es para mirar, y toda edicion cabe detras de un clic.**
+Que la principal sea la primera convierte dos controles que podian contradecirse en una sola idea.
+El invariante lo mantiene el **servidor**, dentro de la transaccion del reordenamiento, no la
+interfaz: `reordenarFotografias` apunta `fotografiaPrincipalId` a la que queda primera y solo
+escribe el item del vehiculo si la cabeza cambia. `eliminarFotografia` ya hacia lo analogo al
+promover la de menor orden.
+Descartado:
+- **Conservar `marcarFotografiaPrincipal`.** Se **elimino**, servicio y action. Con "la 1 es la
+  principal", es la unica forma de romper el invariante: dejaria el listado mostrando una
+  fotografia que no esta primero, hasta que el siguiente reordenamiento la devolviera a su sitio
+  sin que nadie entienda por que. Dos fuentes de verdad para el mismo dato es el defecto de D-21 y
+  de la seccion 78, otra vez.
+- **Flechas de mover arriba/abajo y arrastre**, que es lo que habia. Salieron al vaciar la rejilla,
+  y el campo de posicion las mejora en el caso real: mover la ultima al frente costaba diecinueve
+  clics. Lo que se pierde es el gesto de arrastrar, que solo servia con raton; el `Select` si es
+  alcanzable con teclado y con lector.
+- **Un campo numerico para la posicion.** Con un `Select` la cota es imposible de violar por
+  construccion, en vez de ser una validacion que hay que escribir y probar, y es donde cabe decir
+  que la 1 es la principal sin un texto de ayuda aparte.
+- **Insertar en una posicion dentro de `agregarFotografia`.** Seguiria siendo una sola transaccion,
+  pero duplicaria la logica de reubicacion que `reordenarFotografias` ya tiene probada. La pantalla
+  sube al final y reordena: dos mutaciones, cada una con su evento, y el fallo intermedio deja la
+  fotografia visible al final en vez de perdida.
+- **Anidar la confirmacion de borrado dentro del modal de edicion.** Dos `<dialog>` abiertos a la
+  vez dejan la pila del top layer a merced del orden de cierre. La confirmacion **sustituye** al
+  modal de edicion.
+Anclas: `src/components/GaleriaVehiculo.tsx`,
+`src/lib/vehiculos/reordenarFotografias.ts`, `src/lib/vehiculos/eliminarFotografia.ts`.
+
+### D-31 — Varias fotografias de un tiro: una peticion por archivo y un tope de tanda
+El modal de agregar admite seleccion multiple (`FileInput` con `multiple` e `isDroppable`) y sube
+las fotografias en **una peticion por archivo, en serie**. La descripcion capturada se guarda igual
+en todas; la posicion elegida es la de la **primera** y las demas la siguen, aplicada al final con
+un solo reordenamiento que inserta el bloque entero.
+**No hay action de lote, y esa es la decision.** El tope de `bodySizeLimit` son 11 MB y una
+fotografia admite 10, asi que dos archivos en una peticion ya no caben: la unica forma de que el
+limite siga siendo el que se dimensiono es que cada fotografia viaje sola. De paso cada alta
+conserva su transaccion y su evento (regla 4) en vez de un evento de lote que habria que inventar,
+y un fallo a la mitad deja las anteriores subidas y visibles — el proceso se detiene ahi y no
+reordena, porque el orden calculado ya no corresponde al estado real.
+**El tope de 10 MB pasa a leerse como volumen de la tanda**, y por eso `bytesDeFotografia` y
+`fotografiasPorVehiculo` se movieron a `LIMITES` del dominio: `src/lib/media/almacenamiento.ts` es
+`server-only` y los mismos numeros los necesita ahora el navegador. Las constantes de alla se
+**derivan** de las del dominio, para que no puedan separarse. En el servidor el tope sigue siendo
+por archivo, que es la frontera real; el total es una guarda de pantalla que evita empezar un
+trabajo que fallaria a la mitad.
+Descartado:
+- **Una sola peticion con las N fotografias.** No cabe en el cuerpo, y obligaria a un servicio y un
+  evento de lote nuevos, con compensacion sobre hasta sesenta objetos de S3 si falla a la mitad.
+- **Recortar la tanda sola** al pasarse del volumen. Cual dejar fuera es decision de quien sube. Se
+  cancela entera con el aviso, como pidio el operador.
+- **Subirlas en paralelo.** Ganaria tiempo de reloj y perderia el orden de la tanda, que es lo que
+  da sentido a "las demas siguen a la primera"; ademas pondria N normalizaciones de `sharp`
+  compitiendo en un computo de 1-2 vCPU.
+- **Una descripcion por fotografia en el mismo modal.** Siete cajas de texto antes de haber visto
+  las fotografias es lo contrario de D-30. Se captura una para toda la tanda y se corrige despues
+  una por una.
+- **Aplicar la posicion con varios `moverEnLista`.** Mover una por una desplaza el destino de las
+  siguientes; `insertarBloque` lo hace de un tiro y es donde vive la unica cuenta.
+- **Confiar en que `multiple` se comporte como dice su tipo.** Sondeado: entrega la seleccion
+  **acumulada** y **deduplica por nombre de archivo**, asi que dos fotografias distintas llamadas
+  `IMG_0001.jpg` colapsan a una en silencio. No se puede evitar desde fuera, asi que la galeria
+  **pinta todas las elegidas con su nombre** para que la que falta se vea antes de guardar
+  (seccion 86).
+Anclas: `src/components/GaleriaVehiculo.tsx::insertarBloque`,
+`src/lib/domain/vehiculos.ts::LIMITES`, `src/lib/media/almacenamiento.ts::MAXIMO_BYTES_FOTOGRAFIA`,
+`src/lib/vehiculos/agregarFotografia.ts::MAXIMO_FOTOGRAFIAS`.
+
+### D-32 — Toda lectura que decide una escritura es consistente, y se pide por llamada
+`obtenerVehiculo` acepta `{ consistente: true }` y lo enciende `conVehiculo`, el cuello unico por
+donde pasan las mutaciones del vehiculo, mas las dos lecturas de `actions/convocatorias.ts` que
+deciden una transicion. Por omision sigue siendo eventual.
+Amplia una regla que existia desde la Etapa 8 pero se leia como algo del motor de fila: *"las
+lecturas que alimentan un bucle de escrituras condicionales llevan `ConsistentRead`"*. En realidad
+aplica a **cualquier** lectura que decida una escritura. `obtenerVehiculo` alimenta tres calculos
+de leer-y-decidir —el `orden` de una fotografia nueva, si es la primera y por tanto la principal, y
+la permutacion al reordenar— y se leia eventual.
+**Se encontro leyendo, no por un fallo observado**, mientras se investigaba el defecto de la
+seccion 89 — que resulto tener otra causa. Sigue siendo real y latente: en cuanto dos peticiones
+caen lo bastante juntas, la segunda puede no ver lo que escribio la primera, y salen fotografias
+con el mismo `orden`, dos reclamando ser la principal, o un reordenamiento rechazado con
+`no_es_permutacion`. Lo habilito D-31, que es la primera pantalla que encadena dos mutaciones
+sobre el mismo agregado.
+Descartado:
+- **`ConsistentRead` siempre, dentro de `obtenerVehiculo`.** Lo llaman once lugares y casi todos
+  son de presentacion; el catalogo lo invoca **una vez por lote**, la lectura mas caliente de la
+  aplicacion. Cuesta el doble de RCU y no se sirve desde replica: seria duplicar el consumo donde
+  mas duele para arreglar un problema que solo tiene el camino de escritura.
+- **Que cada action lo pida por su cuenta.** Se enciende en `conVehiculo`, que ya es el cuello
+  unico de las mutaciones: una action nueva lo hereda sin que nadie tenga que acordarse.
+- **Reintentar el reordenamiento al fallar.** Enmascara la causa y deja el sistema dependiendo de
+  cuantas veces reintente.
+Corolario documentado, porque es lo que hace caro este defecto: **la consistencia eventual no se
+manifiesta hasta que dos escrituras se acercan en el tiempo**, asi que llega tarde y se ve como "a
+veces falla". Y la mitad barata: **cuando un servicio devuelve un motivo por campo, la pantalla lo
+muestra** — la galeria descartaba `detalles` y convertia el rechazo en una adivinanza.
+Anclas: `src/lib/vehiculos/obtenerVehiculo.ts::obtenerVehiculo`,
+`src/app/actions/vehiculos.ts`, `src/lib/fila/adjudicarLote.ts::leerFila`.
+
+### D-33 — La lista de formatos la aplica tambien la pantalla, y AVIF entra
+`TIPOS_DE_IMAGEN` se movio a `src/lib/domain/vehiculos.ts`, gano `image/avif`, y el modal de
+subida la aplica **antes de empezar**: el archivo no admitido se marca en su miniatura con el
+motivo y el boton de guardar se deshabilita. El `accept` del control se deriva de la misma lista.
+Lo forzo un reporte de campo: una tanda se rechazo entera por un `.avif`, dejando subidas las
+anteriores, sin aplicar la posicion y con un mensaje que no decia cual archivo era. Tres huecos a
+la vez — `accept` no filtra lo que se arrastra, `FileInput` solo marca lo invalido cuando corre su
+maquinaria de validacion (que en un modal con botones en el pie nunca se dispara), y la pantalla
+no comprobaba el tipo.
+**Que AVIF estuviera fuera no era una limitacion.** sharp lo decodifica aqui y sale por el mismo
+camino hacia WebP; estaba fuera porque nadie lo habia pedido. HEIC sigue fuera y eso si es una
+limitacion: libheif sin decodificador HEVC.
+Descartado:
+- **Dejar AVIF fuera y solo avisar mejor.** Era la opcion barata, y se descarto porque el formato
+  funciona: rechazarlo obliga al operador a convertir archivos por una lista que nadie reviso.
+- **Saltar el archivo no admitido y subir el resto.** Termina en un estado a medias que hay que ir
+  a revisar. Se prefiere no empezar: quitar un archivo cuesta un clic.
+- **Confiar en el `accept`.** No es una validacion, es una sugerencia al dialogo del explorador, y
+  con arrastrar y soltar no filtra nada.
+- **Duplicar la lista en cliente y servidor.** Una sola, en el dominio; el modulo de almacenamiento
+  es `server-only` y por eso la lista no podia quedarse ahi.
+- **`"avif"` en `FORMATO_ESPERADO`.** Parece lo obvio y rechaza **todos** los AVIF: se detectan
+  como `"heif"`, porque AVIF es un contenedor HEIF con carga AV1.
+Anclas: `src/lib/domain/vehiculos.ts::TIPOS_DE_IMAGEN`, `::ACEPTA_IMAGENES`,
+`src/lib/media/normalizarImagen.ts::FORMATO_ESPERADO`, `src/components/GaleriaVehiculo.tsx`.
+
+### D-28 — Lo destructivo se confirma en un modal, y el retiro pierde su camino sin JavaScript
+Eliminar una fotografia y retirar un vehiculo del catalogo pasan por un modal de confirmacion:
+`DialogModal` para el borrado —solo hay que confirmar— y `ToolModal` para el retiro, que captura el
+motivo dentro. Mismo reparto que `AccionesDeConvocatoria` ya usaba.
+Las dos son irreversibles y estaban a un clic. El borrado destruye los tres objetos de S3 y por
+D-22 no hay original del que rehacerlos. El retiro es terminal en la maquina de estados, y su campo
+de motivo estaba **suelto sobre la pantalla de edicion**: un campo obligatorio a la vista, sin nada
+que dijera a que pertenecia, con la transicion terminal debajo. Las convocatorias ya lo tenian
+corregido; la pantalla de vehiculos se habia quedado atras.
+**Los modales se montan solo cuando hay algo que confirmar**, no siempre con un `open` variable. Un
+`<dialog>` cerrado conserva sus hijos en el DOM —lo que los oculta es
+`dialog:not([open]) { display: none }`, que es estilo—, asi que dejarlo montado mantendria el boton
+de borrar y el campo de motivo en el arbol de la pantalla. De paso, veinte fotografias dejan de
+poner veinte `<dialog>`, y desaparece un temporizador de `eden-has-overflow` que se colaba entre
+pruebas (seccion 87).
+**Lo que se paga, explicito: el retiro deja de funcionar sin JavaScript**, y la envoltura
+`retirarVehiculoDesdeFormulario` se retiro. Un modal es un control del cliente: no hay forma de
+exigir la confirmacion y a la vez conservar el envio por `<form>` puro. El servidor sigue
+comprobando permiso, estado y motivo, asi que lo perdido es el camino degradado, no una garantia.
+Descartado:
+- **`window.confirm()`.** El navegador puede suprimirlo despues del primero, asi que la
+  confirmacion desapareceria justo para quien borra muchas fotografias. Un `<dialog>` nativo no se
+  puede suprimir y bloquea el resto de la pagina.
+- **Un modal por fotografia.** Serian veinte `<dialog>` montados para que a lo sumo uno se abra. El
+  `fotoId` pendiente vive en estado y el modal es uno.
+- **Confirmar tambien al reordenar o al designar la principal.** Las dos se deshacen repitiendo la
+  accion; pedir confirmacion donde no hace falta entrena a confirmar sin leer, que es lo que vuelve
+  inutil la confirmacion del borrado.
+- **Dejar el aviso junto al boton** en vez de dentro del modal. Dentro es lo ultimo que se lee
+  antes de confirmar, que es cuando importa.
+Anclas: `src/components/GaleriaVehiculo.tsx`, `src/components/RetirarVehiculo.tsx`,
+`src/app/actions/vehiculos.ts::retirarVehiculo`.
+
+### D-29 — La fotografia elegida se ve antes de subirla, y su URL local se revoca
+`GaleriaVehiculo` pinta el archivo recien elegido con `URL.createObjectURL`, sin pasar por el
+servidor, con el aviso de que todavia no se guardo.
+Lo pidio el operador y encaja con D-28: desde que el borrado exige confirmacion y es definitivo,
+subir la fotografia equivocada salio mas caro de deshacer. **No valida nada** a proposito — el tipo
+y el tamano los decide el servidor (D-22), y adelantarlo aqui duplicaria las reglas en dos sitios
+que se desincronizarian.
+La mitad que no se ve: `createObjectURL` **retiene el archivo hasta que se revoca**, y el documento
+vive lo que dure la pantalla. La revocacion va atada al valor en un `useEffect` con limpieza, no a
+un manejador, porque asi un solo mecanismo cubre los tres caminos: elegir otro archivo, subir, y
+salir sin subir nada.
+Descartado:
+- **Leer el archivo de `event.target.files`**, que es lo que el tipo de `FileInput` promete. No
+  funciona: el componente entrega el `File` en `target.value` de un objeto fabricado, asi que
+  `target.files` es `undefined` y la vista previa nunca aparecia, sin ningun error (seccion 86).
+  Se lee con `instanceof File` y no con un cast, porque un `as File` habria compilado igual.
+- **Un `FileReader` con data URL.** Copia el archivo entero a una cadena base64 en memoria, un 33 %
+  mas grande, para mostrar lo mismo.
+Anclas: `src/components/GaleriaVehiculo.tsx::archivoElegido`.
+
+### D-27 — Que variantes se ofrecen lo decide un modulo compartido, no cada pantalla
+`fuentesDeImagen(foto, { anchoMaximo, firmar })` devuelve `{ src, srcSet?, ancho, alto }` ya
+firmados. Cada pantalla declara su tope —catalogo y galeria de administracion {480, 1280}, detalle
+del lote las tres— y el `sizes`, que depende de su maquetacion, se queda en el componente.
+Centralizarlo es lo que evita que las tres pantallas se desincronicen: si cada una armara su
+`srcSet`, el dia que se agregue una variante dos seguirian pidiendo la vieja y **nada lo
+delataria** — las tres seguirian compilando y mostrando imagenes.
+Dos invariantes que el modulo garantiza y que ningun componente podria:
+- **Nunca un `srcSet` de una sola candidata.** En esa rama, `getThumbnailImage` de Eden devuelve
+  `{src, size}` **sin `alt`**, `eden-image` pone `role="presentation"` y el boton que envuelve la
+  miniatura se queda sin nombre accesible. El caso ocurre de verdad: con `withoutEnlargement`, un
+  original de 600 px produce tres variantes del mismo ancho, asi que hay que deduplicar y, si queda
+  una, pasar `src` a secas.
+- **Una firma por variante, reutilizada.** Firmar la menor dos veces —para `src` y dentro del
+  `srcSet`— daba dos cadenas para el mismo objeto, o sea dos entradas de cache del navegador. La
+  cubeta de D-24 hace que hoy coincidan, pero nada lo garantiza.
+Y una limitacion que hay que asumir por escrito: **`eden-grid` reparte con container queries y
+`sizes` no las sabe expresar**, asi que traducir a viewport exige asumir todo el cromo de la
+pagina. La derivacion va escrita junto a los numeros, porque si alguien cambia un padding el
+`sizes` queda mintiendo y **ninguna prueba lo detecta**: el unico sintoma es que las imagenes pesan
+un poco mas o se ven un poco blandas.
+Descartado:
+- **Un ancho de compromiso unico.** Es el estado del que se partio, en su forma extrema: el
+  original a todas las superficies.
+- **`next/image` con un `loader` propio.** El optimizador tendria que alcanzar una URL firmada que
+  caduca, y con variantes pre-generadas no aporta nada.
+- **Pasar `srcset` a la tira de miniaturas.** No hace falta y seria peor: `MediaThumbnailGallery`
+  resuelve el conjunto por su cuenta y le entrega a la miniatura solo la candidata que le sirve,
+  mientras el conjunto completo llega al visor ampliado. Ese reparto es el mayor ahorro de la
+  aplicacion.
+Anclas: `src/lib/media/fuentesDeImagen.ts::fuentesDeImagen`,
+`src/components/RejillaDeLotes.tsx::TAMANOS_DE_TARJETA`, `src/components/GaleriaPublica.tsx`,
+`src/components/GaleriaVehiculo.tsx::TAMANOS_DE_CELDA`.
+
 ## Decisiones de modelo de datos
 
 Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
@@ -753,6 +1194,9 @@ Fuente: `agent_files/modelo-datos-dynamodb.md` seccion 1 (linea 11).
 | `leerVencidasDelDia` y `leerPendientes` leen **una sola pagina**, sin recorrer `LastEvaluatedKey` — **y son las dos unicas** | GSI4 es disperso, las dos leen de lo mas viejo a lo mas nuevo y el barrido es idempotente cada 5 minutos: una pagina truncada es un retraso, no trabajo perdido, porque la corrida siguiente empieza donde la anterior dejo de ver. La cota son ~1 700 solicitudes por corrida. Paginar dentro de una corrida la acercaria a su limite de 300 s sin resolver mas de lo que la siguiente ya resuelve (modelo-datos-dynamodb.md 8.2). **La Etapa 13 acoto la excepcion en el documento** porque leerla como permiso general costo cinco lecturas de fila sin paginar: ninguna de las tres propiedades aplica a la particion `LOTE#<id>`, que conserva sus solicitudes terminales para siempre y por tanto no se autocura (desafios 55) |
 | Todo el resto de las lecturas pagina por **un solo camino**: `src/lib/data/paginacion.ts` | El patron estaba resuelto cuatro veces a mano en `src/lib/auditoria/` y `src/lib/fila/` no lo usaba en ninguna de sus cinco lecturas. El helper **no lleva tope de paginas** a proposito: cortar en silencio es exactamente el defecto que viene a arreglar —`adjudicarLote` escribiendo `FILA_AGOTADA` con candidatos vivos detras—, y quien necesite acotar trabajo acota **resultados**, que es lo unico que quien llama sabe medir. Tampoco lleva `import "server-only"`, porque el Lambda del barrido lo alcanza (desafios 53) |
 | `avalarPago` devuelve el desenlace del cierre de fila **separado** del de la venta | El cierre ocurre fuera de la transaccion (cantidad no acotada, T4) y puede fallar con la venta ya firme. Antes el error se volvia `cerradas: 0` y salia como exito, indistinguible del `0` legitimo de "no habia fila que cerrar" — y sin ninguna linea de registro, asi que nadie podia enterarse. La venta **no se revierte**: lo que se agrega es que el resultado lo delate, que quede registrado y que el barrido lo repare en la corrida siguiente. La cuenta nueva (`filasCerradas`) no entra en `errores`, para no cambiar lo que significa la alarma `vencimientos-sin-resolver` (desafios 56) |
+| El item `FOTO#` lleva `variantes` como **mapa completo y obligatorio**, y `claveS3`/`bytes` del nivel superior son los de la variante mayor | Un array permitiria escribir "tengo `min` y `max` pero no `med`", un estado que no queremos poder representar; obligatorio en vez de opcional porque no hay nada en produccion, asi que no hay dos caminos que mantener para siempre. Que el nivel superior siga apuntando a la mayor es lo que deja intactos a `eliminarFotografia`, `firmarFotografia` y el evento de auditoria (D-22) |
+| Los anchos se guardan **reales por variante**, no se derivan de las constantes | `withoutEnlargement` hace que un original de 600 px produzca tres variantes de 600: un `srcSet` con los anchos nominales le mentiria al navegador. Y el sufijo de la clave es el **nombre** de la variante, no su ancho, para que la clave siga siendo predecible desde el nombre (D-22) |
+| `descripcion` es el unico atributo editable del item `FOTO#`, y vaciarla hace `REMOVE` | Los bytes son inmutables por decision (D-22), asi que el pie es lo unico que cambia. El `Update` va sobre la clave de la fotografia con `attribute_exists(SK)` y **no toca el item `META`**: `actualizadoEn` describe el registro del vehiculo y un pie de foto no lo cambia — meterlo en la transaccion la haria competir con otras escrituras del mismo vehiculo sin ganar nada (D-26) |
 
 Centinelas: vehiculo activo (R-10), fila (R-07), adjudicacion activa (R-09), reserva de turno
 (R18). Transacciones criticas T1–T8 en `modelo-datos-dynamodb.md` seccion 6 (linea 258).
@@ -988,7 +1432,10 @@ En los dos casos la presentacion vive aparte y si es props pura:
   revalida contra el servidor y nunca habilita nada con el reloj del navegador (R-04).
   Ancla: `src/components/CuentaRegresiva.tsx`.
 - URLs firmadas de CloudFront: firmar en SSR, nunca persistir en base de datos ni generar
-  dentro de un bloque `"use cache"`.
+  dentro de un bloque `"use cache"`. El **vencimiento** se redondea a cubetas de una hora sobre
+  el epoch (D-24), y ese redondeo es la excepcion que confirma la regla de zona horaria: una
+  cubeta de una hora es agnostica de zona, asi que aqui `partesEnZonaDeNegocio` no interviene.
+  Que la URL resulte identica dentro de la hora **no** relaja la prohibicion de persistirla.
 Anclas de gating: `src/lib/domain/gating.ts::evaluarVisibilidad`,
 `src/lib/domain/ventanas.ts::faseDeVenta`.
 

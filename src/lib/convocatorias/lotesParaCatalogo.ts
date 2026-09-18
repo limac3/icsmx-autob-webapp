@@ -3,8 +3,13 @@ import "server-only";
 import type { LoteEnCatalogo } from "@/components/RejillaDeLotes";
 import { consultarTamanoFila } from "@/lib/fila/conteosDeFila";
 import { firmarFotografia } from "@/lib/media/cloudfrontSigner";
+import {
+  fuentesDeImagen,
+  type FirmadorDeFotografia,
+} from "@/lib/media/fuentesDeImagen";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import type { Lote } from "@/types/lote";
+import { ANCHOS_DE_VARIANTE } from "@/types/vehiculo";
 
 /**
  * Los lotes de una convocatoria, resueltos para la rejilla del catalogo.
@@ -23,8 +28,11 @@ import type { Lote } from "@/types/lote";
  */
 export const lotesParaCatalogo = async (
   lotes: readonly Lote[],
-): Promise<LoteEnCatalogo[]> =>
-  Promise.all(
+  deps: { firmar?: FirmadorDeFotografia } = {},
+): Promise<LoteEnCatalogo[]> => {
+  const firmar = deps.firmar ?? firmarFotografia;
+
+  return Promise.all(
     lotes.map(async (lote): Promise<LoteEnCatalogo> => {
       const [vehiculo, tamanoFila] = await Promise.all([
         obtenerVehiculo(lote.vehiculoId),
@@ -48,8 +56,19 @@ export const lotesParaCatalogo = async (
         estatus: lote.estatus,
         tamanoFila: tamanoFila.ok ? tamanoFila.data : 0,
         ...(foto
-          ? { fotografiaPrincipalUrl: firmarFotografia(foto.claveS3) }
+          ? {
+              fotografiaPrincipal: fuentesDeImagen(foto, {
+                // **Sin la variante de 2048.** La tarjeta de esta rejilla nunca
+                // pasa de unos 485 px CSS (la cuenta esta en
+                // `RejillaDeLotes.tsx`), asi que solo la pediria una pantalla
+                // de densidad mayor que 4. Ofrecerla seria peso que nadie
+                // necesita, en la pantalla con mas imagenes de la aplicacion.
+                anchoMaximo: ANCHOS_DE_VARIANTE.med,
+                firmar,
+              }),
+            }
           : {}),
       };
     }),
   );
+};

@@ -1,5 +1,5 @@
 import { forbidden, notFound, redirect } from "next/navigation";
-import { H1, H2 } from "@churchofjesuschrist/eden-headings";
+import { H1 } from "@churchofjesuschrist/eden-headings";
 import { Badge } from "@churchofjesuschrist/eden-badge";
 import FormularioVehiculo from "@/components/FormularioVehiculo";
 import GaleriaVehiculo, {
@@ -12,7 +12,9 @@ import { getSession } from "@/lib/auth/session";
 import { modeloMaximo } from "@/lib/domain/vehiculos";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
 import { firmarFotografia } from "@/lib/media/cloudfrontSigner";
+import { fuentesDeImagen } from "@/lib/media/fuentesDeImagen";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
+import { ANCHOS_DE_VARIANTE } from "@/types/vehiculo";
 
 /**
  * Edicion de vehiculo — pantalla 4.2 de `ui-ux-requerimientos.md`.
@@ -55,12 +57,18 @@ const EditarVehiculo = async ({
   const diccionario = obtenerDiccionario(idioma);
 
   // Se firma **por peticion**, aqui, y no se guarda en ningun lado.
+  //
+  // Sin la variante de 2048: esta pantalla no tiene visor ampliado, asi que
+  // nada muestra la fotografia a ese tamano.
   const fotografias: FotografiaEnGaleria[] = vehiculo.fotografias.map(
     (foto) => ({
       fotoId: foto.fotoId,
       orden: foto.orden,
       descripcion: foto.descripcion,
-      url: firmarFotografia(foto.claveS3),
+      fuentes: fuentesDeImagen(foto, {
+        anchoMaximo: ANCHOS_DE_VARIANTE.med,
+        firmar: firmarFotografia,
+      }),
       esPrincipal: foto.fotoId === vehiculo.fotografiaPrincipalId,
     }),
   );
@@ -78,12 +86,15 @@ const EditarVehiculo = async ({
         soloLectura={!puedeEditar.ok}
       />
 
-      <H2>{diccionario.vehiculos.seccionFotografias}</H2>
+      {/* El encabezado "Fotografias" lo pinta `GaleriaVehiculo`, no esta
+          pagina: el boton de agregar va a su lado y es una accion de la
+          seccion, no de la pantalla. */}
       <GaleriaVehiculo
         vehiculoId={vehiculo.vehiculoId}
         fotografias={fotografias}
         diccionario={diccionario}
         puedeEditar={puedeTocarGaleria.ok}
+        idioma={idioma}
       />
 
       {puedeRetirar.ok ? (

@@ -3,15 +3,26 @@ import { TransactionCanceledException } from "@aws-sdk/client-dynamodb";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { agregarFotografia, MAXIMO_FOTOGRAFIAS } from "./agregarFotografia";
+import {
+  agregarFotografia,
+  MAXIMO_FOTOGRAFIAS,
+  type DepsAgregarFotografia,
+} from "./agregarFotografia";
 import type { ActorUsuario } from "./deps";
 import { MAXIMO_BYTES_FOTOGRAFIA } from "@/lib/media/almacenamiento";
+import type { Normalizador } from "@/lib/media/normalizarImagen";
 import {
   comandoDe,
   crearClienteFalso,
   type ClienteFalso,
 } from "@/utils/clienteDynamoFalso";
-import type { Fotografia, VehiculoConFotografias } from "@/types/vehiculo";
+import {
+  ANCHOS_DE_VARIANTE,
+  NOMBRES_DE_VARIANTE,
+  type Fotografia,
+  type VehiculoConFotografias,
+} from "@/types/vehiculo";
+import { clavesDePrueba, fotografiaDePrueba } from "@/utils/fotografiaDePrueba";
 
 vi.mock("server-only", () => ({}));
 
@@ -24,16 +35,7 @@ const actor: ActorUsuario = {
   permisos: ["Autob_Administrar_Vehiculos"],
 };
 
-const foto = (fotoId: string, orden: number): Fotografia => ({
-  fotoId,
-  vehiculoId: "V1",
-  orden,
-  claveS3: `vehiculos/V1/${fotoId}.jpg`,
-  contentType: "image/jpeg",
-  bytes: 1000,
-  subidaEn: "2026-01-10T10:00:00.000Z",
-  subidaPor: "P0",
-});
+const foto = fotografiaDePrueba;
 
 const vehiculo = (
   fotografias: Fotografia[] = [],
@@ -60,7 +62,39 @@ const archivo = {
   contentType: "image/png",
 };
 
-const escenario = () => {
+/**
+ * Normalizador de doble.
+ *
+ * `archivo` son cuatro bytes —la firma de un PNG—, que **no** es una imagen
+ * decodificable, y el normalizador de verdad la rechazaria. Este archivo prueba
+ * la transaccion, el orden de los items, la principal y la compensacion; el
+ * pipeline real se prueba con imagenes de verdad en `normalizarImagen.test.ts`.
+ *
+ * Devuelve anchos crecientes y bytes distintos por variante, que es lo que
+ * permite afirmar que el item guarda los de la variante mayor.
+ */
+const normalizadorFalso: Normalizador = () =>
+  Promise.resolve({
+    ok: true,
+    imagen: {
+      formatoDetectado: "png",
+      variantes: NOMBRES_DE_VARIANTE.map((nombre, indice) => ({
+        nombre,
+        cuerpo: new Uint8Array([indice + 1]),
+        ancho: ANCHOS_DE_VARIANTE[nombre],
+        alto: Math.round((ANCHOS_DE_VARIANTE[nombre] * 3) / 4),
+        bytes: (indice + 1) * 1000,
+      })),
+    },
+  });
+
+const escenario = (
+  normalizar: Normalizador = normalizadorFalso,
+): {
+  dynamo: ClienteFalso;
+  s3: ClienteFalso<S3Client>;
+  deps: DepsAgregarFotografia;
+} => {
   const dynamo = crearClienteFalso();
   const s3 = crearClienteFalso<S3Client>();
   return {
@@ -71,9 +105,13 @@ const escenario = () => {
       s3: s3.cliente,
       ahora: () => AHORA,
       nuevoId: () => ID,
+      normalizar,
     },
   };
 };
+
+/** Las tres claves que produce una subida, del mas chico al mas grande. */
+const clavesEsperadas = clavesDePrueba(ID);
 
 const itemsDeTransaccion = (
   falso: ClienteFalso,
@@ -93,15 +131,30 @@ afterEach(() => {
 });
 
 describe("subida correcta", () => {
-  it("sube el objeto con la clave que arma el servidor", async () => {
+  it("sube las tres variantes, con las claves que arma el servidor", async () => {
     const { s3, deps } = escenario();
     await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
 
-    expect(s3.comandos[0]?.nombre).toBe("PutObjectCommand");
-    expect(s3.comandos[0]?.input).toMatchObject({
-      Key: `vehiculos/V1/${ID}.png`,
-      ContentType: "image/png",
-    });
+    expect(s3.comandos.map((c) => c.nombre)).toEqual([
+      "PutObjectCommand",
+      "PutObjectCommand",
+      "PutObjectCommand",
+    ]);
+    expect(s3.comandos.map((c) => (c.input as { Key: string }).Key)).toEqual(
+      clavesEsperadas,
+    );
+  });
+
+  it("cada variante se guarda como WebP inmutable", async () => {
+    const { s3, deps } = escenario();
+    await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
+
+    for (const comando of s3.comandos) {
+      expect(comando.input).toMatchObject({
+        ContentType: "image/webp",
+        CacheControl: "public, max-age=31536000, immutable",
+      });
+    }
   });
 
   it("escribe el item de fotografia con el orden en la clave", async () => {
@@ -116,10 +169,38 @@ describe("subida correcta", () => {
       SK: `FOTO#0003#${ID}`,
       fotoId: ID,
       orden: 3,
-      claveS3: `vehiculos/V1/${ID}.png`,
-      contentType: "image/png",
-      bytes: 4,
+      // `claveS3` y `bytes` del item son los de la variante **mayor**: lo que
+      // firma, borra y audita el resto del codigo no sabe de variantes.
+      claveS3: `vehiculos/V1/${ID}-max.webp`,
+      contentType: "image/webp",
+      bytes: 3000,
       subidaPor: "P1",
+    });
+  });
+
+  it("guarda las tres variantes con su ancho medido", async () => {
+    const { dynamo, deps } = escenario();
+    await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
+
+    expect(itemsDeTransaccion(dynamo)[0]?.Put?.Item?.variantes).toEqual({
+      min: {
+        claveS3: `vehiculos/V1/${ID}-min.webp`,
+        ancho: 480,
+        alto: 360,
+        bytes: 1000,
+      },
+      med: {
+        claveS3: `vehiculos/V1/${ID}-med.webp`,
+        ancho: 1280,
+        alto: 960,
+        bytes: 2000,
+      },
+      max: {
+        claveS3: `vehiculos/V1/${ID}-max.webp`,
+        ancho: 2048,
+        alto: 1536,
+        bytes: 3000,
+      },
     });
   });
 
@@ -130,8 +211,29 @@ describe("subida correcta", () => {
     const { s3, dynamo, deps } = escenario();
     await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
 
-    expect(s3.comandos).toHaveLength(1);
+    expect(s3.comandos).toHaveLength(3);
     expect(dynamo.comandos).toHaveLength(1);
+  });
+
+  it("normaliza antes de tocar S3: lo que no es imagen no escribe nada", async () => {
+    // El fallo mas probable de este camino, y por eso va primero: ocurriendo
+    // antes del primer `PutObject` no hay nada que compensar.
+    const { s3, dynamo, deps } = escenario(() =>
+      Promise.resolve({ ok: false, motivo: "no_decodificable" }),
+    );
+
+    const resultado = await agregarFotografia(
+      { actual: vehiculo(), archivo, actor },
+      deps,
+    );
+
+    expect(resultado).toEqual({
+      ok: false,
+      error: "validation_failed",
+      detalles: { archivo: "no_decodificable" },
+    });
+    expect(s3.comandos).toHaveLength(0);
+    expect(dynamo.comandos).toHaveLength(0);
   });
 
   it("escribe el evento en la misma transaccion", async () => {
@@ -298,7 +400,7 @@ describe("rechazos, sin tocar S3", () => {
 });
 
 describe("compensacion", () => {
-  it("borra el objeto de S3 si la transaccion se cancela", async () => {
+  it("borra las tres variantes si la transaccion se cancela", async () => {
     // Sin esto, cada fallo dejaria basura permanente en un bucket versionado.
     const dynamo = crearClienteFalso({
       lanza: new TransactionCanceledException({
@@ -319,16 +421,64 @@ describe("compensacion", () => {
         s3: s3.cliente,
         ahora: () => AHORA,
         nuevoId: () => ID,
+        normalizar: normalizadorFalso,
       },
     );
 
     expect(resultado).toEqual({ ok: false, error: "invalid_state" });
     expect(s3.comandos.map((c) => c.nombre)).toEqual([
       "PutObjectCommand",
+      "PutObjectCommand",
+      "PutObjectCommand",
+      "DeleteObjectCommand",
+      "DeleteObjectCommand",
       "DeleteObjectCommand",
     ]);
-    expect(s3.comandos[1]?.input).toMatchObject({
-      Key: `vehiculos/V1/${ID}.png`,
+    expect(
+      s3.comandos.slice(3).map((c) => (c.input as { Key: string }).Key),
+    ).toEqual(clavesEsperadas);
+  });
+
+  it("un fallo parcial de S3 borra solo lo que alcanzo a escribir", async () => {
+    // Caso nuevo desde que una fotografia son tres objetos: si la tercera
+    // subida falla, quedan dos huerfanos. La lista de claves a borrar se
+    // acumula con lo escrito, no se deriva de las variantes.
+    const dynamo = crearClienteFalso();
+    const s3 = crearClienteFalso<S3Client>();
+
+    let subidas = 0;
+    const original = s3.cliente.send.bind(s3.cliente);
+    s3.cliente.send = ((comando: unknown) => {
+      const nombre = (comando as { constructor: { name: string } }).constructor
+        .name;
+      if (nombre === "PutObjectCommand") {
+        subidas += 1;
+        if (subidas === 3) return Promise.reject(new Error("S3 caido"));
+      }
+      return original(comando as never);
+    }) as typeof s3.cliente.send;
+
+    const resultado = await agregarFotografia(
+      { actual: vehiculo(), archivo, actor },
+      {
+        cliente: dynamo.cliente,
+        s3: s3.cliente,
+        ahora: () => AHORA,
+        nuevoId: () => ID,
+        normalizar: normalizadorFalso,
+      },
+    );
+
+    expect(resultado).toEqual({
+      ok: false,
+      error: "dependencia_no_disponible",
     });
+    // Dos borrados, no tres: la que fallo nunca se escribio.
+    const borrados = s3.comandos
+      .filter((c) => c.nombre === "DeleteObjectCommand")
+      .map((c) => (c.input as { Key: string }).Key);
+    expect(borrados).toEqual(clavesEsperadas.slice(0, 2));
+    // Y nada en DynamoDB: no hay item que apunte a objetos a medias.
+    expect(dynamo.comandos).toHaveLength(0);
   });
 });

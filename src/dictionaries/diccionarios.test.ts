@@ -272,7 +272,6 @@ describe("ortografia del diccionario en espanol", () => {
       "Estatus",
       "Principal",
       "Borrador",
-      "JPG, PNG o WEBP, hasta 10 MB.",
       "Actor",
       // `modalidadesAdjudicacionBreve.MANUAL`. La forma larga si difiere
       // ("una persona decide" / "a person decides"); es la breve la que

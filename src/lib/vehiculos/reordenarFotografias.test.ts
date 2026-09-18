@@ -13,6 +13,7 @@ import {
   type ClienteFalso,
 } from "@/utils/clienteDynamoFalso";
 import type { Fotografia, VehiculoConFotografias } from "@/types/vehiculo";
+import { fotografiaDePrueba } from "@/utils/fotografiaDePrueba";
 
 vi.mock("server-only", () => ({}));
 
@@ -24,16 +25,7 @@ const actor: ActorUsuario = {
   permisos: ["Autob_Administrar_Vehiculos"],
 };
 
-const foto = (fotoId: string, orden: number): Fotografia => ({
-  fotoId,
-  vehiculoId: "V1",
-  orden,
-  claveS3: `vehiculos/V1/${fotoId}.jpg`,
-  contentType: "image/jpeg",
-  bytes: 1000,
-  subidaEn: "2026-01-10T10:00:00.000Z",
-  subidaPor: "P0",
-});
+const foto = fotografiaDePrueba;
 
 const vehiculo = (fotografias: Fotografia[]): VehiculoConFotografias => ({
   numeroEconomico: "VEH-001",
@@ -48,6 +40,10 @@ const vehiculo = (fotografias: Fotografia[]): VehiculoConFotografias => ({
   creadoPor: "P0",
   actualizadoEn: "2026-01-10T10:00:00.000Z",
   actualizadoPor: "P0",
+  // La principal es la primera: es el invariante que mantiene este servicio, y
+  // partir de un vehiculo que ya lo cumple es lo que hace que las pruebas de
+  // abajo midan el cambio y no el arranque.
+  fotografiaPrincipalId: fotografias[0]?.fotoId,
   fotografias,
 });
 
@@ -138,11 +134,16 @@ describe("reordenamiento", () => {
       deps(falso),
     );
 
+    // **Incluidas las variantes.** Hoy sobreviven porque el `Put` se arma con
+    // un spread de la `Fotografia` completa. Si alguien convirtiera ese spread
+    // en una lista de campos, reordenar borraria las variantes en silencio y la
+    // galeria se quedaria muda sin que nada lo delatara.
     expect(itemsDeTransaccion(falso)[1]?.Put?.Item).toMatchObject({
       fotoId: "F3",
-      claveS3: "vehiculos/V1/F3.jpg",
-      contentType: "image/jpeg",
+      claveS3: "vehiculos/V1/F3-max.webp",
+      contentType: "image/webp",
       subidaPor: "P0",
+      variantes: foto("F3", 3).variantes,
     });
   });
 
@@ -229,9 +230,123 @@ describe("rechazos", () => {
   });
 
   it("el tope de movimientos cabe en una transaccion", () => {
-    // Cada movimiento son dos items, mas el evento. Si el calculo se
-    // desincronizara del limite real, el fallo seria una excepcion del SDK en
-    // vez de un error de dominio.
-    expect(MAXIMO_MOVIMIENTOS * 2 + 1).toBeLessThanOrEqual(100);
+    // Cada movimiento son dos items, mas el evento **y** el `Update` de la
+    // principal. Si el calculo se desincronizara del limite real, el fallo
+    // seria una excepcion del SDK en vez de un error de dominio.
+    expect(MAXIMO_MOVIMIENTOS * 2 + 2).toBeLessThanOrEqual(100);
+  });
+});
+
+/**
+ * La principal es la primera de la galeria.
+ *
+ * Desde que la pantalla 4.2 cambio el orden y la designacion por un solo campo,
+ * mover una fotografia al frente **es** designarla. Se mantiene aqui, en la
+ * transaccion del reordenamiento, porque hacerlo aparte dejaria dos fuentes de
+ * verdad para lo mismo — y un reordenamiento a medias mostrando en el listado
+ * una fotografia que ya no esta primero.
+ */
+describe("la principal sigue a la primera posicion", () => {
+  const actualizacionDelVehiculo = (falso: ClienteFalso) =>
+    itemsDeTransaccion(falso).find((item) => item.Update?.Key?.SK === "META")
+      ?.Update;
+
+  it("mover una al frente la designa principal, en la misma transaccion", async () => {
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      { actual: vehiculo(tres), ordenFotoIds: ["F3", "F2", "F1"], actor },
+      deps(falso),
+    );
+
+    expect(falso.comandos.map((c) => c.nombre)).toEqual([
+      "TransactWriteCommand",
+    ]);
+    expect(actualizacionDelVehiculo(falso)).toMatchObject({
+      ExpressionAttributeValues: { ":fotoId": "F3" },
+      ExpressionAttributeNames: { "#principal": "fotografiaPrincipalId" },
+    });
+  });
+
+  it("exige que el vehiculo siga en su estatus", async () => {
+    // Misma condicion que el resto de las escrituras sobre el vehiculo: si
+    // cambio de estatus mientras se reordenaba, la transaccion se cancela.
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      { actual: vehiculo(tres), ordenFotoIds: ["F3", "F2", "F1"], actor },
+      deps(falso),
+    );
+
+    expect(actualizacionDelVehiculo(falso)?.ConditionExpression).toBe(
+      "attribute_exists(PK) AND #estatus = :estatusEsperado",
+    );
+  });
+
+  it("un reordenamiento que no toca la cabeza no escribe el vehiculo", async () => {
+    // Intercambiar la segunda con la tercera no cambia quien representa al
+    // vehiculo, asi que no hay razon para mover su `actualizadoEn` ni para
+    // competir con otras escrituras suyas.
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      { actual: vehiculo(tres), ordenFotoIds: ["F1", "F3", "F2"], actor },
+      deps(falso),
+    );
+
+    expect(actualizacionDelVehiculo(falso)).toBeUndefined();
+  });
+
+  it("la bitacora dice que la principal cambio, con el antes y el despues", async () => {
+    // Sin esto, reconstruir quien era la principal en una fecha exigiria
+    // replicar la regla de "la primera de la lista" al leer la bitacora.
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      { actual: vehiculo(tres), ordenFotoIds: ["F3", "F2", "F1"], actor },
+      deps(falso),
+    );
+
+    const items = itemsDeTransaccion(falso);
+    expect(items[items.length - 1]?.Put?.Item?.datos).toMatchObject({
+      campos: ["ordenFotografias", "fotografiaPrincipalId"],
+      anterior: "F1",
+      nueva: "F3",
+    });
+  });
+
+  it("si la cabeza no cambia, el evento no menciona la principal", async () => {
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      { actual: vehiculo(tres), ordenFotoIds: ["F1", "F3", "F2"], actor },
+      deps(falso),
+    );
+
+    const items = itemsDeTransaccion(falso);
+    expect(items[items.length - 1]?.Put?.Item?.datos).toMatchObject({
+      campos: ["ordenFotografias"],
+    });
+    expect(items[items.length - 1]?.Put?.Item?.datos).not.toHaveProperty(
+      "nueva",
+    );
+  });
+
+  it("un vehiculo sin principal la gana al primer reordenamiento", async () => {
+    // Puede pasar con datos viejos: el puntero ausente no deja al listado sin
+    // imagen para siempre, lo arregla el primer reordenamiento.
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      {
+        actual: { ...vehiculo(tres), fotografiaPrincipalId: undefined },
+        ordenFotoIds: ["F2", "F1", "F3"],
+        actor,
+      },
+      deps(falso),
+    );
+
+    expect(actualizacionDelVehiculo(falso)).toMatchObject({
+      ExpressionAttributeValues: { ":fotoId": "F2" },
+    });
+    const items = itemsDeTransaccion(falso);
+    expect(items[items.length - 1]?.Put?.Item?.datos).toMatchObject({
+      anterior: null,
+      nueva: "F2",
+    });
   });
 });

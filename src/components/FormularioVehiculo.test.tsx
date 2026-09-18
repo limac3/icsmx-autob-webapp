@@ -14,7 +14,6 @@ import FormularioVehiculo from "./FormularioVehiculo";
 // un modulo sin I/O. Solo se simula lo que arrastra el grafo del servidor.
 vi.mock("@/app/actions/vehiculos", () => ({
   guardarVehiculoDesdeFormulario: vi.fn(),
-  retirarVehiculoDesdeFormulario: vi.fn(),
 }));
 
 const context = getTestContext();

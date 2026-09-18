@@ -52,10 +52,46 @@ entregables estan hechos y su compuerta de calidad pasa en verde.
 > cerrada. Compuerta de calidad completa verificada en esta conversacion: `typecheck`,
 > `verify:rapido` (2470 pruebas) y `build`, los tres en verde.
 >
-> Siguiente: **cerrar los puntos `[OPERADOR]` de las Etapas 5 a 12 y 15** —ninguno es codigo,
-> todos exigen sandbox desplegado y login Okta real— o, si el operador prefiere seguir
-> avanzando en codigo, definir el proximo frente de alcance: el plan no tiene mas etapas
-> pendientes despues de la 16.
+> **2026-09-17, mas tarde — el bloqueo comun de los puntos `[OPERADOR]` desaparecio.** Existe un
+> entorno desplegado (app de Amplify Hosting `d2i0gloex3vqjp`, rama `main`) con login real contra
+> Okta, y el operador lo recorre con el conmutador de identidad. Eso cierra por evidencia cuatro
+> puntos que estaban pendientes solo por falta de entorno: el **recorrido real contra Okta**
+> (Etapa 2), el **recorrido con el conmutador** (Etapa 2.2), la **revision visual del encabezado
+> y el pie** (Etapa 10.1) —que encontro un defecto real, el menu angosto expandiendose hacia los
+> lados— y el **despliegue** de la Etapa 12.
+>
+> Los que quedan ya no comparten una sola causa, y conviene leerlos por separado:
+>
+> - **Falta mirar la pantalla**: axe y responsividad de pantallas completas y revision visual de
+>   `/auditoria` (Etapas 11, 12), etiquetas legibles con datos reales (11.1), alta de vehiculo
+>   con fotografias (5), consola sin violaciones de CSP (2.1).
+> - **Falta ejercitar el ciclo, no verlo**: la **prueba de humo con dos identidades** (12, R-14
+>   paso 7) y la **convocatoria manual de punta a punta** (15).
+> - **Falta correr algo contra AWS**: calibrar `UMBRAL_CONFLICTOS_POR_PERIODO` con la carga
+>   (12) y **disparar una alarma de verdad** para comprobar que el aviso llega (12, R-11 paso 6).
+> - **Falta una decision del negocio, no una prueba**: si el numero economico y el de serie son
+>   el mismo dato (11.2).
+> - **Lo que el entorno desplegado *no* cubre**: corre con `ENABLE_DEV_TOOLS=FULL`, asi que los
+>   permisos salen del roster simulado y **el adaptador real de EAS sigue sin ejercitarse**.
+>
+> Siguiente: la prueba de humo con dos identidades y el recorrido manual de la Etapa 15 son los
+> de mas valor —son los unicos que comprueban un ciclo completo a traves de la pantalla—; el mas
+> urgente en riesgo operativo es disparar una alarma, porque las seis estan verificadas por
+> sintesis pero nadie ha comprobado que el aviso **llegue**.
+>
+> **2026-09-18 — Etapa 17, a peticion del operador sobre el entorno desplegado.** El primer uso
+> real de las fotografias destapo dos defectos que ninguna prueba podia ver: se servia el byte
+> original a todas las superficies, incluida una tira de miniaturas de 100x100 px, y la firma de
+> CloudFront vencia antes de que el visor ampliado se montara. Codigo completo y en verde (2573
+> pruebas); lo que queda son puntos `[OPERADOR]` del entorno desplegado, y **uno de ellos hay que
+> hacerlo antes de desplegar**: tirar las fotografias de prueba, porque despues ya no se pueden
+> borrar desde la UI.
+>
+> El punto de mas riesgo de esa etapa **se cubre solo**: si `sharp` no quedo trazado, el build de
+> Amplify falla en vez de dar 500 en cada subida. Y hay uno que puede invalidar parte del trabajo
+> y conviene atender pronto: comprobar que una subida de ~8 MB llega de verdad al servidor, porque
+> si el computo SSR va por una Function URL con respuesta buffered el tope real son 6 MB y el de
+> 10 MB que la aplicacion promete estaria roto en silencio.
 
 ---
 
@@ -209,8 +245,13 @@ datos de negocio aun.
 - [x] Un usuario con sesion pero sin permisos recibe 403, no 500 — mecanismo verificado
       (`forbidden()` + `experimental.authInterrupts`, documentado por Next.js; `build` confirma
       que compila)
-- [ ] **Recorrido real contra Okta.** Exige una sesion real de un tenant de prueba, que no existe
-      en este entorno. **[OPERADOR]** — pendiente desde el cierre original de la etapa
+- [x] **Recorrido real contra Okta.** Cerrado el 2026-09-17: existe el tenant de prueba
+      (`trial-9964792.okta.com`) y el operador entra con el en el entorno desplegado de `main`.
+      El bloqueo original —"no existe una sesion real en este entorno"— caduco.
+      **Lo que este recorrido no cubre, y hay que no confundir:** ese entorno corre con
+      `ENABLE_DEV_TOOLS=FULL` y `APP_ENV=pruebas`, asi que la sesion de Okta es real pero los
+      **permisos salen del roster simulado**, no de EAS. El camino real de EAS sigue sin
+      ejercitarse contra el adaptador de produccion
 - [x] Cobertura de allow y deny para cada permiso
 
 **Salida esperada:** login real contra Okta y decisiones de permiso probadas de forma aislada.
@@ -363,8 +404,12 @@ comprobante, tesoreria— cambiando de actor sin reiniciar y con varios particip
 - [x] El roster alcanza el catalogo completo de permisos, y separa en identidades distintas a
       quien administra convocatorias de quien las aprueba — sin eso el dictamen seguiria sin
       poder probarse
-- [ ] **[OPERADOR]** recorrido manual del flujo completo con el conmutador. Exige el login real
-      contra Okta, que sigue siendo el pendiente de la Etapa 2
+- [x] **[OPERADOR]** recorrido manual del flujo completo con el conmutador — 2026-09-17. El
+      login real contra Okta que este punto esperaba ya existe (Etapa 2), y el conmutador se
+      ejercito en el entorno desplegado de `main` (`ENABLE_DEV_TOOLS=FULL`, `APP_ENV=pruebas`)
+      con al menos las identidades de **administrador** y de **auditor**: cada una vio
+      exactamente las secciones de su permiso. La impersonacion, que se diseno para local,
+      resulto ser lo que hace utilizable un entorno de pruebas desplegado
 
 **Salida esperada:** el flujo completo recorrible en local, y la impersonacion imposible de
 activar en produccion.
@@ -1112,8 +1157,12 @@ solo ofrece lo que cada persona puede usar.
       donde `puedeEjecutar` deniega por falta de capacidad
 - [x] Todo `href` del menu corresponde a una ruta que existe en `src/app`
 - [x] Los permisos de la sesion no cruzan al cliente (verificado sobre las props del menu)
-- [ ] **[OPERADOR]** revision visual en navegador: encabezado y pie de Eden dibujados, menu
-      colapsando en movil. Ni `build` ni jsdom lo sustituyen
+- [x] **[OPERADOR]** revision visual en navegador: encabezado y pie de Eden dibujados, menu
+      colapsando en movil — 2026-09-17, con capturas del operador en pantalla angosta y con el
+      perfil de auditor (el de mas secciones). **Y valio exactamente por lo que este punto
+      decia:** encontro un defecto que ninguna prueba en jsdom podia ver —el menu colapsado se
+      expandia hacia los lados y empujaba el nombre de usuario fuera de la pantalla—, corregido
+      en `84902ae` (ver `ui-ux-requerimientos.md` 2)
 
 **Salida esperada:** las once pantallas ya construidas, alcanzables desde un menu que respeta
 los permisos.
@@ -1523,10 +1572,17 @@ nombres. **Cumplida.**
 - [x] Diccionarios completos, sin claves faltantes — ya garantizado por dos mecanismos; se
       verifico y se documento cual cubre que
 - [ ] **[OPERADOR]** `runbooks.md` verificado ejecutando cada procedimiento al menos una vez
-- [ ] **[OPERADOR]** Despliegue a produccion y prueba de humo — procedimiento en `runbooks.md`
-      **R-14**. Lo primero que falta no es de AWS: **el repositorio no tiene remoto**, y Amplify
-      Hosting construye desde un repositorio conectado. Verificado el 2026-09-10: no existe
-      ninguna app de Amplify Hosting de este proyecto; lo desplegado es un sandbox personal
+- [x] **[OPERADOR]** Despliegue del entorno — hecho. Existe la app de Amplify Hosting
+      `d2i0gloex3vqjp` con la rama `main` conectada a un remoto y su backend desplegado; el
+      ultimo job cerro en `SUCCEED` el 2026-09-17. La nota del 2026-09-10 que decia que **el
+      repositorio no tiene remoto** y que lo unico desplegado era un sandbox personal **caduco**.
+      Es un entorno de **pruebas**, no de produccion: `APP_ENV=pruebas` y
+      `ENABLE_DEV_TOOLS=FULL`, que es lo que permite recorrerlo con el conmutador de identidad
+- [ ] **[OPERADOR]** **Prueba de humo del ciclo completo** — sigue pendiente, y no es lo mismo
+      que el despliegue. `runbooks.md` **R-14 paso 7** la define y exige **dos identidades
+      distintas**: R-05 impide aprobar la propia convocatoria y una fila de un solo participante
+      no tiene orden. Con el conmutador se recorre con una sola persona en dos navegadores
+      (la cookie es por navegador). Recorrido en **R-12**
 
 **Verificacion:**
 
@@ -1538,7 +1594,9 @@ nombres. **Cumplida.**
       TLS y no por DynamoDB
 - [ ] **[OPERADOR]** Repetir la carga desde el entorno desplegado y **calibrar
       `UMBRAL_CONFLICTOS_POR_PERIODO`** con la metrica `TransactionConflict` de CloudWatch — ver
-      la nota de abajo sobre por que esta corrida no alcanza para calibrarlo
+      la nota de abajo sobre por que esta corrida no alcanza para calibrarlo. **Ya no esta
+      bloqueado por falta de entorno** (2026-09-17): es una corrida de `npm run carga:apertura`
+      apuntando al entorno desplegado, mas leer la metrica
 - [ ] **[OPERADOR]** Cada runbook ejecutado y corregido si su procedimiento no coincide con la
       realidad
 
@@ -2150,6 +2208,267 @@ intentos, registrados para que la organizacion decida.
 > la apertura ahora entra con todo derecho. No es un defecto —la condicion sigue comparando el
 > reloj real en el momento de escribir— pero mueve unos milisegundos el `solicitadoEn` de todo el
 > mundo por igual, y quien lea esa evidencia en terminos absolutos tiene que saberlo.
+
+---
+
+## Etapa 17 — Fotografias: normalizar al subir, servir la variante que toca, pie editable
+
+**Objetivo:** que el catalogo y el detalle de un lote dejen de descargar decenas de MB, que las
+fotografias dejen de desaparecer, y que la descripcion de una foto se pueda corregir sin borrar la
+foto.
+
+**Origen:** reporte del operador — *"las paginas cargan pesadas, hay fotos que no se ven, hay
+lentitud en la descarga o presentacion"*, y por separado *"la descripcion debe estar limitada en
+longitud [...] hoy dia no es editable y deberia poderse cambiar al editar el vehiculo"*.
+
+**Las dos causas raiz eran independientes**, y conviene que quede dicho porque los sintomas se
+confundian:
+
+1. **Se subia el byte original sin transformacion y todas las superficies pedian la misma URL.** No
+   existia resize, recompresion, miniatura ni strip de EXIF en ninguna parte; el escalado era
+   puramente CSS. Una foto de celular de 8 MB se descargaba entera para pintarse en la tira de
+   miniaturas de 100x100 px, y con `MAXIMO_FOTOGRAFIAS = 20` el detalle de un lote pasaba de 100 MB.
+2. **La firma de CloudFront vencia a los 10 minutos y el visor ampliado de Eden se monta al hacer
+   clic, no al renderizar.** Leer una ficha y abrir las fotos once minutos despues daba 403
+   garantizado. Y como la firma se recalculaba en cada render, la URL cambiaba siempre y el cache
+   del navegador **nunca acertaba**: volver al catalogo re-descargaba todo.
+
+**Decision de alcance:** no hay nada en produccion y las fotografias del entorno desplegado son de
+prueba, asi que **no hay relleno, ni migracion, ni rama de compatibilidad para items viejos**. Eso
+es lo que permite `variantes` **obligatorio** en vez de un campo opcional con dos caminos que habria
+que mantener y probar para siempre.
+
+- [x] **Firma cacheable y `Cache-Control`** — entrega independiente del resto; arregla "no se ven"
+      sin tocar una sola imagen
+  - [x] `vencimientoDeFirma(ahora)` en cubetas de una hora mas una de gracia, sustituyendo
+        `VIGENCIA_DE_FIRMA_MS`. El redondeo es sobre el epoch, no sobre la hora local: la regla 9
+        no interviene, y hay que decirlo o alguien lo "arregla" con `Intl`
+  - [x] `Cache-Control: public, max-age=31536000, immutable` en las fotografias, como **parametro**
+        de `guardarObjeto` y no como constante — la misma funcion guarda comprobantes, y esos no
+        deben salir `public`
+  - [x] `cachePolicy: CachePolicy.CACHING_OPTIMIZED` explicita en `amplify/almacenamiento.ts`. Se
+        heredaba por omision y **todo el esquema dependia de esa herencia**: una politica que
+        incluyera query strings en la clave de cache convertiria cada render en MISS de borde
+  - [x] Dos pruebas **reemplazadas** en `cloudfrontSigner.test.ts`: la que fijaba los diez minutos,
+        y la que separaba dos instantes 60 s — o sea la misma cubeta — y habria fallado
+- [x] **Desbloquear `sharp` en el despliegue, antes de escribir codigo que dependa de el.** Era el
+      riesgo principal de todo el trabajo y era real, no hipotetico: habria funcionado en local y
+      dado 500 en cada subida desplegada. Causa y remedio completos en
+      `desafios-implementacion.md` 84
+  - [x] `sharp` en version exacta sin `^` — el par con `@img/sharp-libvips-*` esta acoplado a
+        nivel de ABI
+  - [x] `outputFileTracingIncludes` en `next.config.ts` con los `@img/*` de Linux, y el motivo
+        escrito al lado: es exactamente la clase de linea que alguien borra en un ano
+  - [x] `scripts/verificar-sharp.mjs` en `amplify.yml` despues del build — compuerta de build, no
+        test de Vitest: exige el `.so` en el `.nft.json` y hace un round-trip real en el contenedor
+        Linux
+- [x] **Normalizar en la subida**, con el original descartado
+  - [x] `src/lib/media/normalizarImagen.ts` — `concurrency(1)` y `cache(false)` (en un Lambda de
+        1-2 vCPU, 22 hilos de libvips solo agregan contencion), `failOn: "error"` para no rechazar
+        JPEGs truncados de telefono que son utilizables, `limitInputPixels` explicito contra bombas
+        de descompresion, `.rotate()` para hornear la orientacion, y tres variantes **en serie y
+        desde el origen** — en paralelo se triplica el pico de memoria por 300 ms, y en cascada se
+        pierde el `shrink-on-load` del decodificador y se apilan perdidas de recompresion
+  - [x] `variantes` obligatorio en `Fotografia`, mapa completo y no lista
+  - [x] `aFotografia` descarta la fotografia si las variantes faltan o estan malformadas, **sin
+        rellenar con ceros** — un `ancho ?? 0` daria `width="0"`, el fallback silencioso que la
+        regla 15 prohibe
+  - [x] **Validacion de contenido real, que no existia:** el `contentType` venia de `File.type`, o
+        sea del navegador; ahora se compara con el formato que dice el decodificador
+  - [x] `agregarFotografia` reordenado a `guardas baratas → normalizar → S3 x3 → TransactWrite`:
+        normalizar antes de tocar S3 hace que el fallo mas probable —no es una imagen— no requiera
+        compensacion. Las claves escritas se **acumulan en una variable**, no se derivan de las
+        variantes, para no borrar en el camino de error claves que nunca se escribieron
+  - [x] El normalizador entra por `deps`: el fixture de `agregarFotografia.test.ts` son cuatro
+        bytes de firma PNG, no una imagen decodificable, asi que sus pruebas del camino feliz
+        habrian fallado. El pipeline real se prueba aparte, con fixtures generadas en memoria
+  - [x] **La prueba de EXIF, escrita primero**: es la que valida lo que el operador no pidio y lo
+        mas importante que este cambio arregla — el EXIF publicaba las coordenadas GPS del patio
+- [x] **Servir la variante que toca**
+  - [x] `src/lib/media/fuentesDeImagen.ts` — centraliza que se firma por pantalla, para que las
+        tres no se desincronicen, y **nunca emite un `srcSet` de una sola candidata**
+        (`desafios-implementacion.md` 85)
+  - [x] Catalogo acotado a {480, 1280}; detalle del lote con las tres; galeria de administracion a
+        {480, 1280}
+  - [x] **Las tres primeras tarjetas del catalogo `eager` + `fetchPriority="high"`** — el LCP de
+        esa pantalla es la primera fotografia y estaba marcada `lazy`, que es el antipatron conocido
+- [ ] **`[OPERADOR]` Tirar las fotografias de prueba, y hacerlo *antes* de desplegar.** Con
+      `variantes` obligatorio, `aFotografia` las descarta y dejan de aparecer en las galerias; el
+      item sigue en DynamoDB con `fotografiaPrincipalId` apuntandole, asi que **ya no se pueden
+      borrar desde la UI**. Borrarlas antes no cuesta nada; despues exige un par de comandos de AWS
+      sueltos. No lleva script ni runbook: es una limpieza unica de datos desechables
+- [x] **La descripcion se acota y se puede editar** — independiente de todo lo anterior: no toca
+      sharp, ni las variantes, ni la firma
+  - [x] El tope baja de 200 a **120** y **se mueve** a `LIMITES` de `src/lib/domain/vehiculos.ts`:
+        deja de ser el detalle de un servicio para ser una regla de dominio que consumen dos
+        servicios y la UI
+  - [x] `src/lib/vehiculos/editarDescripcionFotografia.ts`, calcado de `marcarFotografiaPrincipal`
+        —el analogo exacto—, con sus dos decisiones heredadas: `not_found` contra la galeria leida
+        antes de escribir, y **sin evento si no hubo cambio**
+  - [x] Vaciar hace `REMOVE #descripcion`, no `SET` a `""`: son dos `UpdateExpression` distintas
+        segun el valor nuevo, no una con truco
+  - [x] Evento `VEHICULO_EDITADO` con el `fotoId` en `datos`, **sin tipo nuevo**, y permiso
+        `vehiculo:subir-fotografia`, **sin permiso nuevo** — un permiso para "cambiar un pie de
+        foto" fragmentaria una capacidad que se concede junta (regla 17). Por eso esta etapa **no**
+        toca `permission-matrix.md`
+  - [x] Formulario en linea en `GaleriaVehiculo`, abierto para una sola foto a la vez
+- [x] **Segunda vuelta sobre la pantalla de edicion, con el operador ya usandola.** La primera
+      entrega era correcta y se usaba mal; lo que sigue son cinco correcciones que solo aparecen
+      al tener la pantalla enfrente
+  - [x] **El pie se ve sin abrir nada**, en un campo de solo lectura debajo de su fotografia con el
+        boton de editar al lado. Antes solo existia dentro del formulario de edicion: en una
+        galeria de veinte, saber que decia cada una obligaba a abrirlas de una en una. Sin pie, el
+        boton dice "Agregar descripcion"
+  - [x] **El tope de 120 se aplica en el campo y antes de guardar**, no solo en el servidor. El
+        campo pasa a `TextArea` porque el `maxLength` de `Input` es inusable por sus tipos, y la
+        comprobacion previa existe porque `maxLength` **no recorta un valor que ya venia largo**:
+        sin ella, un pie capturado antes de que el tope bajara se mandaba, volvia rechazado y se
+        perdia lo escrito. Mas un contador `N / 120` que mide recortado, igual que el servidor
+  - [x] **Vista previa de la fotografia elegida**, antes de guardarla, con su URL local revocada en
+        los tres caminos —elegir otra, subir, salir sin subir—. Destapo que el `onChange` de
+        `FileInput` **no entrega lo que su tipo promete** (`desafios-implementacion.md` 86)
+  - [x] **Eliminar pide confirmacion** en un `DialogModal`, con el aviso de que es definitivo. Uno
+        solo para la galeria y montado bajo demanda, no uno por fotografia
+  - [x] **El retiro del catalogo pasa a un boton y un modal**, con el motivo, el aviso de que no se
+        puede deshacer y los dos botones. El campo del motivo estaba suelto en la pantalla con la
+        transicion terminal debajo — el mismo defecto que las convocatorias ya tenian corregido
+  - [x] Se retira `retirarVehiculoDesdeFormulario`, con una prueba que fija la decision
+- [x] **Tercera vuelta: la galeria se rehace minimalista.** La segunda vuelta dejo el pie en un
+      campo de una linea y quedaba recortado; el operador lo reporto con captura. El diagnostico
+      de fondo es de reparto, no de estilo — **la rejilla es para mirar, la edicion va detras de un
+      clic** (decision **D-30** del ADR)
+  - [x] La rejilla queda con fotografias del mismo tamano, el distintivo de principal **dentro** de
+        la imagen, la descripcion **completa** como parrafo y un solo boton, "Editar". El titulo
+        "Fotografias" gana el boton "Agregar" a su lado, asi que el encabezado pasa de la pagina al
+        componente
+  - [x] **Modal de agregar** con `FileInput isDroppable` —arrastrar y soltar es una prop del propio
+        control de Eden; **no existe ningun `InputMedia`**—, vista previa, descripcion y posicion
+  - [x] **Modal de edicion** con la fotografia visible y **sin control de archivo** (los bytes son
+        inmutables), descripcion, posicion, y los botones de guardar, eliminar y cancelar. Guardar
+        escribe solo lo que cambio: cero, una o dos mutaciones
+  - [x] **La posicion 1 es la principal**, y el invariante lo mantiene el servidor:
+        `reordenarFotografias` apunta `fotografiaPrincipalId` a la que queda primera, en la misma
+        transaccion, y solo escribe el item del vehiculo si la cabeza cambia
+  - [x] **Se elimina `marcarFotografiaPrincipal`**, servicio y action: con la principal derivada de
+        la posicion, era la unica forma de romper el invariante. Sin cambios en
+        `permission-matrix.md` — usaba el permiso de subida, que sigue vivo
+  - [x] Salen de la rejilla las flechas de mover y el arrastre. Lo que se conserva es la funcion
+        que calcula el orden resultante, compartida por los dos modales
+  - [x] **Subida de varias fotografias de un tiro** (`FileInput` con `multiple`), con **una
+        peticion por archivo en serie** —es lo que mantiene el tope del cuerpo aplicado por
+        fotografia, y le da a cada alta su transaccion y su evento (decision **D-31**)
+    - [x] El tope de 10 MB se lee como **volumen de la tanda**: si se pasa, no se sube nada y se
+          dice. Tambien se avisa antes de empezar si la tanda pasaria del maximo de 20
+    - [x] `bytesDeFotografia` y `fotografiasPorVehiculo` **se mueven a `LIMITES`** del dominio: son
+          topes que ahora aplica tambien el navegador y vivian en un modulo `server-only`. Las
+          constantes de `almacenamiento.ts` y `agregarFotografia.ts` se derivan de ellas
+    - [x] La descripcion, si se captura, se guarda **igual en todas**; la posicion es la de la
+          **primera** y las demas la siguen, aplicada con un solo `insertarBloque`
+    - [x] **Se pintan todas las elegidas con su nombre**, porque `FileInput` **deduplica por nombre
+          de archivo** y dos fotos distintas llamadas `IMG_0001.jpg` colapsarian a una en silencio
+          (`desafios-implementacion.md` 86). No se puede evitar desde fuera; se hace visible
+    - [x] La galeria **conserva y muestra los `detalles`** del rechazo, traducidos por diccionario.
+          Descartarlos convertia cualquier rechazo en una adivinanza; mostrarlos es lo que
+          encontro la causa del defecto de abajo en minutos
+    - [x] **Corregido el fallo de la subida multiple** (`desafios-implementacion.md` 89): un
+          `.avif` en la tanda la rompia entera. `image/avif` entra a la lista blanca —sharp lo
+          decodifica, estaba fuera porque nadie lo habia pedido— y **la pantalla comprueba el tipo
+          antes de empezar**, marcando el archivo en su miniatura. Decision **D-33**
+    - [x] **Defecto latente encontrado de paso** (`desafios-implementacion.md` 88):
+          `obtenerVehiculo` leia **sin `ConsistentRead`**, y esa lectura alimenta tres calculos de
+          leer-y-decidir. Lo enciende `conVehiculo`, por llamada y no por funcion — el catalogo lee
+          lo mismo una vez por lote y no debe pagar el doble de RCU. Decision **D-32**
+
+> **El primer diagnostico de este fallo fue equivocado y conviene que quede dicho.** Se atribuyo a
+> la lectura eventual, que explicaba los cuatro sintomas del reporte y se dio por confirmada sin
+> poder reproducirla. La causa real era el `.avif`. **Una hipotesis que explica todos los sintomas
+> no es por eso la causa**; lo que la encontro fue mostrar en pantalla el motivo que el servidor ya
+> estaba mandando.
+
+> **Tres vueltas sobre la misma pantalla, y las tres veces el reporte fue el mismo sintoma con otra
+> cara: pedia demasiado para mostrar poco.** Vale anotarlo como senal: cuando una pantalla vuelve
+> por tercera vez, el problema no es el control que se acaba de cambiar sino el reparto entre lo que
+> muestra y lo que deja hacer.
+
+> **Lo que costo la confirmacion del retiro, y conviene que este dicho: ya no funciona sin
+> JavaScript.** Un modal es un control del cliente, asi que no hay forma de exigir la confirmacion
+> y a la vez conservar el envio por `<form>` puro. El servidor sigue comprobando permiso, estado y
+> motivo; lo que se pierde es el camino degradado. Es la primera mutacion de la aplicacion que
+> depende de JavaScript, y fue una decision, no un descuido.
+
+**Verificacion:**
+
+- [x] Compuerta de calidad completa en verde y build de produccion exitoso
+- [ ] **`[OPERADOR]`** El build de Amplify **falla solo** si `sharp` no quedo trazado. Conviene
+      desplegar primero a una rama que no sea `main` y ver el round-trip en el log: es el unico
+      paso que toca el runtime Lambda de verdad, y el unico que detectaria un computo arm64 — el
+      contenedor de build es x64, asi que `npm ci` no instalaria el binario que el runtime pediria
+- [ ] **`[OPERADOR]`** Subir una foto real **desde telefono y desde escritorio** y comprobar en S3
+      que aparecen las tres variantes. Antes de esto, tirar las fotos de prueba
+- [ ] **`[OPERADOR]`** Abrir el detalle de un lote, esperar **mas de 15 minutos** y abrir el visor
+      ampliado: antes daba 403, ahora no
+- [ ] **`[OPERADOR]`** Volver del detalle al catalogo y confirmar en DevTools que las imagenes
+      vienen del cache del navegador y no de la red
+- [ ] **`[OPERADOR]`** Con DevTools abierto, distinguir los tres modos de fallo que hoy se
+      confunden: **403 de CloudFront** (firma vencida), **violacion de CSP** sin peticion de red
+      (`img-src` sin el dominio) y **`X-Cache: Miss`** repetido. El peso real se cuantifica sin
+      adivinar: `bytes` esta persistido en cada item `FOTO#` y ahora tambien por variante
+- [ ] **`[OPERADOR]`** Editar el pie de una foto y recargar; vaciarlo y comprobar que el atributo
+      desaparece en vez de quedar en `""`; guardar sin cambiar nada y comprobar que **no** aparece
+      evento nuevo en la bitacora
+- [ ] **`[OPERADOR]`** La galeria rehecha, en el navegador: que la descripcion se lea completa bajo
+      cada fotografia, que el campo corte a los 120 al teclear, que **arrastrar un archivo al modal
+      de agregar** funcione, que la vista previa aparezca, y que poner una fotografia en la
+      posicion 1 la deje con el distintivo de principal. Lo que **no** se puede comprobar en prueba
+      es que los modales de verdad se abran: jsdom no implementa `showModal`
+      (`desafios-implementacion.md` 87), asi que esto es lo unico que lo verifica
+- [ ] **`[OPERADOR]`** La subida multiple, con fotografias de verdad: elegir varias de un tiro,
+      comprobar que **aparecen todas** en el modal —es la salvaguarda contra la deduplicacion por
+      nombre—, que el total en MB sube conforme se agregan, y que al guardar entran en el orden
+      elegido. Probar tambien **dos archivos con el mismo nombre** venidos de carpetas distintas:
+      el segundo lo descarta el control de Eden y la unica senal es que su miniatura no aparece
+- [ ] **`[OPERADOR]` Verificar el tope de subida, que es aparte de esta etapa y puede invalidar
+      parte de ella.** Si el computo SSR de Amplify se invoca por una Lambda Function URL con
+      respuesta *buffered*, el limite de payload son **6 MB** y seria el menor de todos — o sea que
+      el tope de 10 MB estaria inalcanzable y roto en silencio, igual que la vez de
+      `desafios-implementacion.md` 54. Basta subir un archivo de ~8 MB a la aplicacion desplegada.
+      **Si falla, normalizar en el servidor no lo arregla**: los bytes tienen que llegar primero, y
+      vuelve a la mesa la carga directa a S3 con prefirmada de **clave fija generada por el
+      servidor**, que no concede al cliente lo que la decision original le nego
+
+**Lo que se descarto aqui, con su razon:**
+
+- **AVIF**: 8 647 ms por variante contra 385 de WebP, medido sobre la misma foto de 12 MP, por un
+  10 % menos de bytes. No se descarta por falta de sitio en el marcado —Eden acepta `srcSet`— sino
+  porque no vale el CPU.
+- **Cookies firmadas de CloudFront**: `cloudfront.net` y `amplifyapp.com` estan en la **Public
+  Suffix List**, asi que ningun navegador acepta una cookie para ese dominio. Es el destino correcto
+  de este camino y lo que lo volveria viable es servir la distribucion desde un subdominio del
+  mismo dominio registrable que la aplicacion; entonces las URLs son estables para siempre y no se
+  firma nada por peticion. La cubeta es la aproximacion mientras el dominio sea el de Amplify.
+- **Subir la vigencia de la firma sin cubeta**: arregla los 403 y nada mas — la URL sigue cambiando
+  en cada render. Mismo costo de seguridad, la mitad del beneficio.
+- **`next/image` con un `loader` propio**: el optimizador tendria que alcanzar una URL firmada que
+  caduca, y con variantes pre-generadas no aporta nada.
+- **Lambda de transformacion por `s3:ObjectCreated`**: es la arquitectura correcta a largo plazo,
+  pero hoy `agregarFotografia` es sincronica y la galeria se repinta con la foto ya puesta. Lo
+  asincrono exige estado `PROCESANDO`, UI de espera y un camino de fallo sin usuario a quien
+  reportar. Queda como plan B de segundo nivel.
+- **Re-firmar desde el cliente con `onError`**: volveria cliente a `RejillaDeLotes` y crearia un
+  **oraculo de firma** — una action que firme lo que le pidan tendria que re-verificar el gating en
+  cada llamada, o se convierte en la forma de firmar cualquier foto.
+- **Conservar el original**: el operador dijo que no hace falta, y cuesta almacenamiento y un camino
+  de borrado mas.
+- **Bajar `MAXIMO_BYTES_FOTOGRAFIA`** ahora que el original no se guarda: esta atado por tres
+  pruebas a `bodySizeLimit` y aparece en dos etiquetas de diccionario. Cambio de contrato que nadie
+  pidio, y el limite que quiza haya que revisar es el de arriba.
+- **Plan B si `sharp` no se dejara trazar**: `@img/sharp-wasm32`, ya en el lock, sin `os`/`cpu`, y
+  un `.node` autocontenido sin `.so` hermano, asi que el defecto de trazado no le aplica. Cuesta
+  3-5x mas lento —2-3 s por subida, aceptable para una accion administrativa— con el mismo codigo
+  de aplicacion. No se necesito.
+
+**Salida esperada:** un catalogo que baja unos pocos MB en vez de decenas, fotografias que no
+desaparecen, EXIF que no viaja, y un pie corregible sin borrar la foto.
 
 ---
 

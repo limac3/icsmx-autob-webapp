@@ -64,6 +64,44 @@ const entornoDelServidor = Object.fromEntries(
   }),
 );
 
+/**
+ * Binarios nativos de `sharp` que el trazador de Next **no** encuentra solo.
+ *
+ * **No borrar esto por parecer redundante: sin el, la normalizacion de imagenes
+ * funciona en local y da 500 en cada subida del entorno desplegado.**
+ *
+ * `@vercel/nft` —el trazador que decide que archivos viajan al artefacto— tiene
+ * un caso especial para `sharp`, y su guarda es
+ * `id.endsWith("sharp/lib/index.js")`. Ese archivo **dejo de existir en sharp
+ * 0.34**: el punto de entrada paso a `dist/index.cjs` y `lib/` solo conserva un
+ * `.d.ts`. O sea que el caso especial, cuyo trabajo era copiar los paquetes
+ * `@img/*` hermanos, nunca se activa.
+ *
+ * Queda el camino generico, que si traza el `.node` porque
+ * `dist/sharp.cjs` lo pide con un literal estatico. Pero al ver un `.node`, nft
+ * busca bibliotecas compartidas con `glob("<paquete del .node>/**\/*.so?(.*)")`
+ * **excluyendo `node_modules`**, y `libvips-cpp.so.42` no vive en
+ * `@img/sharp-linux-x64` sino en el paquete **hermano**
+ * `@img/sharp-libvips-linux-x64`. El `.node` lo carga por `dlopen` a traves de
+ * su `DT_RPATH`, que es invisible para un trazador de JavaScript.
+ *
+ * En Windows no se nota, y eso es lo peligroso: ahi `libvips-42.dll` esta
+ * **junto** al `.node`, en el mismo paquete, asi que el glob si lo alcanza.
+ *
+ * Solo los de Linux: incluir win32 y darwin infla el artefacto ~20 MB por
+ * plataforma sin que el runtime los use nunca. Los patrones que no casan con
+ * nada no cuestan; se instala unicamente el que corresponde al contenedor.
+ *
+ * `next.config.test.ts` y `scripts/verificar-sharp.mjs` lo vigilan por los dos
+ * lados: el primero, que la declaracion siga aqui; el segundo, que el `.so`
+ * acabe de verdad en el artefacto del contenedor de build.
+ */
+const NATIVOS_DE_SHARP = [
+  "./node_modules/@img/sharp-libvips-linux*/**/*",
+  "./node_modules/@img/sharp-linux*/**/*",
+  "./node_modules/@img/colour/**/*",
+];
+
 // turbopack.root evita que Next infiera mal la raiz del proyecto: hay un
 // lockfile en el directorio padre c:/Apps/node/ (riesgo R13 del plan de
 // ejecucion). La CSP con nonce por peticion vive en src/proxy.ts (Etapa 2).
@@ -72,6 +110,11 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   turbopack: {
     root: __dirname,
+  },
+  // Clave `/**`: la normalizacion vive en una Server Action, y el mapeo de una
+  // action a la ruta que la sirve no es algo en lo que convenga apostar.
+  outputFileTracingIncludes: {
+    "/**": NATIVOS_DE_SHARP,
   },
   experimental: {
     // Habilita forbidden()/unauthorized() de next/navigation (Etapa 2: la

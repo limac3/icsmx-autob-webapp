@@ -107,6 +107,7 @@ distingue "no se capturo" de "se capturo vacio".
 
 ```
 fotoId, vehiculoId, orden, claveS3, contentType, bytes, descripcion
+variantes  { min: {claveS3, ancho, alto, bytes}, med: {...}, max: {...} }
 subidaEn, subidaPor
 ```
 
@@ -114,6 +115,38 @@ subidaEn, subidaPor
 caducan en minutos (regla 13). El orden va en la `SK` con relleno de ceros, igual que el turno de
 la fila, asi que la galeria se lee ordenada. La contrapartida es que reordenar no es actualizar
 sino reubicar: un `Delete` y un `Put` por fotografia que cambia de lugar, todo en una transaccion.
+
+**`variantes` es obligatorio y es un mapa completo, no una lista.** Una lista permitiria
+representar "tengo `min` y `max` pero no `med`", un estado que no queremos poder escribir. Los tres
+objetos existen siempre porque los tres se generan en la misma subida (seccion 5.4 de
+`estrategia-aplicacion.md`); `claveS3` y `bytes` del nivel superior son **los de la variante
+`max`**, de modo que borrar y firmar no cambiaron de forma al introducirlas.
+
+Los anchos **reales** se guardan por variante en vez de derivarse de las constantes
+480/1280/2048: con `withoutEnlargement`, una foto original de 600 px produce tres variantes de 600,
+y un `srcSet` que declarara los anchos nominales mentiria al navegador. El sufijo de la clave es el
+**nombre** de la variante y no su ancho —`<fotoId>-med.webp`, no `-600.webp`— justamente para que
+la clave siga siendo predecible desde el nombre.
+
+`variantes` ausente o malformado hace que `aFotografia` devuelva `undefined` y la fotografia
+desaparezca del listado, igual que un item sin `claveS3`: un item corrupto entre mil no tumba la
+galeria. Lo que **no** se hace es rellenar con `ancho: ... ?? 0`, como si hiciera el habito de
+`bytes ?? 0` que ya estaba: daria `width="0"` y romperia la maquetacion en silencio, que es
+exactamente el fallback que la regla 15 prohibe.
+
+**`fotografiaPrincipalId` del item del vehiculo apunta siempre a la de menor `orden`.** No es un
+dato independiente: la posicion 1 **es** la principal. Lo mantienen dos escrituras, las dos en la
+misma transaccion que el cambio que lo provoca — `reordenarFotografias`, que lo apunta a la que
+queda primera, y `eliminarFotografia`, que promueve la de menor orden restante al borrar la
+principal. Se conserva como atributo en vez de derivarse al leer porque el listado y el catalogo lo
+consultan sin leer la galeria completa: derivarlo obligaria a una `Query` de fotografias por cada
+tarjeta.
+
+`descripcion` es el unico campo editable del item de fotografia. Se actualiza con un `Update` sobre
+la clave de la fotografia y `ConditionExpression: attribute_exists(SK)`, sin tocar el item `META` del vehiculo
+—`actualizadoEn` describe el registro del vehiculo, y un pie de foto no lo cambia—. Vaciarla hace
+`REMOVE #descripcion` y no `SET` a cadena vacia, por la misma regla de los opcionales en blanco de
+arriba.
 
 **Lote** — el item mas cargado del modelo:
 
@@ -1292,8 +1325,26 @@ aporta la prueba de concurrencia de la Etapa 8.
   no se puede reescribir.
 - **Sin TTL en ningun item.** Nada del dominio caduca solo, y una expiracion automatica sobre
   la bitacora violaria R-20.
-- **`ConsistentRead` en las lecturas previas a una escritura condicional.** Las lecturas de
-  presentacion pueden ser eventuales; las que alimentan un bucle de candidatos, no.
+- **`ConsistentRead` en toda lectura que decide una escritura.** Las de presentacion pueden ser
+  eventuales; las que alimentan una escritura, no — y no solo las que alimentan un bucle de
+  escrituras condicionales, que era como estaba escrita esta regla hasta que costo un defecto.
+
+  > **La regla se amplio tarde, y conviene saber por que.** Nacio con el motor de fila, donde una
+  > lectura eventual podia coronar al turno equivocado, y se leyo durante meses como algo del
+  > motor. Pero `obtenerVehiculo` alimenta tres calculos de leer-y-decidir —el `orden` de una
+  > fotografia nueva, si es la primera y por tanto la principal, y la permutacion al reordenar— y
+  > se leia eventual. **No se noto hasta que una pantalla encadeno dos mutaciones sobre el mismo
+  > agregado**: la subida de varias fotografias de un tiro, donde la segunda peticion podia no ver
+  > lo que escribio la primera (`desafios-implementacion.md` 88).
+  >
+  > De ahi la forma de aplicarla: **opt-in por llamada, no por funcion**. La misma lectura sirve al
+  > catalogo —una vez por lote, la mas caliente de la aplicacion— y al camino de escritura;
+  > encenderla para todos duplicaria el consumo donde mas duele. La enciende `conVehiculo`, que es
+  > el cuello unico por donde pasan las mutaciones del vehiculo.
+  >
+  > Lo que la regla no dice y hay que recordar: **la consistencia eventual no se manifiesta hasta
+  > que dos escrituras se acercan en el tiempo.** El defecto llega tarde, en produccion, y se ve
+  > como "a veces falla".
 
 ### 8.1 Revision de costos (Etapa 12)
 

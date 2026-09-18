@@ -14,6 +14,12 @@ import "server-only";
 //  3. **Nunca dentro de un bloque `"use cache"`.** Lo cacheado se reutiliza
 //     entre peticiones y entre usuarios: una URL firmada cacheada se sirve ya
 //     vencida a unos y todavia valida a otros que no deberian tenerla.
+//     Que el vencimiento sea **determinista** dentro de su cubeta (ver abajo) no
+//     relaja esta regla, y conviene decirlo porque invita a pensar lo contrario:
+//     lo cacheado sobrevive a la cubeta en la que se produjo, asi que una URL
+//     guardada en cache se sigue sirviendo despues de vencer. La determinacion
+//     hace que el **navegador** pueda reusarla mientras vale; no autoriza al
+//     servidor a guardarla.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,13 +27,60 @@ import { join } from "node:path";
 import { getSignedUrl } from "@aws-sdk/cloudfront-signer";
 
 /**
- * Vigencia de la firma.
+ * Paso al que se redondea el vencimiento de la firma.
  *
- * Corta porque una URL firmada es una credencial portatil: quien la copia entra
- * sin sesion. Diez minutos alcanzan de sobra para que una pantalla cargue sus
- * imagenes y no para compartir un enlace util.
+ * Existe para que la URL sea **identica byte a byte** durante toda la cubeta,
+ * en todos los renders y para todos los usuarios. Sin eso, cada render producia
+ * un `Expires` distinto, o sea una URL distinta, y **el cache del navegador no
+ * acertaba nunca**: volver al catalogo volvia a descargar todas las fotografias
+ * aunque ya estuvieran en disco. El borde de CloudFront si acertaba —su politica
+ * de cache no incluye el query string en la clave— pero el borde no le ahorra
+ * bytes a quien navega.
+ *
+ * El redondeo es sobre el **epoch**, no sobre la hora local: una cubeta de una
+ * hora es agnostica de zona, asi que la regla 9 (`America/Mexico_City`) no
+ * interviene aqui. No hay que "arreglarlo" con `Intl`.
  */
-export const VIGENCIA_DE_FIRMA_MS = 10 * 60 * 1000;
+export const CUBETA_DE_FIRMA_MS = 60 * 60 * 1000;
+
+/**
+ * Margen que se suma al final de la cubeta.
+ *
+ * Es lo que fija la vigencia **minima**: sin el, una peticion hecha en el ultimo
+ * segundo de la cubeta recibiria una URL que vence en un segundo. Con una hora
+ * de gracia, toda firma vale entre 1 y 2 horas.
+ *
+ * Antes eran diez minutos fijos, con el argumento de que una URL firmada es una
+ * credencial portatil y quien la copia entra sin sesion. El argumento sigue en
+ * pie, pero el plazo estaba mal elegido: el visor ampliado de la galeria de Eden
+ * **monta su `<img>` al hacer clic, no al renderizar**, asi que leer la ficha de
+ * un lote y despues abrir las fotografias daba 403 garantizado pasados diez
+ * minutos — y con `loading="lazy"`, tambien un scroll tardio. Lo que protege el
+ * acceso es el gating triple del servidor (regla 8), no este plazo; lo que este
+ * plazo acota es cuanto vive un enlace copiado a una fotografia de un vehiculo
+ * en venta, sin datos personales. Los comprobantes de pago no entran en el
+ * calculo: `rutaPublica` lanza si la clave no esta bajo `vehiculos/`.
+ *
+ * **Residuo conocido:** una pestaña abierta mas de dos horas sigue quedandose
+ * sin imagenes. Esto eleva el piso, no elimina el modo de fallo. Lo unico que lo
+ * elimina es servir la distribucion desde un subdominio del mismo dominio
+ * registrable que la aplicacion, que habilitaria cookies firmadas y URLs
+ * estables — hoy imposible, porque `cloudfront.net` y `amplifyapp.com` estan en
+ * la Public Suffix List y ningun navegador acepta una cookie para ellos.
+ */
+export const GRACIA_DE_FIRMA_MS = 60 * 60 * 1000;
+
+/**
+ * Instante en que vence la firma: el final de la cubeta en curso mas la gracia.
+ *
+ * Pura y exportada para poder probar las fronteras sin firmar nada.
+ */
+export const vencimientoDeFirma = (ahora: Date): Date =>
+  new Date(
+    Math.floor(ahora.getTime() / CUBETA_DE_FIRMA_MS) * CUBETA_DE_FIRMA_MS +
+      CUBETA_DE_FIRMA_MS +
+      GRACIA_DE_FIRMA_MS,
+  );
 
 const PREFIJO_PEM = "-----BEGIN";
 
@@ -207,7 +260,7 @@ export const firmarFotografia = (
   const ahora = (deps.ahora ?? (() => new Date()))();
 
   const ruta = rutaPublica(claveS3);
-  const vence = new Date(ahora.getTime() + VIGENCIA_DE_FIRMA_MS);
+  const vence = vencimientoDeFirma(ahora);
 
   return getSignedUrl({
     url: `https://${configuracion.dominio}/${ruta}`,

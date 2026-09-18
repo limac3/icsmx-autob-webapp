@@ -317,24 +317,172 @@ campos de texto reparte mal el ancho y duplica los mensajes de error. Eden **no 
 de proposito general: no hay `Divider` fuera de `eden-vertical-tiles`, que es una tarjeta de media
 para cuadriculas. Ver `desafios-implementacion.md` seccion 25.
 
+**Los tres bloques de la pantalla van separados por una linea**: el formulario del vehiculo, la
+galeria de fotografias y el retiro del catalogo. No son variaciones de lo mismo — el formulario se
+guarda con su boton, la galeria escribe al momento y el retiro es terminal—, y sin la separacion la
+pantalla se lee como una lista continua en la que el boton de retirar queda a la altura de
+cualquier otro. Al no haber componente de Eden que lo haga, es un `border-top` con el token de
+color de linea, **identico en las dos separaciones** para que se lea como una regla y no como dos
+estilos.
+
 El reparto en columnas lo hace `Grid` de `eden-grid`, con `@container` queries sobre el ancho del
 contenedor y no de la ventana: identificacion y especificacion a media rejilla, condicion al ancho
 completo.
 
-**Gestion de fotografias:** subida, reordenamiento, marcar principal, eliminar. La principal se
-distingue con un `Badge`. **No se puede eliminar la ultima** — el boton se deshabilita con
-explicacion, y el servidor lo vuelve a comprobar.
+### Gestion de fotografias
 
-> **El reordenamiento tiene dos caminos, y el principal son los botones de mover arriba/abajo.**
-> El arrastre solo funciona con raton: no es alcanzable con teclado ni con lector de pantalla, y
-> en un telefono compite con el desplazamiento de la pagina. Los botones cubren los tres casos y
-> pasan axe; el arrastre se implemento **encima** de ellos, como atajo para quien usa raton, y
-> por eso los botones no se ocultan cuando hay arrastre disponible.
+**La rejilla es solo fotografias.** Todas del mismo tamano, la principal con su distintivo
+**dentro** de la imagen, la descripcion **completa** debajo, y un unico boton: "Editar". Sobre la
+rejilla, al lado del titulo "Fotografias", un boton "Agregar". Nada mas.
+
+> **Dos versiones anteriores fallaron por lo mismo: meter los controles en la rejilla.** La primera
+> repartia cinco botones bajo cada fotografia —subir, bajar, marcar principal, editar, eliminar— y
+> mostraba el pie solo al entrar a editar, asi que saber que decia cada foto obligaba a abrirlas de
+> una en una. La segunda saco el pie a un campo de solo lectura de una linea, y quedaba **recortado
+> justo en lo que se venia a leer**. Con veinte fotografias, la rejilla era un tablero de cien
+> controles alrededor de lo unico que importa: las imagenes y lo que dicen.
 >
-> El arrastre no lleva semantica ARIA —`aria-grabbed` esta obsoleto y ningun lector lo anuncia—,
-> asi que solo aporta senal visual: opacidad en el que se mueve y contorno en el destino. Los dos
-> caminos calculan el nuevo orden con la **misma** funcion, para que soltar en la cuarta posicion
-> deje la galeria igual que pulsar "abajo" hasta llegar a ella.
+> De ahi la regla: **la rejilla muestra, los modales editan.** El pie es un parrafo que se ajusta en
+> varias lineas y nunca se recorta; sin descripcion dice "Sin descripcion" en cursiva atenuada, para
+> que el hueco se lea como un dato que falta y no como un error de maquetacion.
+
+**La posicion 1 es la principal.** No hay "marcar como principal": designar es mover al frente, y
+lo hace el mismo campo de orden de los dos modales. Es una sola idea en vez de dos controles que
+podian contradecirse, y el servidor mantiene el invariante en la transaccion del reordenamiento
+—`reordenarFotografias` actualiza `fotografiaPrincipalId` a la que quede primera—, asi que la
+interfaz no puede dejar el puntero apuntando a otra parte.
+
+**No se puede eliminar la ultima** — el boton del modal se deshabilita con explicacion, y el
+servidor lo vuelve a comprobar.
+
+#### Modal de agregar — una o varias de un tiro
+
+Se abre con el boton de arriba. Contiene:
+
+- El control de archivo de Eden con **arrastrar y soltar y seleccion multiple** (`FileInput` con
+  `isDroppable` y `multiple`). No existe ningun componente aparte para esto: son dos props del
+  mismo control que ya se usaba.
+- **Todas las elegidas, pintadas con su nombre de archivo.** No es una vista previa decorativa:
+  `FileInput` **deduplica por nombre**, asi que dos fotografias distintas llamadas `IMG_0001.jpg`
+  —lo normal saliendo de una camara— dejarian caer la segunda **en silencio**. Viendolas, la que
+  falta se nota antes de guardar. El nombre se recorta en pantalla y va completo en el `title`.
+- El **volumen de la tanda**, `X / 10 MB`, y el aviso de que todavia no se subio nada.
+- La **descripcion**, con su tope. Si se captura, **se guarda igual en todas** las fotografias de
+  la tanda; despues se corrige una por una en el modal de edicion. La ayuda del campo lo dice
+  cuando hay mas de una elegida.
+- La **posicion**, de 1 al total resultante. Con varias, **es la posicion de la primera y las demas
+  la siguen** en el orden en que se eligieron; la ayuda tambien lo dice. El rango **no depende de
+  cuantas se suban**: es donde arranca el bloque, de antes de la primera existente a despues de la
+  ultima. **Con la galeria vacia el campo no se muestra**: la primera es la 1 y por tanto la
+  principal, y un campo con una sola opcion es una pregunta sin respuestas.
+- Guardar y cancelar. Mientras sube, el boton dice **"Subiendo… 3 / 7"**: siete fotografias no es
+  una espera instantanea.
+
+> **El tope de 10 MB pasa a ser del total de la tanda, y si se excede no se sube nada.** El aviso
+> lo dice y el boton de guardar se deshabilita. **No se recorta la tanda sola** — cual dejar fuera
+> es una decision de quien sube, no del programa. En el servidor el tope sigue siendo **por
+> archivo**, que es la frontera real y la unica que no se puede eludir; el total es una guarda de
+> pantalla, y es la que hace que una tanda entera no pueda pasarse del limite que el servidor
+> aplicaria de a uno.
+>
+> Se avisa igual, antes de empezar, si la tanda **pasaria del maximo de 20 por vehiculo**: sin eso,
+> con 18 ya subidas y 5 elegidas las tres ultimas fallarian a mitad de la tanda.
+
+> **Cada fotografia viaja en su propia peticion, en serie.** No es una limitacion tecnica sino la
+> decision correcta: mantiene el tope de tamano del cuerpo aplicado **por fotografia** —que es para
+> lo que se dimensiono—, le da a cada alta su transaccion y su evento de bitacora (regla 4), y hace
+> que un fallo a la mitad deje las anteriores subidas y visibles en vez de perderlo todo. En ese
+> caso el proceso **se detiene** y no reordena: las que faltan se vuelven a intentar, y lo que ya
+> esta arriba no se toca.
+>
+> La posicion se aplica al final con **un solo** reordenamiento, insertando el bloque entero donde
+> se pidio. Mover una por una desplazaria el destino de las siguientes, que es justo donde se
+> cometeria el error de un puesto.
+
+#### Modal de edicion
+
+Se abre con el boton "Editar" de cada fotografia. Contiene:
+
+- **La fotografia, que no se puede cambiar.** Los bytes son inmutables: para cambiar la imagen se
+  elimina y se sube otra. Por eso aqui **no hay control de archivo** (lo que ademas sostiene la
+  cache de CloudFront, seccion 5.3 de `estrategia-aplicacion.md`).
+- La **descripcion**, editable. Hasta la Etapa 17 solo se podia fijar al subir, y corregir una
+  errata obligaba a borrar la foto entera.
+- La **posicion**, de 1 al total de fotografias, con la 1 marcada como principal. Con una sola
+  fotografia el campo no se muestra.
+- **Guardar**, que escribe **solo la descripcion y la posicion**, y solo lo que cambio; si no
+  cambio nada, cierra sin escribir.
+- **Eliminar**, que pide confirmacion aparte.
+- Cancelar.
+
+> **El campo de posicion es un `Select`, no un campo numerico.** Asi la cota deja de ser una
+> validacion que alguien tiene que escribir —y probar— y pasa a ser imposible de violar por
+> construccion; y es donde cabe decir que la 1 es la principal, sin un texto de ayuda aparte.
+
+#### El tope de la descripcion: 120 caracteres, en tres lugares
+
+Es un requisito de presentacion, no de almacenamiento: el pie se muestra bajo la miniatura en el
+visor publico y un texto largo desborda la tarjeta o empuja la rejilla. Los tres hacen falta:
+
+1. **En el campo**, con `maxLength`, que frena el teclado. Por eso el campo de pie es un `TextArea`
+   y no un `Input`: el `maxLength` de `Input` es inusable por sus tipos
+   (`desafios-implementacion.md` 19).
+2. **Antes de enviar**, con el boton de guardar deshabilitado y un aviso al lado. `maxLength` no
+   recorta un valor que **ya venia largo** —una descripcion capturada antes de que el tope bajara—,
+   asi que sin esta comprobacion se mandaba al servidor, volvia rechazada y se perdia lo escrito.
+   El modal se queda abierto con el texto intacto, que es lo que el operador pidio.
+3. **En el servidor**, que es la unica frontera que cuenta.
+
+Un contador `N / 120` acompana al campo mientras se escribe. Cuenta el texto **recortado**, igual
+que lo mide el servidor, para que unos espacios al final no marquen como excedido un pie que cabe.
+
+La descripcion **sigue siendo opcional**. Cuando falta, la galeria publica usa marca/version/modelo
+como texto alternativo, asi que la foto no queda inaccesible.
+
+#### Confirmacion del borrado
+
+**Eliminar pide confirmacion, y el aviso dice que es definitivo.** El borrado destruye los objetos
+de S3 y no hay vuelta: un clic sobre el boton equivocado no puede ser suficiente. La confirmacion
+**sustituye** al modal de edicion en vez de anidarse dentro: dos `<dialog>` abiertos a la vez dejan
+la pila del top layer a merced del orden de cierre.
+
+Los tres modales se montan **solo cuando estan abiertos**. Un `<dialog>` cerrado conserva sus hijos
+en el DOM —lo que los oculta es `dialog:not([open]) { display: none }`, que es estilo—, asi que
+dejarlos puestos mantendria sus campos y su boton de borrar en el arbol de la pantalla
+(`desafios-implementacion.md` 87).
+
+Las fotografias se sirven en la variante que cada pantalla necesita, no en su tamano original: la
+tira de miniaturas ya no descarga la imagen completa. Es una decision de rendimiento y no un
+requerimiento visual — vive en el codigo, con la derivacion de cada `sizes` escrita al lado.
+
+> **El reordenamiento se hace por posicion, no arrastrando ni con flechas.** Hubo dos caminos
+> —botones de mover arriba/abajo, y arrastre encima como atajo de raton— y los dos salieron de la
+> rejilla al vaciarla de controles. Elegir "3" en un campo es ademas lo unico que resuelve el caso
+> real de una galeria larga: mover la ultima al frente costaba diecinueve clics.
+>
+> Lo que se conserva de esa version es la funcion que calcula el orden resultante: los dos modales
+> la comparten, asi que "ponla en la posicion 3" significa lo mismo viniendo de agregar o de
+> editar. Y lo que se pierde no es accesibilidad —el `Select` es alcanzable con teclado y con
+> lector, cosa que el arrastre nunca fue— sino el gesto directo de arrastrar, que solo servia con
+> raton.
+
+**Retiro del catalogo: un solo boton, y el motivo dentro del modal.** La pantalla ofrece
+**"Retirar vehiculo"** y nada mas; al pulsarlo se abre un modal con el aviso de que **la operacion
+es definitiva y no se puede deshacer**, el campo del motivo, y los dos botones de confirmar y
+cancelar. El motivo sigue siendo obligatorio —`VEHICULO_RETIRADO` esta marcado con **M** en el
+catalogo de eventos— y el boton de confirmar queda inerte hasta que se captura.
+
+Antes el campo del motivo estaba **suelto sobre la pantalla de edicion**, con el boton de retirar
+debajo: un campo obligatorio a la vista sin nada que dijera a que pertenecia, y una transicion
+terminal a un clic de distancia. Es el mismo defecto que las convocatorias ya tenian corregido
+(seccion 4.3, `AccionesDeConvocatoria`) y esta pantalla se habia quedado atras; el aviso va
+**dentro** del modal porque es lo ultimo que se lee antes de confirmar, que es cuando importa.
+
+> **Lo que costo, dicho explicito: el retiro deja de funcionar sin JavaScript.** Un modal es un
+> control del cliente, asi que no hay forma de exigir la confirmacion y a la vez conservar el envio
+> por `<form>` puro; la envoltura `retirarVehiculoDesdeFormulario` se retiro. El servidor sigue
+> comprobando permiso, estado y motivo, asi que lo que se pierde es el camino degradado, no ninguna
+> garantia.
 
 Un vehiculo `RESERVADO` o `VENDIDO` se muestra en solo lectura, con aviso del motivo.
 

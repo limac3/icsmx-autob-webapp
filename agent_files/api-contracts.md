@@ -48,8 +48,8 @@ Reglas transversales:
 | `retirarVehiculo` | `{ vehiculoId, motivo }` | `{ vehiculoId }` | `vehiculo:retirar` | `invalid_state` | `VEHICULO_RETIRADO` |
 | `agregarFotografia` | `{ vehiculoId, archivo, esPrincipal, descripcion }` | `{ fotoId }` | `vehiculo:subir-fotografia` | `validation_failed`, `invalid_state` | `VEHICULO_FOTOGRAFIA_AGREGADA` |
 | `eliminarFotografia` | `{ vehiculoId, fotoId }` | `{ fotoId }` | `vehiculo:eliminar-fotografia` | `invalid_state` | `VEHICULO_FOTOGRAFIA_ELIMINADA` |
-| `reordenarFotografias` | `{ vehiculoId, ordenFotoIds }` | `{ vehiculoId }` | `vehiculo:subir-fotografia` | `validation_failed` | `VEHICULO_EDITADO` |
-| `marcarFotografiaPrincipal` | `{ vehiculoId, fotoId }` | `{ fotoId }` | `vehiculo:subir-fotografia` | `not_found`, `invalid_state` | `VEHICULO_EDITADO` |
+| `reordenarFotografias` | `{ vehiculoId, ordenFotoIds }` | `{ vehiculoId }` | `vehiculo:subir-fotografia` | `validation_failed`, `invalid_state` | `VEHICULO_EDITADO` |
+| `editarDescripcionFotografia` | `{ vehiculoId, fotoId, descripcion? }` | `{ fotoId }` | `vehiculo:subir-fotografia` | `validation_failed`, `not_found`, `invalid_state` | `VEHICULO_EDITADO` |
 
 `DatosVehiculo`: `numeroEconomico`, `numeroDeSerie`, `marca`, `version`, `modelo` (anio),
 `nivelEquipamiento`, `especificacionMecanica`, `condicionesMecanicas`, `detallesEsteticos`,
@@ -66,36 +66,118 @@ devuelven `validation_failed` con `detalles: { numeroEconomico: "duplicado" }` �
 segun cual de los dos centinelas cancelo la transaccion. No es `conflicto_concurrencia`: un numero
 repetido **es** un dato mal capturado y hay que corregirlo, no reintentarlo con el mismo valor.
 
-Fotografia: tipo `image/jpeg|png|webp`, maximo 10 MB, **nombre de archivo generado en servidor** —
-nunca el del cliente.
+Fotografia: tipo `image/jpeg|png|webp|avif`, maximo 10 MB, **nombre de archivo generado en servidor** —
+nunca el del cliente. `descripcion` opcional, hasta **120 caracteres** (`LIMITES` de
+`src/lib/domain/vehiculos.ts`), recortada antes de medir.
+
+**La entrada y la salida son cosas distintas.** Lo que se acepta es lo de arriba; lo que se guarda
+son **tres variantes WebP** de 480 / 1280 / 2048 px de ancho, y el original se descarta (seccion
+5.4 de `estrategia-aplicacion.md`). El `contentType` que llega —que viene de `File.type`, o sea del
+navegador— se **compara** con el formato real que dice el decodificador, y la discrepancia se
+rechaza; no basta confiar en lo detectado.
+
+Dos rechazos nuevos, los dos `validation_failed` con `detalles`:
+
+| `detalles` | Cuando | Que dice al operador |
+| --- | --- | --- |
+| `{ archivo: "no_decodificable" }` | El archivo no es una imagen que se pueda abrir, o esta corrupto | Incluye la instruccion concreta para HEIC de iPhone: Ajustes › Camara › Formatos › Mas compatible |
+| `{ archivo: "tipo_no_coincide" }` | El tipo declarado no es el formato real | El archivo no es lo que dice ser |
+
+**AVIF si, HEIC no**, y la diferencia no es arbitraria. `sharp.format.heif.input.fileSuffix` es
+`[".avif"]`: el lector HEIF de esta libvips **decodifica AVIF** —comprobado ejecutandolo, y hay
+prueba— pero no HEIC, porque no trae decodificador HEVC. Aceptar HEIC exigiria compilar libvips a
+mano con libde265, con las implicaciones de patentes que los propios typings de sharp senalan. En
+la practica puede que HEIC no llegue nunca: iOS Safari lo convierte a JPEG cuando el `accept`
+lista `image/jpeg`, que ya es el caso.
+
+> **AVIF se agrego despues de la Etapa 17**, cuando una tanda entera se rechazo por un `.avif` que
+> el operador ni sabia que lo era. Estaba fuera porque nadie lo habia pedido, no porque no se
+> pudiera. Detalle que importa a quien toque `normalizarImagen`: un AVIF se **detecta** como
+> `heif`, no como `avif`, asi que en `FORMATO_ESPERADO` la equivalencia es
+> `"image/avif" -> "heif"`. Con `"avif"` ahi, todos los AVIF se rechazarian con `tipo_no_coincide`
+> (`desafios-implementacion.md` 89).
+
+La lista blanca vive en `src/lib/domain/vehiculos.ts` y no en el modulo de almacenamiento, que es
+`server-only`: **la pantalla aplica la misma lista antes de subir nada**. Es una comodidad, no una
+frontera —el servidor sigue validando cada archivo— pero evita que una tanda se detenga a la mitad
+con las anteriores ya escritas.
+
+`editarDescripcionFotografia` **se agrego con el tope de 120**. La fotografia en si no es editable
+—se borra, no se reemplaza (regla de inmutabilidad de la seccion 5.4)—, pero el pie si: hasta
+ahora solo se podia fijar al subir, y corregir una errata obligaba a borrar la foto y volver a
+subirla. Tres comportamientos que no se deducen de la tabla:
+
+- **Sin evento si no hubo cambio.** Descripcion nueva igual a la vigente devuelve exito y no
+  escribe nada. Mismo criterio que `marcarFotografiaPrincipal`: una bitacora que registra actos sin
+  efecto entrena a quien la lee a ignorarla.
+- **Vaciarla quita el atributo**, no guarda cadena vacia, y en el evento el valor nuevo queda en
+  `null` — `null` dice "se quito"; un campo ausente diria "no se sabe".
+- **`not_found` se decide contra la galeria leida**, antes de escribir: un `fotoId` que no es de
+  este vehiculo no llega a DynamoDB.
+
+Exige el permiso de subida y **no uno nuevo**: editar el pie es gestion de galeria, igual que
+reordenar o marcar la principal. Un permiso propio para "cambiar un pie de foto" fragmentaria una
+capacidad que en la practica se concede junta (regla 17).
 
 `eliminarFotografia` rechaza con `invalid_state` si dejaria al vehiculo sin fotografia
 principal. En la practica eso significa **la ultima**: al borrar la principal teniendo otras, la
 siguiente por orden hereda la condicion dentro de la misma transaccion.
 
-`marcarFotografiaPrincipal` **se agrego en la Etapa 5**. El contrato solo permitia fijar la
-principal al subirla, y la pantalla 4.2 de `ui-ux-requerimientos.md` pide marcarla sobre la
-galeria ya existente; sin esta operacion, la unica forma de cambiarla seria borrar y volver a
-subir. Exige el permiso de subida porque es gestion de galeria, igual que reordenar.
-
 `agregarFotografia` marca como principal la **primera** fotografia aunque no se pida: un vehiculo
-con galeria y sin principal no se puede representar en el listado.
+con galeria y sin principal no se puede representar en el listado. Siempre la coloca **al final**;
+poner una fotografia nueva en otra posicion es subirla y reordenar, dos mutaciones desde la
+pantalla.
 
-### 2.1 Adaptadores de formulario
+**Recibe un archivo por llamada, y eso no cambia con la subida multiple.** La pantalla permite
+elegir varias fotografias de un tiro, y las manda en **una peticion por fotografia, en serie**. No
+hay action de lote y es deliberado:
 
-Ademas de las siete actions tipadas, el modulo exporta dos envolturas con la firma
+- el tope de `bodySizeLimit` se aplica **por fotografia**, que es para lo que se dimensiono — una
+  sola peticion con varias no cabria: dos archivos de 8 MB ya son 16 MB;
+- cada alta conserva su propia transaccion y su propio evento (regla 4), en vez de un evento de
+  lote que habria que inventar;
+- un fallo a la mitad deja las anteriores subidas y visibles, no todo perdido; el proceso se
+  detiene ahi y no reordena.
+
+Lo que la pantalla agrega encima, y **no** es una frontera del servidor: el tope de 10 MB aplicado
+a la **suma** de la tanda, y el aviso cuando la tanda pasaria del maximo de 20 por vehiculo. Las
+dos son guardas de interfaz para no empezar un trabajo que fallaria a la mitad; el servidor sigue
+validando lo suyo por archivo y por llamada.
+
+**`reordenarFotografias` designa la principal**, y por eso gana `invalid_state`: actualiza
+`fotografiaPrincipalId` a la fotografia que quede **primera**, en la misma transaccion, con la
+condicion de estatus del vehiculo. Solo escribe el item del vehiculo si la cabeza cambia.
+
+> **`marcarFotografiaPrincipal` existio y se retiro.** Se agrego en la Etapa 5 porque el contrato
+> solo permitia fijar la principal al subirla. La Etapa 17 la elimino al cambiar la pantalla 4.2 a
+> un solo campo de posicion: con "la 1 es la principal", una action que apunte el puntero a otra
+> fotografia es **la unica forma de romper ese invariante** — dejaria el listado mostrando una que
+> no esta primero, hasta el siguiente reordenamiento, que la devolveria a su sitio sin que nadie
+> entienda por que. Designar es ahora mover al frente. **Sin cambios en `permission-matrix.md`**:
+> usaba el permiso de subida, que sigue existiendo para las demas operaciones de galeria.
+
+### 2.1 Adaptador de formulario
+
+Ademas de las actions tipadas, el modulo exporta **una** envoltura con la firma
 `(estadoPrevio, formData)` que exige `useActionState`:
 
 | Adaptador | Delega en |
 | --- | --- |
 | `guardarVehiculoDesdeFormulario` | `crearVehiculo` o `editarVehiculo`, segun venga `vehiculoId` |
-| `retirarVehiculoDesdeFormulario` | `retirarVehiculo` |
 
-Existen para que los formularios **funcionen sin JavaScript**. Se mantienen separados de las
-actions tipadas a proposito: un `FormData` es un saco de cadenas sin tipo, y dejarlo llegar hasta
-el servicio convertiria cada conversion en una oportunidad de equivocarse en silencio. Un campo
+Existe para que el formulario **funcione sin JavaScript**. Se mantiene separado de las actions
+tipadas a proposito: un `FormData` es un saco de cadenas sin tipo, y dejarlo llegar hasta el
+servicio convertiria cada conversion en una oportunidad de equivocarse en silencio. Un campo
 numerico vacio se convierte en `NaN` y no en `0` — `Number("")` vale cero, y un kilometraje sin
 capturar se guardaria como cero kilometros, que es un dato falso y plausible.
+
+> **Eran dos, y `retirarVehiculoDesdeFormulario` se retiro.** El operador pidio que el retiro se
+> confirme en un modal con el motivo dentro (`ui-ux-requerimientos.md` 4.2), y un modal es un
+> control del cliente: no hay forma de exigir la confirmacion y a la vez conservar el envio por
+> `<form>` puro. `RetirarVehiculo` llama directo a `retirarVehiculo`. **El retiro pasa a depender
+> de JavaScript**, y lo que se pierde es solo el camino degradado: permiso, estado y motivo se
+> siguen comprobando en el servidor. Una prueba fija la decision, para que nadie reintroduzca dos
+> caminos para la misma mutacion sin darse cuenta.
 
 ---
 

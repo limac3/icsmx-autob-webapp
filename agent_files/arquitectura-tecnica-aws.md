@@ -55,7 +55,7 @@ la escritura del ciclo.
 Bucket privado para fotografias y comprobantes, **sin acceso publico**, cifrado y versionado.
 
 ```
-vehiculos/<vehiculoId>/<fotoId>.<ext>
+vehiculos/<vehiculoId>/<fotoId>-{min,med,max}.webp
 comprobantes/<solicitudId>/<archivoId>.<ext>
 ```
 
@@ -63,16 +63,44 @@ Los dos prefijos se tratan distinto: las fotografias se sirven por CloudFront; *
 comprobantes nunca**. Un comprobante de pago es un documento sensible y se entrega solo por el
 Route Handler de descarga, que verifica permiso y audita el acceso.
 
+Cada fotografia son **tres objetos**, uno por variante de ancho, todos WebP: el original no se
+guarda (seccion 5.4 de `estrategia-aplicacion.md`). El sufijo es el nombre de la variante y no su
+ancho, para que la clave sea predecible sin leer el item.
+
+Las fotografias se escriben con `Cache-Control: public, max-age=31536000, immutable`, que es
+correcto porque los bytes de una fotografia nunca se reemplazan — se borra y se sube otra con
+`fotoId` nuevo. **El `Cache-Control` entra como parametro de `guardarObjeto`, no como constante
+del modulo**, y eso es deliberado: la misma funcion guarda comprobantes, y un comprobante marcado
+`public` seria un defecto de seguridad regalado por herencia.
+
+> **El bucket esta versionado y sin `lifecycleRules`**: las versiones no actuales se conservan
+> para siempre. Con tres objetos por fotografia, cada re-subida multiplica el almacenamiento
+> retenido. No es urgente al volumen actual, pero es una regla de ciclo de vida pendiente.
+
 ### 2.4 CloudFront
 
 Distribucion con **Origin Access Control** hacia S3 — el bucket sigue privado. Solo el prefijo
 `vehiculos/`.
 
-URLs firmadas con vigencia corta, generadas en SSR en cada peticion. La llave privada vive en
+URLs firmadas generadas en SSR en cada peticion. La llave privada vive en
 secretos; la **publica se versiona** en `amplify/claves/cloudfront-publica.pem`, porque no es
 un secreto y porque rotarla invalidaria de golpe todas las URLs firmadas vigentes. Si falta,
 el backend falla al sintetizar en vez de crear una distribucion sin grupo de llaves de
 confianza, que serviria las fotografias a cualquiera que conociera la URL.
+
+**Ventana de validez: entre una y dos horas.** El vencimiento se redondea a una cubeta de una hora
+mas una hora de gracia, de modo que la URL es byte-identica durante toda la hora en curso para
+todos los usuarios. Sin eso la firma cambiaba en cada render y el cache del navegador jamas
+acertaba. El razonamiento completo, con lo que se paga en seguridad y por que la determinacion no
+relaja la regla 13, esta en la seccion 5.3 de `estrategia-aplicacion.md`.
+
+**`cachePolicy: CachePolicy.CACHING_OPTIMIZED` se declara explicita** en `defaultBehavior`, aunque
+sea el valor por omision del constructo. Todo el esquema depende de una propiedad de esa politica:
+que **los query strings no entran en la clave de cache**. Como la firma viaja en el query string,
+una politica que los incluyera convertiria cada render en un MISS de borde y anularia por completo
+tanto la cubeta como el `Cache-Control` de los objetos. Es una linea que convierte una suerte en
+una decision, y `amplify/infraestructura.test.ts` la vigila. La actualizacion es in situ: no
+reemplaza la distribucion, asi que `CLOUDFRONT_DOMAIN` no cambia.
 
 El acotamiento al prefijo `vehiculos/` es `originPath`, no una regla de comportamiento: una
 peticion a `/x.jpg` resuelve `s3://<bucket>/vehiculos/x.jpg`, de modo que `comprobantes/` es
@@ -134,7 +162,7 @@ Riesgo R4 — el punto mas delicado de la arquitectura.
 | `/convocatorias/[id]/lotes/[loteId]` | Ficha del vehiculo cacheable; estado de fila dinamico | Se separan con `Suspense` |
 | Estado de la fila | **Nunca cacheado** | Cambia con cada solicitud |
 | `/admin/*` | Nunca cacheado | Contenido no publicado |
-| Fotografias | CloudFront, cache larga | Inmutables por clave |
+| Fotografias | CloudFront, `max-age` de un ano + `immutable` | Los bytes nunca se reemplazan; la firma es estable por hora (2.4) |
 
 ### 3.1 La regla
 
