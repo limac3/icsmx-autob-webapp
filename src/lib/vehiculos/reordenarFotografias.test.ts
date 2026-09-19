@@ -267,6 +267,38 @@ describe("la principal sigue a la primera posicion", () => {
     });
   });
 
+  it("y arrastra la clave de su miniatura, nunca una sin la otra", async () => {
+    // Las dos describen la misma fotografia. Separarlas dejaria al listado de
+    // la pantalla 4.1 mostrando la miniatura de la principal anterior.
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      { actual: vehiculo(tres), ordenFotoIds: ["F3", "F2", "F1"], actor },
+      deps(falso),
+    );
+
+    expect(actualizacionDelVehiculo(falso)).toMatchObject({
+      ExpressionAttributeValues: {
+        ":claveMin": fotografiaDePrueba("F3", 1).variantes.min.claveS3,
+      },
+      ExpressionAttributeNames: {
+        "#principalClave": "fotografiaPrincipalClave",
+      },
+    });
+  });
+
+  it("si la cabeza no cambia, tampoco se toca la clave", async () => {
+    const falso = crearClienteFalso();
+    await reordenarFotografias(
+      // La cabeza sigue siendo F1: solo se intercambian las dos de atras.
+      { actual: vehiculo(tres), ordenFotoIds: ["F1", "F3", "F2"], actor },
+      deps(falso),
+    );
+
+    expect(
+      String(actualizacionDelVehiculo(falso)?.UpdateExpression ?? ""),
+    ).not.toContain("#principalClave");
+  });
+
   it("exige que el vehiculo siga en su estatus", async () => {
     // Misma condicion que el resto de las escrituras sobre el vehiculo: si
     // cambio de estatus mientras se reordenaba, la transaccion se cancela.

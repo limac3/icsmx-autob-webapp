@@ -40,3 +40,49 @@ export type SalidasMinimas = {
 
 export const puedeUsarBackendReal = (salidas: SalidasMinimas | null): boolean =>
   Boolean(salidas?.tabla && salidas?.rolComputoSsr) && !enBuildDeAmplify();
+
+/**
+ * Lo mismo, pero para las suites que son **regresion de una invariante** y no
+ * un arnes bajo demanda: la fila (regla 16), el vencimiento, tesoreria, los
+ * identificadores unicos y la inmutabilidad de la bitacora (regla 5).
+ *
+ * **El problema que resuelve es el silencio, no la omision.** Omitirlas sin
+ * backend es correcto y se queda: la compuerta tiene que poder correr en una
+ * maquina sin AWS. Lo que no es correcto es que entonces `verify:rapido`
+ * reporte verde sin distinguirse del verde que si ejercito la concurrencia —
+ * ese verde se lee como "regla 16 verificada" cuando nadie la verifico. Es el
+ * mismo modo de fallo que la Etapa 12 combatio en la alarma del barrido: no
+ * publicar nada es indistinguible de que todo este bien.
+ *
+ * Con `EXIGIR_INTEGRACION=1` la omision pasa a ser un **fallo ruidoso**. Esa es
+ * la compuerta previa al despliegue (`npm run verify:despliegue`), no la de
+ * cada iteracion.
+ *
+ * **No se pone en `amplify.yml`, y conviene que quede dicho por que.** Ahi
+ * `puedeUsarBackendReal` devuelve `false` a proposito —el rol del contenedor de
+ * build no puede asumir el rol de computo SSR, y que no pueda es correcto:
+ * poder asumirlo seria una escalada de privilegios
+ * (`desafios-implementacion.md` 70)—. Exigirlo alli no correria las pruebas:
+ * rompería el despliegue.
+ */
+export const backendParaRegresion = (
+  salidas: SalidasMinimas | null,
+  suite: string,
+): boolean => {
+  const utilizable = puedeUsarBackendReal(salidas);
+
+  if (!utilizable && process.env.EXIGIR_INTEGRACION === "1") {
+    throw new Error(
+      `EXIGIR_INTEGRACION=1 y "${suite}" no puede correr: ` +
+        (enBuildDeAmplify()
+          ? "se esta ejecutando en el contenedor de build de Amplify, que no " +
+            "puede asumir el rol de computo SSR. Esta variable no va en " +
+            "amplify.yml; la compuerta de integracion se corre antes, contra " +
+            "un sandbox."
+          : "falta `amplify_outputs.json` o las credenciales para asumir el " +
+            "rol de computo SSR. Levantar `npx ampx sandbox` y reintentar."),
+    );
+  }
+
+  return utilizable;
+};

@@ -86,6 +86,7 @@ export const aVehiculo = (
     condicionesMecanicas: texto(item.condicionesMecanicas),
     detallesEsteticos: texto(item.detallesEsteticos),
     fotografiaPrincipalId: texto(item.fotografiaPrincipalId),
+    fotografiaPrincipalClave: texto(item.fotografiaPrincipalClave),
     convocatoriaId: texto(item.convocatoriaId),
     motivoRetiro: texto(item.motivoRetiro),
   };

@@ -118,7 +118,12 @@ denegaria siempre (regla 18) y el enlace quedaria oculto para todo el mundo. Det
 
 `/mis-solicitudes` (seccion 3.5) y `/auditoria` (seccion 7) entran al menu cuando existan sus
 rutas. Un enlace hacia una ruta inexistente es un 404 ofrecido por la propia aplicacion, y hay
-una prueba que lo impide (`navegacion.test.ts`).
+una prueba que lo impide (`navegacion.test.ts`). **Las dos ya existen y estan en el menu.**
+
+`/mis-solicitudes` comparte accion con el catalogo —`solicitud:ver-mis-solicitudes`— y eso es
+correcto, no una duplicidad: las dos preguntan "¿esta persona compra?", que es una sola
+capacidad. Quien compra ve las dos entradas, porque responden preguntas distintas: el catalogo
+es para entrar a una fila y `/mis-solicitudes` para saber en cuales ya esta.
 
 Con varios permisos, se muestran todas las secciones que correspondan, en el orden declarado.
 Una sesion autenticada **sin ningun permiso** ve el menu vacio con un aviso, y conserva sus
@@ -266,7 +271,24 @@ Errores traducidos por diccionario:
 con plazo corriendo) primero, luego activas, luego historicas.
 
 Las `ADJUDICADA` muestran cuenta regresiva prominente. Es la pantalla que evita que alguien
-pierda un vehiculo por olvido.
+pierda un vehiculo por olvido — y mientras CES siga sin aprobacion (R17), **el unico canal que
+lo hace**: sin correo, no hay otra forma de enterarse de que se gano algo.
+
+**Dentro de "requieren tu atencion" manda el plazo que vence antes, no lo mas reciente.** Es el
+unico grupo donde el orden decide algo: quien tiene tres adjudicaciones vivas necesita ver
+primero la que esta a punto de perder, y esa puede ser la mas antigua.
+
+**Una `ADJUDICADA` con el plazo ya vencido no encabeza la pantalla y tampoco es historica.** No
+requiere atencion porque ya no hay nada que hacer —T3 condiciona la subida del comprobante a
+`venceEn > :ahora`—, y no es historica porque la transicion aun no se ha escrito: la escribira
+el barrido o la lectura del propio lote. Sale entre las activas, con el aviso de que vencio, y
+sin cuenta regresiva: un contador en cero seria cruel y falso.
+
+**La lista no lleva `miPosicion`.** Costaria dos `Select: COUNT` por fila; "que tan cerca estoy"
+se responde en el detalle del lote, donde vale una lectura. El turno si viene, porque esta en el
+item y es gratis.
+
+Se avisa cuando la consulta **se trunco**, igual que en la bitacora.
 
 ### 3.6 Subir comprobante
 
@@ -286,6 +308,22 @@ kilometraje, `Badge` de estatus, convocatoria activa si la tiene.
 
 Filtros por estatus y busqueda por marca o version. Acciones por fila en
 `eden-contextual-menu`.
+
+**Ninguna de las dos columnas de apoyo cuesta una lectura por fila, y las dos lo costaban.** El
+catalogo llega a 500 items por estatus, asi que resolverlas fila a fila lo habria convertido en
+la lectura mas cara del sistema:
+
+- **La fotografia** sale de `fotografiaPrincipalClave`, desnormalizada en el item del vehiculo
+  junto a `fotografiaPrincipalId`. Ese identificador ya existia con el proposito declarado de
+  que el listado no leyera la galeria de cada uno, pero con un ID no se construye una URL: la
+  desnormalizacion estaba a medias. La firma se hace en SSR, por peticion (regla 13).
+- **La convocatoria activa** se resuelve con **una** lectura del listado de convocatorias, no
+  con una por vehiculo. Si el identificador no resuelve a nombre no se muestra crudo: un ULID no
+  le dice nada a nadie.
+
+**Editar vive en el menu y tambien en el nombre de la fila.** El menu es un control del cliente y
+los filtros son un formulario `GET` que funciona sin JavaScript; dejar la unica via de edicion
+dentro del desplegable romperia esa propiedad.
 
 ### 4.2 `/admin/vehiculos/nuevo` y `/[id]/editar`
 
@@ -519,7 +557,13 @@ periodo; no se abre una quinta columna, que costaria ancho sin agrupar nada nuev
 > renglon. Derivar una de la otra recortando en los dos puntos seria una suposicion sobre la
 > puntuacion de cada idioma; son dos entradas y las dos estan vigiladas por `diccionarios.test.ts`.
 
-### 4.4 `/admin/convocatorias/nueva` y `/[id]/editar`
+### 4.4 `/admin/convocatorias/nueva` y la edicion
+
+> **La edicion no tiene ruta propia, y es deliberado.** `/admin/convocatorias/[id]/editar` no
+> responde: el formulario se monta dentro del detalle (`/admin/convocatorias/[id]`), que ya trae
+> el estatus, los lotes y las acciones de transicion. Construir la ruta aparte seria una segunda
+> vista de lo mismo, con dos sitios donde mantener el mismo formulario. Este documento pedia la
+> ruta; se corrige el documento, no el codigo.
 
 **El titulo de la pantalla es el `nombre`**, por la misma razon que en 3.2: el tipo no distingue
 una convocatoria de otra. Aqui el folio **no** se repite en el encabezado porque ya es un campo del
@@ -763,10 +807,31 @@ Solo lectura, sin un solo boton de mutacion.
 | Carga | `loading.tsx` con esqueleto de la forma real, no un giro centrado |
 | Vacio | Mensaje concreto + accion sugerida si el rol la permite |
 | Error | `error.tsx` con mensaje traducido y boton de reintento |
+| Error del layout | `global-error.tsx`, que trae su propio `<html>` |
 | 404 | Mensaje neutro. **Sin distinguir "no existe" de "no tienes acceso"** (R-01) |
 | Sin sesion | Redireccion a Okta, conservando el destino |
 | Sin permiso | Mensaje claro, sin revelar la existencia del recurso |
 | Fuera de linea | Aviso; la accion no se encola ni se reintenta sola |
+
+**Donde vive cada uno, y por que no en todas partes:**
+
+- **`error.tsx` y `global-error.tsx` son unicos, en la raiz**, y cubren todo lo que cuelga de
+  ella. Un boundary por pantalla repetiria el mismo marcado sin decir nada distinto.
+- **`loading.tsx` va solo donde la espera es real y la forma es estable**: el catalogo y el
+  detalle de convocatoria, `/mis-solicitudes`, el catalogo de vehiculos y la bitacora. Uno en la
+  raiz seria imposible: el esqueleto tiene que tener *la forma de lo que viene*, y esa forma
+  cambia por pantalla. El componente `Esqueleto` trae las dos que hacen falta —tabla y rejilla— y
+  se detiene con `prefers-reduced-motion`.
+
+**Un error boundary de Next es forzosamente un componente cliente**, asi que no puede leer el
+header `x-lang` como las paginas. El idioma se toma del `lang` del documento, que el layout de
+servidor ya escribio — el mismo valor, no una segunda resolucion. `global-error.tsx` es la
+excepcion: sustituye al layout entero, asi que cae al idioma por omision y no usa componentes de
+Eden, porque apoyarse en el layout que acaba de fallar seria apostar a lo unico que ya se rompio.
+
+**Ningun boundary muestra `error.message`.** Puede llevar nombres de tabla, claves o fragmentos
+de consulta. Se muestra el `digest`, que es lo unico que ata la pantalla con la traza del
+servidor sin filtrar nada.
 
 ---
 

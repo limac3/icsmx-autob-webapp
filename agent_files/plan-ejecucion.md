@@ -1428,10 +1428,9 @@ en dos.
       enriquecida y el tipo elegido—. Consola sin errores. Corrigio dos defectos que solo se ven
       con la pantalla delante: el reinicio del formulario (`desafios` 48) y una ayuda que
       duplicaba el texto del propio error al concatenarse con el
-- [ ] **[OPERADOR]** confirmar si el numero economico y el de serie son en la practica el **mismo**
-      dato con dos nombres. Se dejaron separados porque describen cosas distintas —etiqueta interna
-      de activo contra numero del fabricante—, pero si coinciden se colapsan a uno y se ahorra un
-      centinela por alta
+- [x] **[OPERADOR]** confirmo que el numero economico y el de serie **no son el mismo dato**:
+      etiqueta interna de activo contra numero del fabricante. Se quedan como dos campos
+      separados, cada uno con su propio centinela de alta
 
 > **Un defecto real que encontro esta etapa, y que ninguna compuerta veia:** `CAMPOS_VEHICULO` se
 > quedo sin los dos campos nuevos, y `as const satisfies readonly (keyof DatosVehiculo)[]` **no
@@ -2469,6 +2468,153 @@ que mantener y probar para siempre.
 
 **Salida esperada:** un catalogo que baja unos pocos MB en vez de decenas, fotografias que no
 desaparecen, EXIF que no viaja, y un pie corregible sin borrar la foto.
+
+---
+
+## Etapa 18 — Lo que el participante no ve de sus propios compromisos ✅
+
+**Objetivo:** cerrar los huecos que dejo el recorrido de las Etapas 0 a 17, revisados contra
+`ui-ux-requerimientos.md` y contra el codigo.
+
+**Dependencias:** ninguna dura. Las cuatro entregas son independientes entre si.
+
+**Origen:** revision de cobertura pedida por el operador el 2026-09-19. No es una ampliacion de
+alcance: **todo lo de esta etapa ya estaba especificado** y quedo sin construir, salvo el punto D,
+que es una correccion de la compuerta.
+
+> **El hallazgo que ordena la etapa.** Los dos unicos canales que le dicen a una persona "ganaste
+> y el reloj corre" estan ausentes **a la vez**: el correo no sale (R17, CES sin aprobar) y la
+> vista agregada de sus solicitudes no existe. Mientras tanto R-13 cuenta en horas naturales,
+> 24/7. Hoy un adjudicado se entera solo si recuerda a que lote entro y navega hasta el. No son
+> cuatro defectos sueltos: el sistema es solido en *correccion del servidor* y delgado en
+> *avisarle a la persona lo que debe*. De los dos canales, este plan solo puede cerrar uno.
+
+### A — `/mis-solicitudes` (`ui-ux-requerimientos.md` 3.5)
+
+**La justificacion que la descarto caduco, y conviene que quede dicho por que.** La Etapa 9 la
+omitio el 2026-09-08 con un argumento correcto entonces: `BloqueDeAccionDeLote` ya muestra plazo y
+estado, asi que la pantalla seria "una segunda vista de lo mismo". Eso valia cuando un participante
+sostenia **una sola adjudicacion activa en todo el sistema** — la version de R-09 vigente hasta la
+Etapa 14. Esa version se sustituyo el 2026-09-14 por el cupo por convocatoria y se le sumo R-22:
+hoy formarse en muchos lotes, de varias convocatorias, **es la funcionalidad**. La vista por lote
+dejo de ser equivalente a la vista agregada el dia que el cupo entro, y nadie volvio sobre la
+decision porque nada la ataba a R-09.
+
+- [x] `MiSolicitudDTO` en `src/types/fila.ts`
+- [x] `src/lib/fila/listarMisSolicitudes.ts` — **PA-09 estrena consumidor**. GSI3 existe, esta
+      desplegado y afirmado en `infraestructura.test.ts` desde la Etapa 3, y hasta hoy solo lo leia
+      la auditoria. La pantalla no cuesta ni un indice ni una escritura nueva
+- [x] `src/app/mis-solicitudes/page.tsx` y `src/components/MisSolicitudes.tsx`
+- [x] La agrupacion y el orden son **funciones puras** en `src/lib/domain/misSolicitudes.ts`, no
+      logica del componente: deciden que ve primero quien tiene un plazo corriendo
+- [x] Entrada de navegacion, diccionarios y contrato en `api-contracts.md` 4.0
+
+**Decisiones de esta pantalla, y su razon:**
+
+- **D-35 — la lista NO aplica la verificacion perezosa del vencimiento (D-7).** `consultarMiLugar`
+  si la aplica, y es correcto ahi: mira **un** lote. Aqui serian N escrituras condicionales
+  disparadas por una lectura de lista, que es la forma exacta del gasto que R26 midio en el camino
+  caliente, y un **tercer** camino de escritura del vencimiento cuando D-7 define dos. La lista
+  compara `venceEn` contra el reloj del **servidor** y dice la verdad —"el plazo vencio"— sin
+  pretender que la transicion ya se escribio. Resolverla sigue siendo del barrido y del detalle del
+  lote.
+- **D-36 — la lista lleva `miTurno` pero no `miPosicion`.** El turno esta en el item y es gratis;
+  la posicion cuesta dos `Select: COUNT` **por fila**. La seccion 3.5 pide agrupacion y cuenta
+  regresiva, no posicion — y quien quiera saber que tan cerca esta abre el lote, que es donde esa
+  pregunta tiene respuesta barata.
+- **D-37 — orden descendente por `solicitadoEn`, con tope y aviso de truncado.** `GSI3SK` es
+  `SOL#<solicitadoEn>#<loteId>` y una `Query` ascendente con `Limit` devolveria **las mas viejas**,
+  dejando fuera justo lo que tiene plazo corriendo. Es el mismo modo de fallo silencioso que la
+  decision del 2026-09-15 encontro en `listarConvocatorias` con `MAXIMO_POR_ESTATUS`.
+
+### B — Estados transversales (`ui-ux-requerimientos.md` 8)
+
+No existe **ni un solo** `loading.tsx` ni `error.tsx` en `src/app/`. Hoy un fallo de servidor pinta
+el error boundary por omision de Next, en ingles y sin reintento.
+
+- [x] `src/app/error.tsx` y `src/app/global-error.tsx`, los dos unicos y en la raiz
+- [x] `loading.tsx` en las cinco pantallas con lectura real y forma estable, con el componente
+      `Esqueleto` —tabla y rejilla—, que se detiene con `prefers-reduced-motion`
+- [x] **El idioma del boundary sale del `lang` del documento**, que el layout de servidor ya
+      escribio: un error boundary es forzosamente cliente y no puede leer el header `x-lang`. No
+      es una segunda resolucion del idioma, es la lectura de la primera
+      (`src/lib/idiomaDelDocumento.ts`)
+- [x] **Ningun boundary muestra `error.message`**, que puede llevar nombres de tabla o fragmentos
+      de consulta; se muestra el `digest`, que ata la pantalla con la traza sin filtrar nada
+
+### C — La accion sin prueba
+
+- [x] `src/app/actions/adjudicacion.test.ts`, 14 casos. Era la **unica** de las siete actions sin
+      archivo de prueba, y precisamente la que R-22 senala: la que lleva firma humana y motivo
+- [x] **`exigirPermiso` y `puedeEjecutar` no se simulan**: media prueba de esta action es que las
+      cuatro guardas de `adjudicacion:adjudicar` se apliquen de verdad —modalidad manual,
+      convocatoria publicada, lote libre y motivo presente—, y un doble solo comprobaria que el
+      doble dice que si
+
+### D — La regla 16 no corre sola en ningun lado, y hoy calla
+
+**Mi primer diagnostico de esto era erroneo y se corrige aqui.** Propuse correr las suites de
+integracion en el build de Amplify; el proyecto **ya lo evaluo y lo rechazo con razon**
+(`backendUtilizable.ts`, `desafios-implementacion.md` 70): el rol del contenedor de build no puede
+asumir el rol de computo SSR, y que no pueda es lo correcto — poder asumirlo seria escalada de
+privilegios. No hay que revertir esa decision.
+
+El problema real es otro y es de **silencio**: no hay CI, y en una maquina sin sandbox
+`verify:rapido` omite la prueba de concurrencia y **reporta verde igual**. Ese verde se lee como
+"regla 16 verificada" cuando nadie la verifico. Es el mismo modo de fallo que la Etapa 12 combatio
+en las alarmas: no publicar nada es indistinguible de que todo este bien.
+
+- [x] `backendParaRegresion` convierte la omision en **fallo** cuando `EXIGIR_INTEGRACION=1`, sin
+      tocar `puedeUsarBackendReal`, que se queda igual porque es correcta. Aplicado a las cinco
+      suites que son regresion de una invariante, **no** a los cuatro arneses bajo demanda
+      (`PROTOTIPO_R18`, `CARGA_APERTURA`, `EQUIDAD_APERTURA`, `BARRIDO_LOCAL`), que se omiten a
+      proposito y por decision ya registrada
+- [x] `npm run verify:despliegue` y el **paso 0 de `runbooks.md` R-14**
+- [x] Comprobado en los dos sentidos: sin la variable omite en verde; con ella y sin poder asumir
+      el rol, falla nombrando la suite y explicando que la variable **no va en `amplify.yml`** —
+      que es el atajo previsible, y el que rompería el despliegue
+
+### E — La columna de fotografia obligo a terminar una desnormalizacion a medias
+
+Lo encontro implementar D: `fotografiaPrincipalId` existe con el proposito declarado de "que el
+listado no tenga que leer la galeria de cada uno", pero **con un identificador no se construye
+una URL**. El listado sabia cual era la principal y no podia mostrarla, asi que la columna de
+§4.1 costaba una `Query` por fila sobre un catalogo de hasta 500 items por estatus.
+
+- [x] `fotografiaPrincipalClave` en el item del vehiculo: la clave S3 de la variante `min`
+- [x] Mantenida por las **mismas tres** transacciones que ya mantenian el identificador, en la
+      misma `UpdateExpression`, con una prueba por servicio que exige que no se separen. Si
+      divergieran, el listado pediria la miniatura de una fotografia que ya no es la principal —
+      o, tras un borrado, la de un objeto que ya no existe: un 403 sin nada que lo explique
+- [x] Sin migracion ni rama de compatibilidad, con el criterio de la Etapa 17: no hay nada en
+      produccion
+- [x] La firma se hace en SSR, por peticion (regla 13). La miniatura va `alt=""` y
+      `aria-hidden`: **repite** lo que dice la celda de al lado, y describirla haria al lector de
+      pantalla leer cada vehiculo dos veces
+
+**Fuera de alcance, con su razon:**
+
+- **`/admin/convocatorias/[id]/editar` no se construye.** La ruta esta en el documento y no
+  responde, pero el formulario vive dentro del detalle y funciona. Construir la ruta seria una
+  segunda vista de lo mismo — el argumento que la Etapa 9 aplico bien, aunque despues caducara
+  para 3.5. **Se corrige el documento, no el codigo.**
+- **El correo.** Es R17 y no depende de esta etapa. Mientras siga sin aprobacion,
+  `/mis-solicitudes` es el **unico** canal por el que alguien se entera de que gano.
+
+**Verificacion:**
+
+- [x] Compuerta completa en verde — **2 721 pruebas**, `typecheck` y `build` limpios
+- [x] `/mis-solicitudes` sale `ƒ (Dynamic)` en la salida del build: no entra en cache estatica
+      (regla 14)
+- [x] La prueba de concurrencia de la fila **corrio de verdad** contra el sandbox durante esta
+      etapa (25 pruebas, ~28 s), que es justamente lo que D existe para no dar por supuesto
+- [x] Ninguna fila de `/mis-solicitudes` lleva `participanteId`, ni el propio, afirmado sobre la
+      serializacion
+- [ ] **`[OPERADOR]`** Las dos pantallas en el navegador: que la cuenta regresiva de una
+      adjudicacion propia avance, que el esqueleto aparezca al navegar, y que el catalogo de
+      vehiculos muestre las miniaturas sin desalinear las filas
+- [ ] **`[OPERADOR]`** Forzar un error de servidor y ver el boundary traducido con su boton de
+      reintento. Es lo unico que jsdom no puede comprobar
 
 ---
 

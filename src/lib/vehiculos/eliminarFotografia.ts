@@ -87,8 +87,10 @@ export const eliminarFotografia = async (
           Update: {
             TableName: nombreDeTabla(),
             Key: clave.vehiculo(actual.vehiculoId),
+            // Identificador y clave de la nueva principal, siempre juntos.
             UpdateExpression: sucesora
-              ? "SET #principal = :sucesora, #actualizadoEn = :momento, #actualizadoPor = :actor"
+              ? "SET #principal = :sucesora, #principalClave = :claveMin," +
+                " #actualizadoEn = :momento, #actualizadoPor = :actor"
               : "SET #actualizadoEn = :momento, #actualizadoPor = :actor",
             ConditionExpression:
               "attribute_exists(PK) AND #estatus = :estatusEsperado",
@@ -96,13 +98,23 @@ export const eliminarFotografia = async (
               "#estatus": "estatus",
               "#actualizadoEn": "actualizadoEn",
               "#actualizadoPor": "actualizadoPor",
-              ...(sucesora ? { "#principal": "fotografiaPrincipalId" } : {}),
+              ...(sucesora
+                ? {
+                    "#principal": "fotografiaPrincipalId",
+                    "#principalClave": "fotografiaPrincipalClave",
+                  }
+                : {}),
             },
             ExpressionAttributeValues: {
               ":estatusEsperado": actual.estatus,
               ":momento": momento,
               ":actor": entrada.actor.id,
-              ...(sucesora ? { ":sucesora": sucesora.fotoId } : {}),
+              ...(sucesora
+                ? {
+                    ":sucesora": sucesora.fotoId,
+                    ":claveMin": sucesora.variantes.min.claveS3,
+                  }
+                : {}),
             },
           },
         },

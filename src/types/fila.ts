@@ -1,6 +1,7 @@
 // Fuente: api-contracts.md seccion 4.1, proyecto.md R-12 y
 // modelo-datos-dynamodb.md 5.2.
 
+import type { GrupoDeMiSolicitud } from "@/lib/domain/misSolicitudes";
 import type { EstatusSolicitud } from "./solicitud";
 
 /**
@@ -103,6 +104,48 @@ export type MiLugarDTO = {
    * propia solicitud.
    */
   motivoRechazo?: string;
+};
+
+/**
+ * Una fila de `/mis-solicitudes` (ui-ux-requerimientos.md 3.5, PA-09).
+ *
+ * **Todo lo que hay aqui es del propio titular**, asi que R-12 no restringe
+ * nada: la regla protege la identidad de *terceros*, y en esta pantalla no
+ * aparece ninguno. Lo que si se mantiene es que no haya `participanteId` —ni
+ * el propio—: la pagina ya sabe quien mira, porque lo saca de la sesion, y un
+ * identificador en el DTO solo invitaria a alguien a pasarlo como parametro.
+ *
+ * **No trae `miPosicion`, y es deliberado (D-36).** Costaria dos
+ * `Select: COUNT` por fila. `miTurno` viene en el item y es gratis; "que tan
+ * cerca estoy" se responde en el detalle del lote, donde vale una lectura.
+ */
+export type MiSolicitudDTO = {
+  solicitudId: string;
+  loteId: string;
+  convocatoriaId: string;
+  convocatoriaFolio: string;
+  convocatoriaNombre: string;
+  /** Del vehiculo del lote. Vacios si el vehiculo no se pudo leer. */
+  marca: string;
+  version: string;
+  modelo: number;
+  precio: number;
+  estatus: EstatusSolicitud;
+  /** Asignado por el contador atomico. Inmutable (R-08). */
+  miTurno: number;
+  solicitadoEn: string;
+  /** Solo cuando esta `ADJUDICADA`: el plazo para pagar (R-13). */
+  venceEn?: string;
+  /**
+   * El plazo ya paso segun el reloj del **servidor**, pero la transicion aun no
+   * se ha escrito (D-35: esta lectura no la dispara).
+   *
+   * Existe para que la pantalla pueda decir "el plazo vencio" sin afirmar que
+   * la solicitud ya esta cancelada, que seria adelantarse a una escritura que
+   * todavia no ocurrio.
+   */
+  plazoVencido?: boolean;
+  grupo: GrupoDeMiSolicitud;
 };
 
 /**

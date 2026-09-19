@@ -276,6 +276,46 @@ describe("fotografia principal", () => {
     });
   });
 
+  it("la clave de la miniatura viaja con el identificador, en la misma escritura", async () => {
+    // Si divergieran, el listado de la pantalla 4.1 mostraria la miniatura de
+    // una fotografia que ya no es la principal. Son una sola desnormalizacion,
+    // y por eso se compara contra la variante que el propio `Put` acaba de
+    // escribir, no contra una cadena copiada a mano.
+    const { dynamo, deps } = escenario();
+    await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
+
+    const items = itemsDeTransaccion(dynamo);
+    const variantes = items[0]?.Put?.Item?.variantes as
+      Record<string, { claveS3: string }> | undefined;
+    const update = items[1]?.Update;
+
+    expect(update?.ExpressionAttributeNames).toMatchObject({
+      "#principalClave": "fotografiaPrincipalClave",
+    });
+    expect(update?.ExpressionAttributeValues).toMatchObject({
+      ":claveMin": variantes?.min.claveS3,
+    });
+    // `min` y no `max`: la unica superficie que la consume es una miniatura.
+    expect(update?.ExpressionAttributeValues).not.toMatchObject({
+      ":claveMin": variantes?.max.claveS3,
+    });
+  });
+
+  it("si no cambia la principal, tampoco toca su clave", async () => {
+    const { dynamo, deps } = escenario();
+    await agregarFotografia(
+      {
+        actual: vehiculo([foto("F1", 1)], { fotografiaPrincipalId: "F1" }),
+        archivo,
+        actor,
+      },
+      deps,
+    );
+
+    const update = itemsDeTransaccion(dynamo)[1]?.Update;
+    expect(String(update?.UpdateExpression)).not.toContain("#principalClave");
+  });
+
   it("una posterior no cambia la principal si no se pide", async () => {
     const { dynamo, deps } = escenario();
     await agregarFotografia(

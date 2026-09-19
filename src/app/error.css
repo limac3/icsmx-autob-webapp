@@ -1,0 +1,22 @@
+/* Error boundary. Solo layout; la apariencia la ponen los componentes de Eden
+   (regla 10). */
+
+.error-aplicacion {
+  display: grid;
+  gap: 1rem;
+  justify-items: start;
+  padding: 1.5rem;
+}
+
+.error-aplicacion__acciones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* El identificador de la traza: visible para poder citarlo, discreto porque no
+   le dice nada a quien no va a buscarlo en el registro. */
+.error-aplicacion__digest {
+  opacity: 0.6;
+  font-family: monospace;
+}

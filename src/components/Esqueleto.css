@@ -1,0 +1,59 @@
+/* Esqueleto de carga. Solo layout y un pulso; no imita ningun componente de
+   Eden, solo reserva su sitio. */
+
+.esqueleto {
+  display: block;
+  width: 100%;
+}
+
+/* Visible para el lector de pantalla, fuera de la pantalla para la vista. No se
+   usa `display: none` porque eso tambien lo oculta al lector. */
+.esqueleto__anuncio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.esqueleto__tabla {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.esqueleto__tabla-item {
+  height: 3rem;
+}
+
+.esqueleto__rejilla {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+.esqueleto__rejilla-item {
+  height: 14rem;
+}
+
+.esqueleto__tabla-item,
+.esqueleto__rejilla-item {
+  border-radius: 0.5rem;
+  background-color: light-dark(#e8e8e8, #2a2a2a);
+  animation: esqueleto-pulso 1.6s ease-in-out infinite;
+}
+
+@keyframes esqueleto-pulso {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Un pulso continuo es justamente lo que la preferencia pide desactivar. La
+   forma se conserva; lo que se detiene es el movimiento. */
+@media (prefers-reduced-motion: reduce) {
+  .esqueleto__tabla-item,
+  .esqueleto__rejilla-item {
+    animation: none;
+  }
+}

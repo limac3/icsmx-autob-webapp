@@ -14,6 +14,7 @@
     "lint": "festack-scripts lint",
     "verify": "festack-scripts verify",
     "verify:rapido": "node scripts/verify-rapido.mjs",
+    "verify:despliegue": "node scripts/verify-despliegue.mjs",
     "verify:lock": "node scripts/verificar-lock.mjs",
     "prototipo:fila": "node scripts/prototipo-fila.mjs",
     "carga:apertura": "node scripts/carga-apertura.mjs",

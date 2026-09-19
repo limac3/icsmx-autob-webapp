@@ -243,8 +243,12 @@ export const agregarFotografia = async (
         Update: {
           TableName: nombreDeTabla(),
           Key: clave.vehiculo(actual.vehiculoId),
+          // Identificador y clave **siempre juntos**: si divergieran, el
+          // listado de la pantalla 4.1 mostraria la miniatura de una
+          // fotografia que ya no es la principal.
           UpdateExpression: seraPrincipal
-            ? "SET #principal = :fotoId, #actualizadoEn = :momento, #actualizadoPor = :actor"
+            ? "SET #principal = :fotoId, #principalClave = :claveMin," +
+              " #actualizadoEn = :momento, #actualizadoPor = :actor"
             : "SET #actualizadoEn = :momento, #actualizadoPor = :actor",
           ConditionExpression:
             "attribute_exists(PK) AND #estatus = :estatusEsperado",
@@ -252,13 +256,20 @@ export const agregarFotografia = async (
             "#estatus": "estatus",
             "#actualizadoEn": "actualizadoEn",
             "#actualizadoPor": "actualizadoPor",
-            ...(seraPrincipal ? { "#principal": "fotografiaPrincipalId" } : {}),
+            ...(seraPrincipal
+              ? {
+                  "#principal": "fotografiaPrincipalId",
+                  "#principalClave": "fotografiaPrincipalClave",
+                }
+              : {}),
           },
           ExpressionAttributeValues: {
             ":estatusEsperado": actual.estatus,
             ":momento": momento,
             ":actor": entrada.actor.id,
-            ...(seraPrincipal ? { ":fotoId": fotoId } : {}),
+            ...(seraPrincipal
+              ? { ":fotoId": fotoId, ":claveMin": variantes.min.claveS3 }
+              : {}),
           },
         },
       },

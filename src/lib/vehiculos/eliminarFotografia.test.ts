@@ -176,6 +176,29 @@ describe("la principal se hereda", () => {
     ).toMatchObject({ ":sucesora": "F2" });
   });
 
+  it("la sucesora se hereda con su miniatura, no solo con su identificador", async () => {
+    // Si se heredara solo el identificador, el listado de la pantalla 4.1
+    // seguiria pidiendo la miniatura de la fotografia recien borrada: un 403
+    // de CloudFront sobre un objeto que ya no existe.
+    const { dynamo, deps } = escenario();
+    await eliminarFotografia(
+      {
+        actual: vehiculo([foto("F1", 1), foto("F2", 2)], "F1"),
+        fotoId: "F1",
+        actor,
+      },
+      deps,
+    );
+
+    const update = itemsDeTransaccion(dynamo)[1]?.Update;
+    expect(update?.ExpressionAttributeNames).toMatchObject({
+      "#principalClave": "fotografiaPrincipalClave",
+    });
+    expect(update?.ExpressionAttributeValues).toMatchObject({
+      ":claveMin": foto("F2", 2).variantes.min.claveS3,
+    });
+  });
+
   it("no toca la principal cuando se borra otra", async () => {
     const { dynamo, deps } = escenario();
     await eliminarFotografia(

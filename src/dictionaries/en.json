@@ -2,7 +2,10 @@
   "comun": {
     "nombreAplicacion": "Fleet Vehicle Sale",
     "cargando": "Loading…",
-    "error": "Something went wrong"
+    "error": "Something went wrong",
+    "errorDescripcion": "We could not finish what you were doing. Your information was not lost.",
+    "reintentar": "Try again",
+    "volverAlInicio": "Go to home"
   },
   "estadoServicio": {
     "titulo": "Service status",
@@ -25,6 +28,7 @@
     "miSesion": "My session",
     "sinAccesos": "No access assigned",
     "convocatorias": "Sale announcements",
+    "misSolicitudes": "My requests",
     "vehiculos": "Vehicles",
     "convocatoriasAdmin": "Manage sale announcements",
     "aprobaciones": "Approvals",
@@ -177,6 +181,11 @@
     "todos": "All",
     "sinResultados": "No vehicle matches the search.",
     "catalogoVacio": "No vehicles registered yet.",
+    "acciones": "Actions",
+    "fotografia": "Photo",
+    "sinFotografia": "No photo",
+    "convocatoriaActiva": "Sale announcement",
+    "sinConvocatoria": "Not in a sale",
     "creado": "Vehicle registered.",
     "actualizado": "Changes saved.",
     "retirado": "Vehicle removed from the catalog.",
@@ -472,6 +481,24 @@
     "formatosComprobante": "JPG, PNG or PDF, up to 10 MB.",
     "avisoRevisionComprobante": "This file will be reviewed by treasury.",
     "vistaPreviaSinAccion": "Preview: this is how participants will see this section. No queue actions can be taken from here."
+  },
+  "misSolicitudes": {
+    "titulo": "My requests",
+    "descripcion": "Everything you have joined a queue for, and what is still pending.",
+    "sinSolicitudes": "You have not joined any queue yet.",
+    "irAlCatalogo": "Browse sale announcements",
+    "grupoRequiereAtencion": "Need your attention",
+    "grupoActiva": "In progress",
+    "grupoHistorica": "History",
+    "explicacionRequiereAtencion": "You won these vehicles and the payment deadline is running. If it expires, the vehicle passes to the next person in the queue.",
+    "columnaVehiculo": "Vehicle",
+    "columnaConvocatoria": "Sale announcement",
+    "columnaSituacion": "Status",
+    "turno": "Queue number",
+    "restante": "Time remaining",
+    "plazoVencido": "The deadline expired. The vehicle will be released to the next person in the queue.",
+    "verElLote": "View vehicle",
+    "truncada": "Showing your most recent requests. There is more history than fits on this screen."
   },
   "filaAdministrativa": {
     "titulo": "Vehicle queue",

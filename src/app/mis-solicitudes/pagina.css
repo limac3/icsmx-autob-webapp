@@ -1,0 +1,20 @@
+/* Pantalla 3.5. Solo layout; la apariencia la ponen los componentes de Eden
+   (regla 10). */
+
+.mis-solicitudes {
+  display: grid;
+  gap: 1.5rem;
+  padding: 1.5rem;
+}
+
+.mis-solicitudes__encabezado {
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* Un elemento de rejilla aporta su ancho de min-content como minimo de la
+   columna, y una tabla ancha desbordaria toda la pagina en movil, no solo la
+   tabla. Mismo remedio que `.catalogo`. */
+.mis-solicitudes > * {
+  min-inline-size: 0;
+}

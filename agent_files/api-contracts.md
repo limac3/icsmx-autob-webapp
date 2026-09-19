@@ -276,6 +276,46 @@ ya tiene en la mano. El permiso se comprueba igual, en la pagina.
 | --- | --- | --- | --- |
 | `consultarMiLugar` | `{ loteId, participanteId }` | `MiLugarDTO \| null` | `solicitud:ver-mi-lugar` |
 | `consultarTamanoFila` | `{ loteId }` | `number` | el de la pantalla que lo muestra |
+| `listarMisSolicitudes` | `participanteId` | `{ solicitudes: MiSolicitudDTO[], truncada }` | `solicitud:ver-mis-solicitudes` |
+
+### 4.0 `listarMisSolicitudes` — PA-09, la pantalla 3.5
+
+`participanteId` **lo pasa la pagina desde la sesion**, nunca un parametro de ruta: no hay donde
+escribir el identificador de otro.
+
+```ts
+type MiSolicitudDTO = {
+  solicitudId: string;
+  loteId: string;
+  convocatoriaId: string;
+  convocatoriaFolio: string;
+  convocatoriaNombre: string;
+  marca: string;            // del vehiculo; vacio si no se pudo leer
+  version: string;
+  modelo: number;
+  precio: number;
+  estatus: EstatusSolicitud;
+  miTurno: number;          // sin `miPosicion`: costaria dos COUNT por fila
+  solicitadoEn: string;
+  venceEn?: string;
+  plazoVencido?: boolean;   // el plazo paso, la transicion aun no se escribio
+  grupo: "REQUIERE_ATENCION" | "ACTIVA" | "HISTORICA";
+};
+```
+
+> **No lleva `participanteId`, ni el propio.** Todo lo demas es del titular, asi que R-12 no
+> restringe nada —la regla protege la identidad de *terceros*—; el identificador se omite para
+> que a nadie se le ocurra pasarlo como parametro.
+
+**Esta lectura no resuelve vencimientos, al contrario que `consultarMiLugar`.** Aquella aplica la
+verificacion perezosa de D-7 sobre **un** lote; aqui serian N escrituras condicionales
+disparadas por una lista, y un tercer camino de escritura del vencimiento donde D-7 define dos.
+Lo que hace es comparar `venceEn` contra el reloj del servidor y reportarlo en `plazoVencido`,
+sin afirmar que la solicitud ya esta cancelada.
+
+**`ScanIndexForward: false` es de correccion, no de presentacion.** `GSI3SK` es
+`SOL#<solicitadoEn>#<loteId>`: ascendente con `Limit` devolveria las mas viejas y dejaria fuera
+justo las que pueden tener un plazo corriendo. `truncada` avisa cuando se alcanzo el tope.
 
 ### 4.1 `MiLugarDTO` — la proyeccion mas delicada del sistema
 

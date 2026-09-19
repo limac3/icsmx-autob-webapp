@@ -9,3 +9,27 @@
   margin: 2rem 0;
   text-align: center;
 }
+
+/* Tamano fijo y `object-fit`: las variantes conservan la proporcion del
+   original, asi que sin esto cada fila tendria una altura distinta. */
+.tabla-vehiculos__miniatura {
+  inline-size: 80px;
+  block-size: 60px;
+  object-fit: cover;
+  border-radius: 0.25rem;
+  display: block;
+}
+
+.tabla-vehiculos__acciones {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.5rem;
+  list-style: none;
+  min-inline-size: 12rem;
+}
+
+.tabla-vehiculos__acciones a {
+  display: block;
+  padding: 0.375rem 0.5rem;
+}

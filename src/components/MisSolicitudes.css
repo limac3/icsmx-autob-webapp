@@ -1,0 +1,21 @@
+/* Pantalla 3.5. Solo layout; la apariencia la ponen los componentes de Eden
+   (regla 10). */
+
+.mis-solicitudes__grupo {
+  margin-block-end: 2rem;
+}
+
+.mis-solicitudes__tabla {
+  width: 100%;
+}
+
+.mis-solicitudes__vacio {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.mis-solicitudes__truncada {
+  opacity: 0.7;
+}

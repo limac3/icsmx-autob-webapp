@@ -81,6 +81,27 @@ export type Vehiculo = DatosVehiculo & {
    * el listado no tenga que leer la galeria de cada uno.
    */
   fotografiaPrincipalId?: string;
+  /**
+   * Clave S3 de la variante `min` de la fotografia principal, para que el
+   * listado pueda **mostrarla** y no solo saber cual es.
+   *
+   * **Completa la desnormalizacion que `fotografiaPrincipalId` dejo a medias.**
+   * Ese campo existe con el proposito declarado arriba —que el listado no lea
+   * la galeria de cada vehiculo—, pero con un identificador no se puede
+   * construir una URL: hace falta la clave. Sin esta, la columna de fotografia
+   * de la pantalla 4.1 costaba una `Query` por fila sobre un catalogo de hasta
+   * 500 items por estatus.
+   *
+   * `min` y no `max` porque la unica superficie que la consume es una
+   * miniatura de tabla. **Nunca** una URL firmada: esas se generan por peticion
+   * (regla 13).
+   *
+   * Opcional porque un vehiculo sin fotografias no la tiene. La mantienen las
+   * mismas tres transacciones que mantienen `fotografiaPrincipalId`, y las dos
+   * se escriben siempre juntas: si divergieran, el listado mostraria la
+   * miniatura de una fotografia que ya no es la principal.
+   */
+  fotografiaPrincipalClave?: string;
   /** Convocatoria activa, mientras el vehiculo esta `EN_CONVOCATORIA`. */
   convocatoriaId?: string;
   motivoRetiro?: string;

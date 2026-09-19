@@ -2,7 +2,10 @@
   "comun": {
     "nombreAplicacion": "Venta de Vehículos de Flotilla",
     "cargando": "Cargando…",
-    "error": "Ocurrió un error"
+    "error": "Ocurrió un error",
+    "errorDescripcion": "No pudimos completar lo que estabas haciendo. Tu información no se perdió.",
+    "reintentar": "Reintentar",
+    "volverAlInicio": "Ir al inicio"
   },
   "estadoServicio": {
     "titulo": "Estado del servicio",
@@ -25,6 +28,7 @@
     "miSesion": "Mi sesión",
     "sinAccesos": "Sin accesos asignados",
     "convocatorias": "Convocatorias",
+    "misSolicitudes": "Mis solicitudes",
     "vehiculos": "Vehículos",
     "convocatoriasAdmin": "Administrar convocatorias",
     "aprobaciones": "Aprobaciones",
@@ -177,6 +181,11 @@
     "todos": "Todos",
     "sinResultados": "Ningún vehículo coincide con la búsqueda.",
     "catalogoVacio": "Todavía no hay vehículos registrados.",
+    "acciones": "Acciones",
+    "fotografia": "Fotografía",
+    "sinFotografia": "Sin fotografía",
+    "convocatoriaActiva": "Convocatoria",
+    "sinConvocatoria": "Sin convocatoria",
     "creado": "Vehículo registrado.",
     "actualizado": "Cambios guardados.",
     "retirado": "Vehículo retirado del catálogo.",
@@ -472,6 +481,24 @@
     "formatosComprobante": "JPG, PNG o PDF, hasta 10 MB.",
     "avisoRevisionComprobante": "Este archivo será revisado por tesorería.",
     "vistaPreviaSinAccion": "Vista previa: así verá el participante esta sección. Desde aquí no se puede actuar sobre la fila."
+  },
+  "misSolicitudes": {
+    "titulo": "Mis solicitudes",
+    "descripcion": "Todo en lo que te has formado, y lo que falta por hacer.",
+    "sinSolicitudes": "Todavía no te has formado en ninguna fila.",
+    "irAlCatalogo": "Ver convocatorias",
+    "grupoRequiereAtencion": "Requieren tu atención",
+    "grupoActiva": "En curso",
+    "grupoHistorica": "Historial",
+    "explicacionRequiereAtencion": "Ganaste estos vehículos y el plazo para pagar está corriendo. Si vence, el vehículo pasa al siguiente de la fila.",
+    "columnaVehiculo": "Vehículo",
+    "columnaConvocatoria": "Convocatoria",
+    "columnaSituacion": "Situación",
+    "turno": "Turno",
+    "restante": "Tiempo restante",
+    "plazoVencido": "El plazo venció. El vehículo se liberará para el siguiente de la fila.",
+    "verElLote": "Ver el vehículo",
+    "truncada": "Se muestran tus solicitudes más recientes. Hay más historial del que cabe en esta pantalla."
   },
   "filaAdministrativa": {
     "titulo": "Fila del vehículo",

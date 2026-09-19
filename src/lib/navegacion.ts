@@ -22,6 +22,7 @@ import type { Permiso } from "@/types/identidad";
  */
 export type IdDeNavegacion =
   | "convocatorias"
+  | "misSolicitudes"
   | "vehiculos"
   | "convocatoriasAdmin"
   | "aprobaciones"
@@ -51,6 +52,15 @@ export const ENTRADAS_DE_NAVEGACION: readonly EntradaDeNavegacion[] = [
   {
     id: "convocatorias",
     href: "/convocatorias",
+    accion: "solicitud:ver-mis-solicitudes",
+  },
+  // La pantalla 3.5, que **si** es lo que su accion nombra. Comparte accion con
+  // la entrada de arriba y eso es correcto: las dos preguntan "¿esta persona
+  // compra?", que es una sola capacidad. Quien compra ve las dos entradas —el
+  // catalogo para entrar a una fila, esta para ver en cuales esta.
+  {
+    id: "misSolicitudes",
+    href: "/mis-solicitudes",
     accion: "solicitud:ver-mis-solicitudes",
   },
 

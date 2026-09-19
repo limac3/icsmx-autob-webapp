@@ -23,7 +23,7 @@ import { cancelarSolicitud } from "./cancelarSolicitud";
 import { cerrarFilaDelLote } from "./cerrarFilaDelLote";
 import { consultarMiLugar, leerMiSolicitud } from "./consultarMiLugar";
 import { solicitarCompra } from "./solicitarCompra";
-import { puedeUsarBackendReal } from "@/utils/backendUtilizable";
+import { backendParaRegresion } from "@/utils/backendUtilizable";
 
 vi.mock("server-only", () => ({}));
 
@@ -78,7 +78,7 @@ const leerSalidas = (): SalidasAutob | null => {
 };
 
 const salidas = leerSalidas();
-const hayBackend = puedeUsarBackendReal(salidas);
+const hayBackend = backendParaRegresion(salidas, "motor de fila (regla 16)");
 
 const REPETICIONES = Number(process.env.FILA_REPETICIONES ?? "2");
 const PARTICIPANTES = 6;

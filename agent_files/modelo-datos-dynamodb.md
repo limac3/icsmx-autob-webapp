@@ -89,6 +89,7 @@ vehiculoId, marca, version, modelo (anio), kilometraje
 nivelEquipamiento, especificacionMecanica, condicionesMecanicas, detallesEsteticos  (opcionales)
 estatus                 DISPONIBLE | EN_CONVOCATORIA | RESERVADO | VENDIDO | RETIRADO
 fotografiaPrincipalId   cual fotografia lo representa en listados
+fotografiaPrincipalClave clave S3 de su variante `min`, para poder mostrarla
 convocatoriaId          mientras esta EN_CONVOCATORIA (desnormalizado)
 motivoRetiro
 creadoEn, creadoPor, actualizadoEn, actualizadoPor
@@ -157,6 +158,21 @@ queda primera, y `eliminarFotografia`, que promueve la de menor orden restante a
 principal. Se conserva como atributo en vez de derivarse al leer porque el listado y el catalogo lo
 consultan sin leer la galeria completa: derivarlo obligaria a una `Query` de fotografias por cada
 tarjeta.
+
+**Y viaja con `fotografiaPrincipalClave`, la clave S3 de su variante `min`.** Con el
+identificador solo no se puede construir una URL, asi que la desnormalizacion cumplia su
+proposito a medias: el listado sabia *cual* era la principal pero no podia *mostrarla*, y la
+columna de fotografia de la pantalla 4.1 costaba una `Query` por fila sobre un catalogo de hasta
+500 items por estatus.
+
+Las dos se escriben **siempre juntas**, en la misma `UpdateExpression`, en las tres
+transacciones que las mantienen — `agregarFotografia`, `reordenarFotografias` y
+`eliminarFotografia`—, y hay una prueba por servicio que lo exige. Si divergieran, el listado
+pediria la miniatura de una fotografia que ya no es la principal, o —tras un borrado— la de un
+objeto que ya no existe en S3: un 403 de CloudFront sin nada que lo explique.
+
+`min` y no `max` porque la unica superficie que la consume es una miniatura de tabla. **Nunca**
+una URL firmada: esas se generan por peticion (regla 13).
 
 `descripcion` es el unico campo editable del item de fotografia. Se actualiza con un `Update` sobre
 la clave de la fotografia y `ConditionExpression: attribute_exists(SK)`, sin tocar el item `META` del vehiculo
@@ -511,7 +527,7 @@ clave y podria fabricar el centinela de otro ambito.
 | PA-06 | Convocatorias por aprobar | `Query` GSI2 `CONV_ESTATUS#EN_APROBACION` |
 | PA-07 | **Fila de un lote, en orden** | `Query` `PK = LOTE#<id>`, `begins_with(SK,"SOL#")`, `ScanIndexForward: true` |
 | PA-08 | Mi lugar en la fila | `GetItem` centinela 4.2 → `turno`; `miPosicion` por conteo (ver 5.2) |
-| PA-09 | Mis solicitudes | `Query` GSI3 `PART#<participanteId>` |
+| PA-09 | Mis solicitudes | `Query` GSI3 `PART#<participanteId>`, **descendente** y con tope. Ver 5.7 |
 | PA-10 | Adjudicaciones por vencer | `Query` GSI4 `VENCE#<dia>`, `GSI4SK <= ahora` |
 | PA-11 | Bandeja de tesoreria | `Query` GSI2 `SOL_ESTATUS#EN_VERIFICACION` |
 | PA-12 | Bitacora de un agregado | `Query` `PK = AUDIT#<agregado>#<id>` |
@@ -707,6 +723,29 @@ trabajo pendiente, asi que el barrido no filtra nada.
 **Quien limpia la marca del caso feliz.** El barrido, no `avalarPago`. Acoplar el camino de la
 venta a este indice lo obligaria a conocer un caso que solo existe en convocatorias ya concluidas;
 el precio de limpiarlo tarde es una lectura de mas hasta la corrida siguiente.
+
+---
+
+### 5.7 PA-09: el orden de la consulta es de correccion, no de presentacion
+
+GSI3 existia y estaba desplegado desde la Etapa 3, y hasta la Etapa 18 solo lo leia la auditoria.
+La pantalla 3.5 lo estrena sin costar un indice ni una escritura nueva: la solicitud ya escribe
+sus claves de GSI3 desde la Etapa 8.
+
+**`ScanIndexForward: false`.** `GSI3SK` es `SOL#<solicitadoEn>#<loteId>`, asi que una consulta
+ascendente con `Limit` devolveria las solicitudes **mas viejas** del participante y dejaria fuera
+justo las que pueden tener un plazo corriendo. Es el mismo modo de fallo que 5.6 encontro en
+`listarConvocatorias`: una lista incompleta que se ve completa. El tope va acompañado de
+`truncada`, para que la pantalla lo diga en vez de mentir por omision.
+
+**Los nombres se resuelven con una lectura por convocatoria distinta, no una por solicitud.**
+PA-04 trae la convocatoria con todos sus lotes de una vez, y quien se forma en varios lotes lo
+hace casi siempre dentro de la misma convocatoria — que es lo que R-22 mide. Es el mismo cruce en
+memoria que la bandeja del adjudicador prefirio a un indice nuevo.
+
+**Esta lectura no escribe.** A diferencia de `consultarMiLugar`, no aplica la verificacion
+perezosa del vencimiento (D-7): serian N escrituras condicionales disparadas por una lista, y un
+tercer camino de escritura donde D-7 define dos.
 
 ---
 

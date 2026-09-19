@@ -25,9 +25,16 @@ describe("entradasVisibles", () => {
     expect(ids(con())).toEqual([]);
   });
 
-  it("un permiso de venta abre el catalogo del participante y nada mas", () => {
-    expect(ids(con("Autob_Venta_en_general"))).toEqual(["convocatorias"]);
-    expect(ids(con("Autob_Venta_a_empleados"))).toEqual(["convocatorias"]);
+  it("un permiso de venta abre las dos pantallas del participante y nada mas", () => {
+    // Las dos, y con la misma accion: comprar es una sola capacidad. El
+    // catalogo sirve para entrar a una fila; `/mis-solicitudes`, para saber en
+    // cuales se esta y cual tiene el plazo corriendo.
+    const delParticipante: IdDeNavegacion[] = [
+      "convocatorias",
+      "misSolicitudes",
+    ];
+    expect(ids(con("Autob_Venta_en_general"))).toEqual(delParticipante);
+    expect(ids(con("Autob_Venta_a_empleados"))).toEqual(delParticipante);
   });
 
   it("administrar vehiculos abre solo su catalogo", () => {

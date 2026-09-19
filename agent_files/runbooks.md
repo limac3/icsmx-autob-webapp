@@ -538,6 +538,30 @@ datos es preferible a convivir con una alarma que nadie cree.
 
 ## R-14 — Desplegar la aplicacion en AWS
 
+> ### Paso 0 — la compuerta que el build de Amplify **no** puede correr
+>
+> Antes de desplegar, con un sandbox levantado:
+>
+> ```bash
+> npx ampx sandbox          # en otra terminal
+> npm run verify:despliegue # verify:rapido + EXIGIR_INTEGRACION=1
+> ```
+>
+> **Por que a mano y por que aqui.** Las cinco suites de integracion que son regresion de una
+> invariante —la fila (regla 16), el vencimiento, tesoreria, los identificadores unicos y la
+> inmutabilidad de la bitacora (regla 5)— **no pueden correr en el build de Amplify**: su rol no
+> puede asumir el rol de computo SSR, y que no pueda es correcto, porque poder asumirlo seria
+> una escalada de privilegios (`desafios-implementacion.md` 70). Tampoco hay CI.
+>
+> Asi que sin este paso nadie las ejecuta. Y lo peor no es que se omitan: es que `verify:rapido`
+> las omite **en silencio y reporta verde**, un verde indistinguible del que si ejercito la
+> concurrencia. `EXIGIR_INTEGRACION=1` convierte esa omision en un fallo que dice cual suite
+> falta y por que.
+>
+> **No poner `EXIGIR_INTEGRACION` en `amplify.yml`**: alli las pruebas no pueden correr por
+> diseno, asi que no las activaria — rompería el despliegue. El mensaje de error lo dice, porque
+> ese es el atajo previsible.
+
 **R-11 prepara el backend; esto publica la aplicacion.** Son dos cosas distintas y confundirlas
 cuesta tiempo: `ampx sandbox` crea la tabla, el bucket, CloudFront, la Lambda del barrido y el rol
 SSR, pero **no** publica Next.js en ningun sitio. La aplicacion sigue corriendo en la maquina de

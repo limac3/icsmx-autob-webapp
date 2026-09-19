@@ -1095,6 +1095,99 @@ Anclas: `src/lib/vehiculos/agregarFotografia.ts::agregarFotografia`,
 `src/lib/domain/vehiculos.ts::clavesDeLaFotografia`,
 `src/lib/media/normalizarImagen.ts::normalizarImagen`.
 
+### D-35 — La lista de mis solicitudes reporta el vencimiento; no lo resuelve
+`consultarMiLugar` aplica la verificacion perezosa de D-7 —si la adjudicacion propia vencio, corre
+T5 antes de responder— y ahi es correcto: mira **un** lote. `listarMisSolicitudes` no la aplica.
+Serian N escrituras condicionales disparadas por una lectura de lista, que es la forma del gasto
+que R26 midio en el camino caliente, y un **tercer** camino de escritura del vencimiento donde D-7
+define dos.
+Lo que si hace es comparar `venceEn` contra el reloj del **servidor** y publicarlo en
+`plazoVencido`, de modo que la pantalla pueda decir "el plazo vencio" sin afirmar que la solicitud
+ya esta cancelada. La transicion la escribe el barrido, o el detalle del lote al abrirse.
+De ahi sale la regla de agrupacion: una `ADJUDICADA` vencida **no** encabeza la pantalla —ya no se
+puede subir el comprobante, T3 condiciona a `venceEn > :ahora`— y **tampoco** es historica, porque
+su transicion no se ha escrito. Sale entre las activas con su aviso y sin cuenta regresiva; un
+contador en cero seria cruel y falso.
+Descartado:
+- **Aplicar T5 por fila**, que daria una lista siempre exacta: convierte una lectura en N
+  transacciones y duplica el camino que D-7 ya cubre por dos vias.
+- **Ocultar las vencidas**, que simplificaria la pantalla: le esconderia a alguien el desenlace de
+  algo suyo, que es lo contrario de para lo que existe.
+Anclas: `src/lib/fila/listarMisSolicitudes.ts::listarMisSolicitudes`,
+`src/lib/domain/misSolicitudes.ts::agruparMiSolicitud`.
+
+### D-36 — La lista lleva el turno, no la posicion
+`miTurno` esta en el item y es gratis. `miPosicion` cuesta dos `Query` con `Select: COUNT` **por
+fila**, y la seccion 3.5 pide agrupacion y cuenta regresiva, no posicion. Quien quiere saber que
+tan cerca esta abre el lote, que es donde esa pregunta vale una lectura.
+Es la misma division que ya hacia `MiLugarDTO` al exponer las dos: responden preguntas distintas
+—"que lugar me toco" y "que tan cerca estoy"— y solo la primera tiene sentido en una lista que
+cruza lotes que no se comparan entre si.
+Descartado: **traer la posicion igual**, aceptando el costo. En una pantalla que un participante
+abre para revisar, multiplicar las lecturas por el numero de filas para un dato que no decide nada
+es pagar por ornamento.
+Anclas: `src/types/fila.ts::MiSolicitudDTO`.
+
+### D-37 — El orden de PA-09 es de correccion, no de presentacion
+`GSI3SK` es `SOL#<solicitadoEn>#<loteId>`. Una `Query` ascendente con `Limit` devuelve las
+solicitudes **mas viejas** del participante y deja fuera justo las que pueden tener un plazo
+corriendo: una lista incompleta que se ve completa. Por eso `ScanIndexForward: false`, mas
+`truncada` cuando se alcanza el tope.
+Es exactamente el modo de fallo que D-20 encontro en `listarConvocatorias` con `MAXIMO_POR_ESTATUS`
+—cortar por el extremo equivocado de un indice ordenado—, y se registra aparte porque ahi el
+sintoma tardaba años en aparecer y aqui aparece el primer dia que alguien participe mucho.
+Descartado: **paginar**. El tope no es de correccion una vez que el recorte es por el extremo
+correcto, y una pantalla de consulta personal con cien filas no necesita paginacion; si hiciera
+falta, `LastEvaluatedKey` ya esta en la mano.
+Anclas: `src/lib/fila/listarMisSolicitudes.ts::listarMisSolicitudes`.
+
+### D-38 — La desnormalizacion de la fotografia principal lleva la clave, no solo el identificador
+`fotografiaPrincipalId` existe desde el principio con un proposito declarado: que el listado no
+tenga que leer la galeria de cada vehiculo. Pero **con un identificador no se construye una URL**,
+asi que cumplia la mitad: el listado sabia cual era la principal y no podia mostrarla. La columna
+de fotografia de la pantalla 4.1 costaba entonces una `Query` por fila sobre un catalogo de hasta
+500 items por estatus. El item del vehiculo gana `fotografiaPrincipalClave`, la clave S3 de la
+variante `min`.
+Las dos se escriben **siempre en la misma `UpdateExpression`**, en las tres transacciones que las
+mantienen, y hay una prueba por servicio que lo exige. Si divergieran, el listado pediria la
+miniatura de una fotografia que ya no es la principal — o, tras un borrado, la de un objeto que ya
+no existe en S3: un 403 de CloudFront sin nada que lo explique.
+`min` y no `max` porque la unica superficie que la consume es una miniatura de tabla. Nunca una URL
+firmada: esas se generan por peticion (D-24).
+Descartado:
+- **Leer la galeria por fila**, que no toca el modelo: 6 lecturas pasan a 6 + N, con N hasta 2500,
+  en la pantalla de trabajo que mas se abre al dia.
+- **Guardar el objeto `Fotografia` completo** en el item del vehiculo: duplica un dato que ya tiene
+  dueno y multiplica los sitios que hay que mantener en paso.
+- **Dejar la columna fuera**, que era la alternativa barata: la pedia la seccion 4.1 y el arreglo
+  resulto ser terminar algo que ya estaba a medias, no construir algo nuevo.
+Sin migracion ni rama de compatibilidad, con el criterio de D-22: no hay nada en produccion.
+Anclas: `src/lib/vehiculos/agregarFotografia.ts::agregarFotografia`,
+`src/lib/vehiculos/reordenarFotografias.ts::reordenarFotografias`,
+`src/lib/vehiculos/eliminarFotografia.ts::eliminarFotografia`.
+
+### D-39 — La omision de una prueba de integracion puede volverse un fallo ruidoso
+Las cinco suites que son regresion de una invariante —la fila (regla 16), el vencimiento,
+tesoreria, los identificadores unicos y la inmutabilidad de la bitacora— se **omiten** cuando no
+hay backend, y eso se conserva: la compuerta tiene que poder correr en una maquina sin AWS.
+El defecto no era la omision sino el **silencio**. No hay CI, y el build de Amplify no puede
+correrlas porque su rol no puede asumir el rol de computo SSR —y que no pueda es correcto, poder
+asumirlo seria una escalada de privilegios—. Asi que el unico verde que existia era el de
+`verify:rapido`, que omitia sin distinguirse de un verde que si habia ejercitado la concurrencia.
+`backendParaRegresion` lanza cuando `EXIGIR_INTEGRACION=1` y el backend no esta disponible, y
+`npm run verify:despliegue` lo activa. Es el paso 0 de R-14. El mensaje explica que la variable
+**no va en `amplify.yml`**, porque ese es el atajo previsible y el que rompería el despliegue.
+Es la misma forma que la alarma del barrido: tratar la ausencia de datos como fallo, contra el
+valor por omision, porque no publicar nada es indistinguible de que todo este bien.
+Descartado:
+- **Correr las suites en el build de Amplify**, que es la respuesta obvia: exige justamente la
+  escalada de privilegios que el diseno rechaza.
+- **Endurecer `puedeUsarBackendReal`**, que se queda igual porque su logica es correcta: lo que
+  cambia no es *si* puede correr, sino *si callar es aceptable*.
+- **Aplicarlo a los cuatro arneses bajo demanda** (`PROTOTIPO_R18`, `CARGA_APERTURA`,
+  `EQUIDAD_APERTURA`, `BARRIDO_LOCAL`): se omiten a proposito y por decisiones ya registradas.
+Anclas: `src/utils/backendUtilizable.ts::backendParaRegresion`.
+
 ### D-28 — Lo destructivo se confirma en un modal, y el retiro pierde su camino sin JavaScript
 Eliminar una fotografia y retirar un vehiculo del catalogo pasan por un modal de confirmacion:
 `DialogModal` para el borrado —solo hay que confirmar— y `ToolModal` para el retiro, que captura el

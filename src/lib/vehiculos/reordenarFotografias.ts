@@ -146,24 +146,35 @@ export const reordenarFotografias = async (
     primera !== undefined && primera !== actual.fotografiaPrincipalId;
 
   if (cambiaLaPrincipal) {
+    // La clave de la miniatura viaja con el identificador, en la misma
+    // escritura: las dos describen la misma fotografia y separarlas dejaria al
+    // listado de la pantalla 4.1 mostrando la anterior.
+    const nueva = actual.fotografias.find((foto) => foto.fotoId === primera);
+
     items.push({
       item: {
         Update: {
           TableName: tabla,
           Key: clave.vehiculo(actual.vehiculoId),
           UpdateExpression:
-            "SET #principal = :fotoId, #actualizadoEn = :momento," +
-            " #actualizadoPor = :actor",
+            "SET #principal = :fotoId, #principalClave = :claveMin," +
+            " #actualizadoEn = :momento, #actualizadoPor = :actor",
           ConditionExpression:
             "attribute_exists(PK) AND #estatus = :estatusEsperado",
           ExpressionAttributeNames: {
             "#principal": "fotografiaPrincipalId",
+            "#principalClave": "fotografiaPrincipalClave",
             "#estatus": "estatus",
             "#actualizadoEn": "actualizadoEn",
             "#actualizadoPor": "actualizadoPor",
           },
           ExpressionAttributeValues: {
             ":fotoId": primera,
+            // `nueva` sale de `actual.fotografias`, que es de donde salio
+            // `primera` tras validarse como permutacion de la galeria: si
+            // faltara, la lista enviada no seria una permutacion y el
+            // reordenamiento ya se habria rechazado antes de llegar aqui.
+            ":claveMin": nueva?.variantes.min.claveS3 ?? "",
             ":estatusEsperado": actual.estatus,
             ":momento": ahora.toISOString(),
             ":actor": entrada.actor.id,

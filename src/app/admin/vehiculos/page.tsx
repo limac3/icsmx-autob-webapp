@@ -3,11 +3,15 @@ import { Primary } from "@churchofjesuschrist/eden-buttons";
 import { FormField, Input, Select } from "@churchofjesuschrist/eden-form-parts";
 import { H1 } from "@churchofjesuschrist/eden-headings";
 import { Text2 } from "@churchofjesuschrist/eden-text";
-import TablaVehiculos from "@/components/TablaVehiculos";
+import TablaVehiculos, {
+  type NombreDeConvocatoria,
+} from "@/components/TablaVehiculos";
 import { obtenerDiccionario } from "@/dictionaries";
 import { exigirPermiso } from "@/lib/auth/exigirPermiso";
 import { getSession } from "@/lib/auth/session";
+import { listarConvocatorias } from "@/lib/convocatorias/listarConvocatorias";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
+import { firmarFotografia } from "@/lib/media/cloudfrontSigner";
 import { listarVehiculos } from "@/lib/vehiculos/listarVehiculos";
 import { ESTATUS_VEHICULO, type EstatusVehiculo } from "@/types/vehiculo";
 import "./pagina.css";
@@ -63,6 +67,36 @@ const CatalogoVehiculos = async ({
   // vuelve a comprobarlo.
   const puedeEditar = sesion.permisos.has("Autob_Administrar_Vehiculos");
 
+  // **Una lectura, no una por vehiculo.** La columna de convocatoria activa
+  // necesita el nombre, y el vehiculo solo guarda el `convocatoriaId`. Con el
+  // catalogo en 500 items por estatus, resolverlo fila a fila seria una lectura
+  // por fila; el listado completo de convocatorias son seis `Query` y se
+  // cuentan por decenas al ano. Si falla, la columna sale vacia en vez de
+  // tumbar el catalogo: es un dato de apoyo, no el objeto de la pantalla.
+  // Las miniaturas se firman aqui, en cada peticion (regla 13): nunca se
+  // persisten ni se generan dentro de un bloque `"use cache"`. Sale de la
+  // clave desnormalizada en el propio item, asi que no cuesta una lectura por
+  // fila — que era justo lo que impedia tener esta columna.
+  const miniaturas: Record<string, string> = {};
+  for (const uno of resultado.data) {
+    if (uno.fotografiaPrincipalClave) {
+      miniaturas[uno.vehiculoId] = firmarFotografia(
+        uno.fotografiaPrincipalClave,
+      );
+    }
+  }
+
+  const listado = await listarConvocatorias();
+  const convocatorias: Record<string, NombreDeConvocatoria> = {};
+  if (listado.ok) {
+    for (const una of listado.data) {
+      convocatorias[una.convocatoriaId] = {
+        nombre: una.nombre,
+        folio: una.folio,
+      };
+    }
+  }
+
   return (
     <main className="catalogo-vehiculos">
       <header className="catalogo-vehiculos__encabezado">
@@ -110,6 +144,8 @@ const CatalogoVehiculos = async ({
           idioma={idioma}
           puedeEditar={puedeEditar}
           puedeAuditar={sesion.permisos.has("Autob_Auditar")}
+          convocatorias={convocatorias}
+          miniaturas={miniaturas}
         />
       )}
     </main>
