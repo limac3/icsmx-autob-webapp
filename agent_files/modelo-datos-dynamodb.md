@@ -128,6 +128,22 @@ y un `srcSet` que declarara los anchos nominales mentiria al navegador. El sufij
 **nombre** de la variante y no su ancho —`<fotoId>-med.webp`, no `-600.webp`— justamente para que
 la clave siga siendo predecible desde el nombre.
 
+**Dos variantes pueden compartir `claveS3`, y entonces el item apunta a menos de tres objetos.**
+Es la consecuencia directa de lo anterior: el ancho de salida es `min(tope, ancho original)`, y
+como los topes son distintos entre si, dos variantes solo pueden empatar en ancho si **ninguna
+redimensiono**, o sea si las dos son el original intacto codificado con la misma calidad — el
+mismo archivo byte a byte. `agregarFotografia` sube entonces un solo objeto y apunta las dos
+entradas ahi. El mapa sigue completo, que es lo que evita el estado prohibido de arriba; lo que
+cambia es que **contar claves distintas ya no es contar variantes**. Todo lo que borra pasa por
+`clavesDeLaFotografia`, que deduplica, y el `claveS3` del nivel superior es el de `max`, que en
+este caso coincide con el de `med` y por eso sigue apuntando a un objeto que existe. Dejarlo en
+`-max.webp` habria sido una referencia colgante.
+
+No es un caso de laboratorio: una fotografia que paso por mensajeria llega en 1280 px o menos, y
+ahi `med` y `max` coinciden siempre. Que coincidan es tambien un **sintoma util** — dice que el
+original nunca trajo mas detalle del que `med` puede mostrar, asi que el visor ampliado no tiene
+nada mejor que ensenar.
+
 `variantes` ausente o malformado hace que `aFotografia` devuelva `undefined` y la fotografia
 desaparezca del listado, igual que un item sin `claveS3`: un item corrupto entre mil no tumba la
 galeria. Lo que **no** se hace es rellenar con `ancho: ... ?? 0`, como si hiciera el habito de

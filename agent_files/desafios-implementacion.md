@@ -5168,3 +5168,76 @@ mitad deja un estado parcial que alguien tiene que ir a limpiar.
 Y la que hace barato el resto: **cuando una operacion procesa N cosas, un fallo en la numero k no
 puede ser la primera senal.** Lo que se pueda saber antes de la primera escritura, se comprueba
 antes de la primera escritura.
+
+---
+
+## 90) Las variantes `med` y `max` eran el mismo archivo subido dos veces
+
+### Problema
+Una fotografia se guarda en tres variantes WebP —480, 1280 y 2048 px— para que cada pantalla baje
+solo el peso que necesita. Se esperaba que las tres fueran distintas.
+
+### Sintoma
+El operador, revisando el bucket, encontro que los objetos `-med.webp` y `-max.webp` de sus
+fotografias tenian **las mismas dimensiones y practicamente el mismo peso**: "no veo eficiencia
+entre un archivo y otro".
+
+### Causa raiz
+No era un defecto del pipeline: era `withoutEnlargement: true` haciendo exactamente su trabajo.
+Los anchos de variante son **topes, no objetivos**, asi que el ancho de salida es
+`min(tope, ancho original)`. Con un original de 1280 px o menos, `med` y `max` piden un
+redimensionado que no ocurre y las dos salen del original intacto.
+
+Medido con el pipeline real, para no opinarlo:
+
+| Original | `min` | `med` | `max` |
+| --- | --- | --- | --- |
+| 1000 px | 480x360 · 23 KB | 1000x750 · 233 KB | 1000x750 · **233 KB** |
+| 1280 px | 480x360 · 18 KB | 1280x960 · 377 KB | 1280x960 · **377 KB** |
+| 1600 px | 480x360 · 15 KB | 1280x960 · 294 KB | 1600x1200 · 591 KB |
+| 4032 px | 480x360 · 5.8 KB | 1280x960 · 100 KB | 2048x1536 · 407 KB |
+
+En los dos primeros casos no son parecidos: son **identicos byte a byte**. Y la implicacion se
+generaliza — como los topes son distintos entre si, `min(T1,W) == min(T2,W)` con `T1 < T2` obliga
+a `W <= T1`, o sea que **dos variantes solo pueden empatar en ancho si ninguna redimensiono**.
+Empatar en ancho no es parecerse, es ser el mismo archivo. Esa es la implicacion que autoriza el
+arreglo, y por eso esta fijada en una prueba que compara los **bytes**, no las dimensiones.
+
+El desperdicio estaba acotado y conviene decir donde **no** estaba: en ancho de banda, ninguno,
+porque `fuentesDeImagen` ya deduplica por ancho y el navegador nunca ve dos candidatas iguales.
+Lo que se gastaba era almacenamiento —el doble, en un bucket versionado y sin reglas de ciclo de
+vida— y una codificacion WebP de mas por subida.
+
+### Solucion aplicada
+Cuando el ancho de una variante coincide con el de otra ya producida, `agregarFotografia`
+**reutiliza su objeto de S3** en vez de escribir el segundo: las dos entradas del mapa apuntan a
+la misma clave.
+
+Se comparte el objeto en lugar de omitir la variante a proposito. `variantes` es un `Record`
+completo justamente para que no se pueda representar "tengo `min` y `max` pero no `med`", y las
+tres vistas lo leen sin saber nada de esto. Lo que cambia es que **contar claves ya no es contar
+variantes**, y eso tiene tres consecuencias que hay que atender juntas o el arreglo introduce un
+defecto peor que el que resuelve:
+
+- El `claveS3` del nivel superior es el de `max`. Si se hubiera quedado en `-max.webp` seria una
+  **referencia colgante** a un objeto que nunca se subio — el unico error de este cambio que la
+  galeria mostraria como imagen rota.
+- `clavesDeLaFotografia` deduplica con un `Set`. Sin eso, el borrado pediria dos veces la misma
+  clave: no fallaria —`borrarObjetos` hace un `DeleteObject` por clave y borrar lo que ya no esta
+  es exito en S3— pero gastaria un viaje de red y dejaria la clave repetida en el evento de
+  auditoria, que es justo donde alguien la va a leer el dia que un borrado falle.
+- El evento registra las claves **realmente escritas**, que se acumulan en el bucle de subida en
+  vez de derivarse del mapa.
+
+### Regla para futuro
+**Que dos variantes coincidan es un sintoma util, no solo un desperdicio.** Dice que el original
+nunca trajo mas detalle del que `med` puede mostrar. Si las fotografias del catalogo llegan en
+1280 px, alguien las redujo antes de subirlas —el sospechoso habitual es haberlas pasado por
+mensajeria, que recorta a ~1280 px— y el visor ampliado no tiene nada mejor que ensenar. El
+pipeline no puede inventar pixeles que no recibio: eso se arregla en el origen, transfiriendo el
+archivo original.
+
+Y la general: **antes de explicar por que un numero se ve raro, medirlo.** La explicacion
+—`withoutEnlargement`— estaba en un comentario del codigo, pero la tabla de arriba es lo que
+distingue "identicos" de "parecidos", y de esa distincion depende que sea correcto compartir el
+objeto. Una sonda de veinte lineas contra el pipeline real vale mas que releer el comentario.

@@ -399,6 +399,116 @@ describe("rechazos, sin tocar S3", () => {
   });
 });
 
+describe("variantes que salen identicas", () => {
+  /**
+   * Normalizador de un original de 1000 px: por encima de `min` (480) y por
+   * debajo de `med` (1280).
+   *
+   * `withoutEnlargement` deja entonces `med` y `max` en 1000, o sea el mismo
+   * archivo codificado dos veces. Es el caso corriente de una fotografia que
+   * paso por mensajeria, no una rareza de laboratorio.
+   */
+  const sinAgrandar: Normalizador = () =>
+    Promise.resolve({
+      ok: true,
+      imagen: {
+        formatoDetectado: "jpeg",
+        variantes: NOMBRES_DE_VARIANTE.map((nombre) => {
+          const ancho = Math.min(ANCHOS_DE_VARIANTE[nombre], 1000);
+          return {
+            nombre,
+            cuerpo: new Uint8Array([ancho === 1000 ? 9 : 1]),
+            ancho,
+            alto: Math.round((ancho * 3) / 4),
+            bytes: ancho * 10,
+          };
+        }),
+      },
+    });
+
+  const claveMin = `vehiculos/V1/${ID}-min.webp`;
+  const claveMed = `vehiculos/V1/${ID}-med.webp`;
+
+  it("sube un solo objeto por las dos variantes que coinciden", async () => {
+    const { s3, deps } = escenario(sinAgrandar);
+    await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
+
+    expect(s3.comandos.map((c) => (c.input as { Key: string }).Key)).toEqual([
+      claveMin,
+      claveMed,
+    ]);
+  });
+
+  it("las dos entradas del Record apuntan al mismo objeto", async () => {
+    // `variantes` sigue teniendo las tres: es un Record completo a proposito,
+    // para que no se pueda representar "tengo min y max pero no med". Lo que
+    // cambia es que dos comparten clave.
+    const { dynamo, deps } = escenario(sinAgrandar);
+    await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
+
+    expect(itemsDeTransaccion(dynamo)[0]?.Put?.Item?.variantes).toEqual({
+      min: { claveS3: claveMin, ancho: 480, alto: 360, bytes: 4800 },
+      med: { claveS3: claveMed, ancho: 1000, alto: 750, bytes: 10000 },
+      max: { claveS3: claveMed, ancho: 1000, alto: 750, bytes: 10000 },
+    });
+  });
+
+  it("el `claveS3` del item apunta a un objeto que existe", async () => {
+    // El del item es el de la variante mayor. Si conservara `-max.webp` seria
+    // una referencia colgante: ese objeto nunca se subio. Es el unico error de
+    // este cambio que la galeria mostraria como imagen rota.
+    const { dynamo, deps } = escenario(sinAgrandar);
+    await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
+
+    expect(itemsDeTransaccion(dynamo)[0]?.Put?.Item).toMatchObject({
+      claveS3: claveMed,
+      bytes: 10000,
+    });
+  });
+
+  it("el evento registra solo las claves realmente escritas", async () => {
+    // La bitacora es lo unico que dice que objetos habia que borrar si el
+    // borrado de S3 falla. Una clave que nunca se escribio ahi manda a buscar
+    // un objeto inexistente.
+    const { dynamo, deps } = escenario(sinAgrandar);
+    await agregarFotografia({ actual: vehiculo(), archivo, actor }, deps);
+
+    expect(itemsDeTransaccion(dynamo)[2]?.Put?.Item?.datos).toMatchObject({
+      clavesDeVariantes: [claveMin, claveMed],
+    });
+  });
+
+  it("la compensacion borra dos objetos, no tres", async () => {
+    const dynamo = crearClienteFalso({
+      lanza: new TransactionCanceledException({
+        message: "cancelada",
+        $metadata: {},
+        CancellationReasons: [
+          { Code: "None" },
+          { Code: "ConditionalCheckFailed" },
+        ],
+      }),
+    });
+    const s3 = crearClienteFalso<S3Client>();
+
+    await agregarFotografia(
+      { actual: vehiculo(), archivo, actor },
+      {
+        cliente: dynamo.cliente,
+        s3: s3.cliente,
+        ahora: () => AHORA,
+        nuevoId: () => ID,
+        normalizar: sinAgrandar,
+      },
+    );
+
+    const borrados = s3.comandos
+      .filter((c) => c.nombre === "DeleteObjectCommand")
+      .map((c) => (c.input as { Key: string }).Key);
+    expect(borrados).toEqual([claveMin, claveMed]);
+  });
+});
+
 describe("compensacion", () => {
   it("borra las tres variantes si la transaccion se cancela", async () => {
     // Sin esto, cada fallo dejaria basura permanente en un bucket versionado.

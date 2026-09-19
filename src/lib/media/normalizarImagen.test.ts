@@ -144,6 +144,36 @@ describe("variantes", () => {
     }
   });
 
+  it("dos variantes del mismo ancho salen identicas byte a byte", async () => {
+    // **El invariante en el que se apoya `agregarFotografia` para subir un solo
+    // objeto cuando dos variantes coinciden.** El ancho de salida es
+    // `min(tope, ancho original)`, y como los topes son distintos entre si, dos
+    // variantes solo pueden empatar si ninguna redimensiono: entonces son el
+    // mismo original codificado dos veces con la misma calidad.
+    //
+    // Se afirma sobre los bytes y no sobre las dimensiones a proposito: que
+    // coincidan los anchos ya lo prueba el caso de arriba, y lo que autoriza a
+    // compartir el objeto de S3 es que el **contenido** sea el mismo. Si algun
+    // dia la codificacion dejara de ser determinista, esto se cae aqui y no en
+    // una galeria mostrando la imagen equivocada.
+    //
+    // 1000 px queda por encima de `min` (480) y por debajo de `med` (1280), asi
+    // que `min` si se reduce y `med`/`max` no. Es el caso real: una fotografia
+    // que paso por mensajeria llega en 1280 px o menos.
+    const resultado = await normalizar(await jpeg(1000, 750));
+    expect(resultado.ok).toBe(true);
+    if (!resultado.ok) return;
+
+    const [min, med, max] = resultado.imagen.variantes;
+    expect(min?.ancho).toBe(480);
+    expect(med?.ancho).toBe(1000);
+    expect(max?.ancho).toBe(1000);
+    expect(med?.bytes).toBe(max?.bytes);
+    expect(Buffer.from(med?.cuerpo as Uint8Array)).toEqual(
+      Buffer.from(max?.cuerpo as Uint8Array),
+    );
+  });
+
   it("cada variante reporta sus bytes, y la chica pesa menos que la grande", async () => {
     const resultado = await normalizar(await jpeg(3000, 2000));
     expect(resultado.ok).toBe(true);

@@ -304,18 +304,30 @@ export const rotuloVehiculo = (
 ): string => `${vehiculo.marca} ${vehiculo.version} ${String(vehiculo.modelo)}`;
 
 /**
- * Las claves de S3 de una fotografia: **las tres**, del mas chico al mas grande.
+ * Las claves de S3 de una fotografia, **sin repetir**, del mas chico al mas
+ * grande.
  *
- * Una fotografia es un item de DynamoDB y tres objetos de S3. Los dos sitios
- * que borran —la compensacion de una subida a medias y la baja de una
- * fotografia— tienen que alcanzar los tres, y derivarlas en cada uno invitaba a
- * que uno se quedara borrando solo `claveS3` y dejando dos huerfanos para
- * siempre en un bucket sin reglas de ciclo de vida.
+ * Una fotografia es un item de DynamoDB y hasta tres objetos de S3. Los dos
+ * sitios que borran —la compensacion de una subida a medias y la baja de una
+ * fotografia— tienen que alcanzarlos todos, y derivarlas en cada uno invitaba a
+ * que uno se quedara borrando solo `claveS3` y dejando huerfanos para siempre
+ * en un bucket sin reglas de ciclo de vida.
+ *
+ * **Hasta tres, no siempre tres.** Cuando el original no llega al tope de una
+ * variante, esa y la siguiente salen identicas y `agregarFotografia` las apunta
+ * al mismo objeto. Sin el `Set` el borrado pediria dos veces la misma clave:
+ * `borrarObjetos` hace un `DeleteObject` por clave, asi que no fallaria —borrar
+ * en S3 lo que ya no esta es exito— pero gastaria un viaje de red por nada y
+ * dejaria la clave repetida en el evento de auditoria, que es justo el sitio
+ * donde alguien la va a leer el dia que un borrado falle.
  *
  * Se leen del item y no se reconstruyen desde el `fotoId`: si algun dia cambia
  * el formato de la clave, lo escrito sigue siendo la verdad.
  */
 export const clavesDeLaFotografia = (
   foto: Pick<Fotografia, "variantes">,
-): readonly string[] =>
-  NOMBRES_DE_VARIANTE.map((nombre) => foto.variantes[nombre].claveS3);
+): readonly string[] => [
+  ...new Set(
+    NOMBRES_DE_VARIANTE.map((nombre) => foto.variantes[nombre].claveS3),
+  ),
+];

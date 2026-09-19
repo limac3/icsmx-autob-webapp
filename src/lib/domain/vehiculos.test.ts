@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ACEPTA_IMAGENES,
+  clavesDeLaFotografia,
   esTipoDeImagen,
   LIMITES,
   modeloMaximo,
@@ -12,7 +13,7 @@ import {
   TIPOS_DE_IMAGEN,
   validarDatosVehiculo,
 } from "./vehiculos";
-import type { DatosVehiculo } from "@/types/vehiculo";
+import type { DatosVehiculo, Fotografia } from "@/types/vehiculo";
 
 import { CAMPOS_VEHICULO } from "@/types/vehiculo";
 
@@ -324,5 +325,40 @@ describe("tipos de imagen admitidos", () => {
     expect(ACEPTA_IMAGENES.split(",")).toHaveLength(
       Object.keys(TIPOS_DE_IMAGEN).length,
     );
+  });
+});
+
+describe("clavesDeLaFotografia", () => {
+  const conClaves = (
+    min: string,
+    med: string,
+    max: string,
+  ): Pick<Fotografia, "variantes"> => ({
+    variantes: {
+      min: { claveS3: min, ancho: 480, alto: 360, bytes: 1 },
+      med: { claveS3: med, ancho: 1280, alto: 960, bytes: 2 },
+      max: { claveS3: max, ancho: 2048, alto: 1536, bytes: 3 },
+    },
+  });
+
+  it("devuelve las tres cuando cada variante tiene su objeto", () => {
+    expect(clavesDeLaFotografia(conClaves("a", "b", "c"))).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("no repite una clave que dos variantes comparten", () => {
+    // Cuando el original no llega al tope de `med`, esa y `max` salen
+    // identicas y `agregarFotografia` sube un solo objeto para las dos. Sin
+    // deduplicar, el borrado pediria dos veces la misma clave y el evento de
+    // auditoria la registraria repetida — que es donde alguien la va a leer el
+    // dia que un borrado falle.
+    expect(clavesDeLaFotografia(conClaves("a", "b", "b"))).toEqual(["a", "b"]);
+  });
+
+  it("colapsa a una sola cuando el original era mas chico que `min`", () => {
+    expect(clavesDeLaFotografia(conClaves("a", "a", "a"))).toEqual(["a"]);
   });
 });

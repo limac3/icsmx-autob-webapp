@@ -22,6 +22,7 @@ import {
   CONTENT_TYPE_DE_VARIANTE,
   normalizarImagen,
   type Normalizador,
+  type VarianteNormalizada,
 } from "@/lib/media/normalizarImagen";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 import type { Fotografia, VehiculoConFotografias } from "@/types/vehiculo";
@@ -106,10 +107,42 @@ export const agregarFotografia = async (
 
   const fotoId = nuevoId();
 
-  const variantesConClave = normalizada.imagen.variantes.map((variante) => ({
-    ...variante,
-    claveS3: claveDeFotografia(actual.vehiculoId, fotoId, variante.nombre),
-  }));
+  /**
+   * Las variantes con su clave de S3, y **cuales hay que subir de verdad**.
+   *
+   * `withoutEnlargement` hace que el ancho de salida sea `min(tope, ancho del
+   * original)`. Como los topes son distintos entre si, dos variantes solo
+   * pueden coincidir en ancho si **ninguna de las dos redimensiono nada**: son
+   * el original intacto, codificado dos veces con la misma calidad, o sea el
+   * mismo archivo byte a byte. Coincidir en ancho aqui no es parecerse, es ser
+   * el mismo objeto — y por eso basta comparar el ancho.
+   *
+   * No es un caso raro: una fotografia que paso por mensajeria llega en 1280 px
+   * o menos, y entonces `med` y `max` son la misma imagen. Subir las dos gastaba
+   * el doble de almacenamiento —en un bucket versionado y sin reglas de ciclo de
+   * vida— por un objeto que nadie llega a descargar dos veces, porque
+   * `fuentesDeImagen` deduplica por ancho antes de emitir el `srcSet`.
+   *
+   * Se apuntan las dos entradas al **mismo** objeto en vez de omitir la
+   * variante: `variantes` es un Record completo a proposito, para que no se
+   * pueda representar "tengo min y max pero no med", y las vistas siguen
+   * leyendo las tres sin saber nada de esto.
+   */
+  const variantesConClave: (VarianteNormalizada & { claveS3: string })[] = [];
+  const porSubir: (VarianteNormalizada & { claveS3: string })[] = [];
+  for (const variante of normalizada.imagen.variantes) {
+    const gemela = variantesConClave.find(
+      (otra) => otra.ancho === variante.ancho,
+    );
+    const conClave = {
+      ...variante,
+      claveS3:
+        gemela?.claveS3 ??
+        claveDeFotografia(actual.vehiculoId, fotoId, variante.nombre),
+    };
+    variantesConClave.push(conClave);
+    if (!gemela) porSubir.push(conClave);
+  }
 
   // `claveS3` del item sigue siendo una sola, y es la mayor: lo que firma,
   // borra y audita el resto del codigo no tiene que saber de variantes.
@@ -157,13 +190,13 @@ export const agregarFotografia = async (
   // URL— y ademas se compensa abajo.
   //
   // **En serie y acumulando lo ya escrito.** En paralelo, un fallo de la segunda
-  // subida deja las otras dos en vuelo y no se sabe que compensar sin esperarlas
+  // subida deja las otras en vuelo y no se sabe que compensar sin esperarlas
   // igual. Y la lista de claves a borrar se acumula en vez de derivarse de
   // `variantes`: derivarla mandaria borrados de objetos que nunca se escribieron
   // —correcto, porque borrar lo que no existe es exito en S3, pero oscurece la
-  // intencion y triplica las llamadas del camino de error.
+  // intencion y multiplica las llamadas del camino de error.
   const escritas: string[] = [];
-  for (const variante of variantesConClave) {
+  for (const variante of porSubir) {
     try {
       await guardarObjeto(
         {
@@ -245,9 +278,10 @@ export const agregarFotografia = async (
         orden,
         esPrincipal: seraPrincipal,
         claveS3: mayor.claveS3,
-        // Las tres claves en el evento, no solo la principal: si el borrado de
-        // S3 fallara alguna vez, la bitacora es lo unico que dice que objetos
-        // habia que borrar.
+        // Todas las claves escritas, no solo la principal: si el borrado de S3
+        // fallara alguna vez, la bitacora es lo unico que dice que objetos
+        // habia que borrar. Son tres, o dos cuando el original era chico y dos
+        // variantes comparten objeto.
         clavesDeVariantes: escritas,
         formatoDeOrigen: normalizada.imagen.formatoDetectado,
       },

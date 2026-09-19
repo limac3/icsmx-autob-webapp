@@ -1069,6 +1069,32 @@ Descartado:
 Anclas: `src/lib/domain/vehiculos.ts::TIPOS_DE_IMAGEN`, `::ACEPTA_IMAGENES`,
 `src/lib/media/normalizarImagen.ts::FORMATO_ESPERADO`, `src/components/GaleriaVehiculo.tsx`.
 
+### D-34 — Dos variantes de igual ancho comparten el objeto de S3, no se omiten
+Los anchos de variante son topes, no objetivos: con `withoutEnlargement` el ancho de salida es
+`min(tope, ancho original)`. Un original de 1280 px o menos —lo normal en una foto que paso por
+mensajeria— produce `med` y `max` **identicas byte a byte**. `agregarFotografia` sube entonces un
+solo objeto y apunta las dos entradas del mapa a la misma clave.
+Lo autoriza una implicacion, no una coincidencia: como los topes son distintos entre si, dos
+variantes solo pueden empatar en ancho si **ninguna redimensiono**, o sea si las dos son el
+original intacto codificado con la misma calidad. Empatar en ancho es ser el mismo archivo. Esta
+fijado en una prueba que compara los **bytes**, no las dimensiones: si la codificacion dejara de
+ser determinista, el arreglo deja de ser correcto y tiene que caerse ahi.
+Lo detecto el operador revisando el bucket: "`med` y `max` tienen el mismo tamano, no veo
+eficiencia entre un archivo y otro" (seccion 90).
+Descartado:
+- **Omitir la variante repetida.** Rompe el `Record` completo, que existe para que no se pueda
+  representar "tengo `min` y `max` pero no `med`", y obligaria a las tres vistas a tratar el hueco.
+- **Dejarlo como estaba.** En ancho de banda no costaba nada —`fuentesDeImagen` ya deduplica por
+  ancho— pero si el doble de almacenamiento en un bucket versionado y sin reglas de ciclo de vida.
+- **Deducir las claves desde el `fotoId` al borrar.** Ya estaba descartado por D-22 y este cambio
+  lo agrava: las claves escritas dejaron de ser derivables del nombre de variante.
+Consecuencias que van juntas o el arreglo introduce algo peor: el `claveS3` del nivel superior
+apunta al objeto de `med` cuando coinciden —dejarlo en `-max.webp` seria una referencia colgante—,
+`clavesDeLaFotografia` deduplica con un `Set`, y el evento registra las claves realmente escritas.
+Anclas: `src/lib/vehiculos/agregarFotografia.ts::agregarFotografia`,
+`src/lib/domain/vehiculos.ts::clavesDeLaFotografia`,
+`src/lib/media/normalizarImagen.ts::normalizarImagen`.
+
 ### D-28 — Lo destructivo se confirma en un modal, y el retiro pierde su camino sin JavaScript
 Eliminar una fotografia y retirar un vehiculo del catalogo pasan por un modal de confirmacion:
 `DialogModal` para el borrado —solo hay que confirmar— y `ToolModal` para el retiro, que captura el
