@@ -255,6 +255,13 @@ barrido pasa a ser red de seguridad, no unico mecanismo.
 Costo aceptado: una lectura puede provocar una escritura. Acotado e idempotente.
 Implementado en la Etapa 10: los dos caminos aplican la misma transaccion condicional de T5, asi
 que competir entre si no produce doble efecto — quien llega segundo recibe `no_vigente`.
+**Recibir `no_vigente` obliga a releer**, y ahi vivio un defecto hasta el 2026-09-21 (hallazgo 5
+de la Etapa 13): significa que otro camino resolvio la solicitud primero, asi que la copia en mano
+quedo vieja. `resolverSiVencida` enumeraba los desenlaces que **si** escriben y dejaba `no_vigente`
+afuera por parecerse a `abstenido` —en que *esta* transaccion no escribio—, cuando lo que importa
+es que *otra* si lo hizo. La condicion se invirtio: se relee salvo con `abstenido` o
+`en_conflicto`, que son los dos casos en los que nadie escribio. Nombrar la excepcion en lugar de
+la regla fue la causa, no un caso olvidado.
 Anclas: `amplify/barrido/handler.ts`, `src/lib/fila/barridoDeVencimientos.ts`,
 `src/lib/fila/vencerYReasignar.ts`, `src/lib/fila/consultarMiLugar.ts::resolverSiVencida`.
 

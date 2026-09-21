@@ -159,10 +159,17 @@ const resolverSiVencida = async (
     },
     deps,
   );
-  if (
-    desenlace.estado !== "reasignado" &&
-    desenlace.estado !== "fila_agotada"
-  ) {
+  // **Se relee salvo cuando nada se escribio**, y la lista de excepciones es de
+  // dos, no de tres. `abstenido` y `en_conflicto` dejan la solicitud tal como
+  // se leyo —hay turnos en vuelo (R18) o contencion sostenida—, asi que
+  // devolverla es exacto.
+  //
+  // `no_vigente` **no** es uno de esos casos, aunque tampoco lo escriba esta
+  // transaccion: significa que alguien mas la resolvio primero, asi que la
+  // copia en mano ya esta vieja. Enumerar los desenlaces que si escriben
+  // dejaba a este afuera por parecido —es el que "no hizo nada"— y devolvia un
+  // estado caduco. Ver `plan-ejecucion.md`, hallazgo 5 de la Etapa 13.
+  if (desenlace.estado === "abstenido" || desenlace.estado === "en_conflicto") {
     return solicitud;
   }
 

@@ -655,18 +655,23 @@ reescritos, invariantes 11 y 12), `proyecto.md` (5.3), `desafios-implementacion.
       del navegador y el hint de Eden. Con esto queda completa la receta oficial del paquete,
       `Form` > `Stack` > `FormField`
 
-**Sigue abierto:**
+**Lo que quedo abierto, y como se cerro:**
 
-- [ ] El reordenamiento con teclado es de un paso a la vez: cada pulsacion es una transaccion.
-      Con `MAXIMO_FOTOGRAFIAS = 20`, el peor caso —llevar la ultima al primer lugar— son 19.
-      Quien usa raton ya tiene el arrastre; a quien no, le falta un campo de posicion o un
-      "mover al principio". No bloquea la etapa, pero es la brecha real entre los dos caminos
-- [ ] **El filtro de `/admin/vehiculos` usa `Input type="search"`**; Eden recomienda
-      `SecondarySearch` de `eden-search-box` para filtros de lista —"trae semantica y
-      comportamiento de busqueda preconfigurado"— y reserva `Input` para campos genericos. La
-      contrapartida no es menor: `SecondarySearch` es componente cliente y arrastra
-      `styled-components` como peer dependency, asi que convertiria en cliente una pantalla
-      que hoy es Server Component entera. Decidir con la pantalla delante
+- [x] ~~El reordenamiento con teclado es de un paso a la vez~~ — **lo cerro la Etapa 17, y este
+      checkbox se habia quedado atras.** La brecha era entre el arrastre (raton) y las flechas
+      (teclado), que costaban una transaccion por pulsacion: 19 en el peor caso. La tercera
+      vuelta sobre la galeria **retiro las flechas y el arrastre** y puso un **campo de
+      posicion** en los dos modales, que es exactamente lo que este punto pedia. Los dos caminos
+      quedaron iguales porque ya no hay dos caminos
+- [x] **El filtro de `/admin/vehiculos` se queda con `Input type="search"`** — decision del
+      operador el 2026-09-21, con la pantalla delante y funcionando. Eden recomienda
+      `SecondarySearch` de `eden-search-box` para filtros de lista, pero la contrapartida decide:
+      es componente cliente y arrastra `styled-components` como peer dependency, asi que
+      convertiria en cliente el cascaron de una pantalla cuyo formulario de filtros es hoy Server
+      Component y funciona sin JavaScript. Cambiar eso por semantica de busqueda que el
+      `type="search"` ya aporta no lo vale. **Riesgo aceptado frente a la regla 10**, no un
+      descuido: es el caso que R14 preve — un requerimiento donde el componente de Eden existe y
+      su costo no se justifica
 
 **Salida esperada:** catalogo de vehiculos administrable. **Cumplida**, salvo la comprobacion de
 punta a punta, que depende de credenciales del operador.
@@ -1804,10 +1809,20 @@ filas huerfanas se cerraban al concluir.
 
 - **Hallazgo 5 — la carrera de `no_vigente`** en `consultarMiLugar`. Confirmado: el docstring
   promete releer *"si alguien mas la resolvio entre la lectura y este intento"*, que es exactamente
-  `no_vigente`, y es la unica rama que no relee. Es **estrictamente cosmetico**: `subirComprobante`
+  `no_vigente`, y era la unica rama que no relee. Es **estrictamente cosmetico**: `subirComprobante`
   condiciona a `#estatus = :adjudicada AND venceEn > :ahora` y la action pre-verifica
-  `dentroDePlazo`, asi que no hay escritura indebida posible. El arreglo son dos lineas y esta
-  disponible cuando se quiera.
+  `dentroDePlazo`, asi que no hay escritura indebida posible.
+
+  > **Cerrado el 2026-09-21.** La condicion se **invirtio** en vez de ampliarse: ahora se relee
+  > salvo con `abstenido` o `en_conflicto`, que son los dos desenlaces en los que *nadie* escribio.
+  > Enumerar los que si escriben —`reasignado` y `fila_agotada`— dejaba `no_vigente` afuera por
+  > parecido: se parece a `abstenido` en que **esta** transaccion no escribio nada, y se
+  > diferencia en lo unico que importa, que es que **otra** si lo hizo. Nombrar la excepcion en
+  > lugar de la regla es lo que produjo el defecto, y por eso el arreglo no es agregar un caso.
+  >
+  > Dos pruebas, y la primera se verifico reintroduciendo el defecto: falla con el, pasa sin el.
+  > La segunda cubre el sentido contrario —`en_conflicto` **no** relee—, para que un arreglo
+  > demasiado amplio tampoco pase en verde.
 - **Hallazgo 6 — la bitacora ante `PutItem` del propio rol.** Es **R20**, ya evaluado y diferido.
   Cerrarlo exige un sumidero fuera del rol de la aplicacion (Streams -> S3 con Object Lock), y la
   decision de fondo no es tecnica sino si la bitacora va a tener valor probatorio o regulatorio.

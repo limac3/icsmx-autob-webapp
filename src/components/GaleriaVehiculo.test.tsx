@@ -524,6 +524,71 @@ describe("subida de varias fotografias de un tiro", () => {
     await elegirArchivos(nombres, bytes);
   };
 
+  it("el aviso nombra el archivo que fallo, no solo el motivo", async () => {
+    // **Lo reporto el operador usando la pantalla.** Con siete elegidas, "el
+    // contenido del archivo no corresponde a su formato declarado" describe un
+    // archivo concreto y no decia cual: el mensaje era correcto e inaccionable.
+    // El servidor no puede aportarlo —cada alta es su propia peticion, y ahi el
+    // archivo es el unico que hay—, asi que solo lo sabe el bucle de la tanda.
+    vi.mocked(agregarFotografia)
+      .mockResolvedValueOnce({ ok: true, data: { fotoId: "F9" } })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "validation_failed",
+        detalles: { archivo: "tipo_no_coincide" },
+      });
+
+    await abrirConArchivos(["frente.jpg", "trasera.png", "lateral.jpg"]);
+    await pulsar(etiquetas.guardar);
+
+    expect(context.container.textContent).toContain(
+      diccionario.validacionVehiculo.tipo_no_coincide,
+    );
+    // Se afirma sobre **el aviso**, no sobre la pantalla: el modal sigue
+    // abierto y lista a proposito los nombres de todas las elegidas —es la
+    // salvaguarda contra la deduplicacion por nombre de `FileInput`—, asi que
+    // buscar en todo el contenedor encontraria los tres siempre.
+    const aviso = context.container.querySelector(
+      ".galeria-vehiculo__archivo-con-fallo",
+    );
+    expect(aviso?.textContent).toBe(
+      `${etiquetas.archivoConFallo}: trasera.png`,
+    );
+    // Ni el que si subio ni el que nunca se intento: nombrar de mas manda a
+    // revisar archivos que estan bien.
+    expect(aviso?.textContent).not.toContain("frente.jpg");
+    expect(aviso?.textContent).not.toContain("lateral.jpg");
+  });
+
+  it("un fallo nuevo no arrastra el nombre del anterior", async () => {
+    vi.mocked(agregarFotografia).mockResolvedValue({
+      ok: false,
+      error: "validation_failed",
+      detalles: { archivo: "tipo_no_coincide" },
+    });
+    const avisoDeArchivo = () =>
+      context.container.querySelector(".galeria-vehiculo__archivo-con-fallo");
+
+    await abrirConArchivos(["mala.jpg"]);
+    await pulsar(etiquetas.guardar);
+    expect(avisoDeArchivo()?.textContent).toContain("mala.jpg");
+
+    // Segundo intento, ahora sin nombre que reportar: el fallo es del reorden.
+    vi.mocked(agregarFotografia).mockResolvedValue({
+      ok: true,
+      data: { fotoId: "F9" },
+    });
+    vi.mocked(reordenarFotografias).mockResolvedValue({
+      ok: false,
+      error: "conflicto_concurrencia",
+    });
+    await pulsar(etiquetas.guardar);
+
+    // El aviso desaparece entero: no hay archivo del que hablar cuando lo que
+    // fallo fue el reordenamiento.
+    expect(avisoDeArchivo()).toBeNull();
+  });
+
   it("el control admite varias", async () => {
     await pintar();
     await pulsar(etiquetas.agregar);

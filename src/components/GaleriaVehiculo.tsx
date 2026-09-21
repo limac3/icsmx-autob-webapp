@@ -212,6 +212,17 @@ const GaleriaVehiculo = ({
   const [detalles, setDetalles] = useState<Record<string, string> | undefined>(
     undefined,
   );
+  /**
+   * Nombre del archivo que provoco el fallo, cuando el fallo vino de una tanda.
+   *
+   * Aparte de `detalles` porque no es un motivo mas: es **de que archivo** habla
+   * el motivo. Ninguna validacion del servidor puede aportarlo —cada alta es su
+   * propia peticion y ahi el archivo es el unico que hay—, asi que solo lo sabe
+   * el bucle que recorre la tanda.
+   */
+  const [archivoConFallo, setArchivoConFallo] = useState<string | undefined>(
+    undefined,
+  );
   const [modal, setModal] = useState<Modal>({ tipo: "ninguno" });
   // Borradores de los dos modales. Se comparten porque nunca hay dos abiertos.
   const [descripcion, setDescripcion] = useState("");
@@ -249,11 +260,21 @@ const GaleriaVehiculo = ({
    * segunda despues de que la primera fallara dejaria el estado a medias sin
    * que nadie lo sepa.
    */
-  /** Recoge el rechazo completo, motivo por campo incluido. */
-  const anotarFallo = (resultado: Resultado<unknown>) => {
+  /**
+   * Recoge el rechazo completo, motivo por campo incluido.
+   *
+   * `archivo` es el nombre del que fallo, y solo lo lleva la subida de una
+   * tanda. **Sin el, el aviso es inaccionable con varias fotografias
+   * elegidas**: "el contenido del archivo no corresponde a su formato
+   * declarado" describe un archivo concreto entre siete, y quien lo lee no
+   * tiene forma de saber cual — el servidor recibe una peticion por archivo y
+   * no sabe que formaban una tanda. Lo reporto el operador usando la pantalla.
+   */
+  const anotarFallo = (resultado: Resultado<unknown>, archivo?: string) => {
     if (resultado.ok) return;
     setError(resultado.error);
     setDetalles(resultado.detalles);
+    setArchivoConFallo(archivo);
   };
 
   const ejecutar = (
@@ -262,6 +283,7 @@ const GaleriaVehiculo = ({
   ) => {
     setError(undefined);
     setDetalles(undefined);
+    setArchivoConFallo(undefined);
     iniciar(async () => {
       for (const paso of pasos) {
         const resultado = await paso();
@@ -358,6 +380,7 @@ const GaleriaVehiculo = ({
 
     setError(undefined);
     setDetalles(undefined);
+    setArchivoConFallo(undefined);
     setSubidas(0);
     iniciar(async () => {
       // **Una peticion por fotografia, en serie.** No es una limitacion: es lo
@@ -376,7 +399,7 @@ const GaleriaVehiculo = ({
           descripcion: elPie,
         });
         if (!alta.ok) {
-          anotarFallo(alta);
+          anotarFallo(alta, archivo.name);
           return;
         }
         nuevos.push(alta.data.fotoId);
@@ -550,6 +573,16 @@ const GaleriaVehiculo = ({
       {error ? (
         <AlertaError>
           <Text2 renderAs="p">{diccionario.errores[error]}</Text2>
+          {/* **De que archivo habla el motivo**, y va antes que el motivo por
+              eso: con una tanda de siete, "el contenido no corresponde a su
+              formato" no dice cual revisar. Solo lo sabe el bucle de la tanda —
+              el servidor recibe una peticion por archivo y ahi no hay ambiguedad
+              que resolver. */}
+          {archivoConFallo === undefined ? null : (
+            <Text2 renderAs="p" className="galeria-vehiculo__archivo-con-fallo">
+              {`${etiquetas.archivoConFallo}: ${archivoConFallo}`}
+            </Text2>
+          )}
           {/* El motivo por campo, traducido por diccionario y nunca el codigo
               crudo (regla 11). Sin esto, "Revisa los datos capturados" no dice
               que revisar — y sobre un modal de fotografias no hay nada

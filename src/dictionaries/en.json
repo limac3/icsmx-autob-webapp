@@ -248,7 +248,8 @@
       "confirmarEliminarAviso": "The photograph is deleted permanently, along with every stored version. It cannot be recovered or restored; it would have to be uploaded again.",
       "eliminarDefinitivo": "Delete permanently",
       "previsualizacion": "Preview of the chosen photograph",
-      "previsualizacionAyuda": "This is what will be uploaded. It has not been saved yet."
+      "previsualizacionAyuda": "This is what will be uploaded. It has not been saved yet.",
+      "archivoConFallo": "File with the problem"
     }
   },
   "validacionVehiculo": {

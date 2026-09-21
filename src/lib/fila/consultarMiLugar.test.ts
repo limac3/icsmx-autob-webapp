@@ -438,4 +438,47 @@ describe("verificacion perezosa (D-7, camino B)", () => {
       throw new Error("se esperaba un lugar");
     expect(resultado.data.estatus).toBe("ADJUDICADA");
   });
+
+  it("si alguien mas la resolvio primero, relee en vez de devolver el estado caduco", async () => {
+    // Hallazgo 5 de la Etapa 13. `no_vigente` es el desenlace que **esta**
+    // funcion promete releer en su docstring —"si alguien mas la resolvio entre
+    // la lectura y este intento"— y era el unico que no lo hacia: se parecia a
+    // `abstenido` en que esta transaccion no escribio nada, pero se diferencia
+    // en lo que importa, que es que **otra** si escribio.
+    vencer.mockResolvedValue({ estado: "no_vigente" });
+    const falso = crearClienteFalso({
+      responder: conLoteYSolicitudReleida({
+        releida: solicitud({ estatus: "EN_VERIFICACION" }),
+      }),
+    });
+
+    const resultado = await consultarMiLugar(
+      { loteId: "L1", participanteId: "P1" },
+      { cliente: falso.cliente, ahora: () => AHORA_TARDE },
+    );
+
+    if (!resultado.ok || !resultado.data)
+      throw new Error("se esperaba un lugar");
+    // Antes del arreglo: `ADJUDICADA` con un `venceEn` ya pasado, o sea el
+    // sintoma exacto que la verificacion perezosa existe para no mostrar.
+    expect(resultado.data.estatus).toBe("EN_VERIFICACION");
+  });
+
+  it("con contencion sostenida no relee: nadie escribio nada", async () => {
+    vencer.mockResolvedValue({ estado: "en_conflicto" });
+    const falso = crearClienteFalso({
+      responder: conLoteYSolicitudReleida({
+        releida: solicitud({ estatus: "EN_VERIFICACION" }),
+      }),
+    });
+
+    const resultado = await consultarMiLugar(
+      { loteId: "L1", participanteId: "P1" },
+      { cliente: falso.cliente, ahora: () => AHORA_TARDE },
+    );
+
+    if (!resultado.ok || !resultado.data)
+      throw new Error("se esperaba un lugar");
+    expect(resultado.data.estatus).toBe("ADJUDICADA");
+  });
 });

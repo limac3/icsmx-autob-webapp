@@ -327,6 +327,14 @@ dentro del desplegable romperia esa propiedad.
 
 ### 4.2 `/admin/vehiculos/nuevo` y `/[id]/editar`
 
+> **El rechazo de una tanda nombra el archivo, no solo el motivo.** Con varias fotografias
+> elegidas, un mensaje como "el contenido del archivo no corresponde a su formato declarado" es
+> correcto e **inaccionable**: describe un archivo concreto entre siete y no dice cual. El dato no
+> puede venir del servidor —cada alta es su propia peticion y ahi el archivo es el unico que
+> hay—, asi que lo aporta el bucle que recorre la tanda. Se limpia en cada intento nuevo, y no
+> aparece cuando el fallo no es de un archivo (por ejemplo, el reordenamiento final). Reportado
+> por el operador usando la pantalla.
+
 Formulario con `eden-form-parts`, en secciones: identificacion, especificacion, condicion,
 fotografias.
 

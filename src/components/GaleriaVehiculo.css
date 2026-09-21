@@ -149,3 +149,11 @@
   overflow-wrap: anywhere;
   white-space: normal;
 }
+
+/* El nombre del archivo que fallo. Monoespaciado para que no se confundan
+   caracteres parecidos en un nombre como `IMG_0O17.jpg`, y quebrable porque los
+   nombres de camara y de descarga pueden ser largos. */
+.galeria-vehiculo__archivo-con-fallo {
+  font-family: monospace;
+  overflow-wrap: anywhere;
+}

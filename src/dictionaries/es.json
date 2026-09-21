@@ -248,7 +248,8 @@
       "confirmarEliminarAviso": "La fotografía se elimina de forma definitiva, con todas sus versiones almacenadas. No se puede recuperar ni volver a mostrar; habría que subirla de nuevo.",
       "eliminarDefinitivo": "Eliminar definitivamente",
       "previsualizacion": "Vista previa de la fotografía elegida",
-      "previsualizacionAyuda": "Así se subirá. Todavía no se ha guardado."
+      "previsualizacionAyuda": "Así se subirá. Todavía no se ha guardado.",
+      "archivoConFallo": "Archivo con el problema"
     }
   },
   "validacionVehiculo": {
