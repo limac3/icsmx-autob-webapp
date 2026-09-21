@@ -68,11 +68,30 @@ export const genericTests = <P extends object>(
   it(
     "no tiene violaciones de accesibilidad",
     async () => {
+      // **El recorrido de axe va DENTRO del `act`**, y no es cosmetico.
+      //
+      // Un componente con temporizador propio —`CuentaRegresiva` monta un
+      // `setInterval` de un segundo— sigue vivo mientras axe recorre el arbol,
+      // y ese recorrido tarda cerca de un segundo. Con el `await` fuera del
+      // `act`, el tic caia en tierra de nadie: un `setState` sin envolver, que
+      // el setup de festack convierte en excepcion y **hace fallar la compuerta
+      // con exit 1 sin marcar ninguna prueba en rojo**.
+      //
+      // Era flaky por carga —pasaba en `verify:rapido` y fallaba en
+      // `verify:despliegue`, que corre mas lento— y por tanto de la peor clase:
+      // el sintoma no apunta al componente que lo causa, sino al que se estaba
+      // ejecutando cuando el temporizador salto.
+      //
+      // Se arregla aqui y no en cada prueba porque el defecto es del helper:
+      // cualquier componente con un temporizador lo hereda. Y **no** con
+      // `vi.useFakeTimers()`, que fue el primer intento: axe usa
+      // temporizadores para sus propias fases y con el reloj detenido no
+      // termina nunca — la prueba se agota a los 30 s.
+      let resultados: unknown;
       await act(async () => {
         context.root.render(<Component {...props} />);
+        resultados = await globalThis.axe(context.container);
       });
-
-      const resultados = await globalThis.axe(context.container);
 
       expect(resultados).toHaveNoViolations();
     },

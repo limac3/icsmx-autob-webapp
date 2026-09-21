@@ -28,7 +28,9 @@ const vehiculo = (
   convocatoriaId?: string,
 ): Vehiculo => ({
   ...(convocatoriaId ? { convocatoriaId } : {}),
-  numeroEconomico: "VEH-001",
+  // Distinto por fila: es el indice de la tabla, asi que un fixture que lo
+  // repitiera volveria inservible cualquier asercion sobre el.
+  numeroEconomico: `VEH-${vehiculoId}`,
   numeroDeSerie: "3N6AD33A9KK870001",
   vehiculoId,
   marca: "Nissan",
@@ -69,6 +71,53 @@ const render = async (props: Partial<TablaVehiculosProps> = {}) => {
   });
   return context.container;
 };
+
+describe("columna del vehiculo", () => {
+  it("el numero economico es el enlace, y marca/version/modelo la linea de apoyo", async () => {
+    // El indice tiene que ser el enlace: veinte NP300 2019 se ven identicas y
+    // lo unico que las distingue es el numero economico.
+    const container = await render();
+
+    const enlace = container.querySelector("tbody a");
+    expect(enlace?.textContent).toBe("VEH-V2");
+    expect(enlace?.getAttribute("href")).toBe("/admin/vehiculos/V2/editar");
+    expect(container.querySelector("tbody p")?.textContent).toBe(
+      "Nissan NP300 2019",
+    );
+  });
+
+  it("la columna se llama Vehiculo", async () => {
+    const container = await render();
+
+    const encabezados = [...container.querySelectorAll("th")].map(
+      (th) => th.textContent,
+    );
+    // `toContain` y no `toBe`: `CardView` repite el texto del encabezado dentro
+    // del mismo `<th>` —lo reusa como etiqueta de la celda en la vista de
+    // tarjetas—, asi que el contenido es "VehiculoVehiculo".
+    expect(encabezados[1]).toContain(diccionario.vehiculos.campos.vehiculo);
+    // Y ya no es "Marca": la columna dejo de ser un campo para ser el vehiculo.
+    expect(encabezados[1]).not.toContain(diccionario.vehiculos.campos.marca);
+  });
+
+  it("sin permiso de edicion el numero se muestra sin enlace", async () => {
+    const container = await render({ puedeEditar: false });
+
+    expect(container.textContent).toContain("VEH-V2");
+    expect(container.querySelector("tbody a")).toBeNull();
+  });
+
+  it("el menu de acciones se identifica por el numero economico", async () => {
+    // Con marca y version, el `aria-label` nombra veinte filas distintas.
+    const container = await render({ puedeEditar: true });
+
+    expect(
+      container
+        .querySelector("button[aria-expanded]")
+        ?.getAttribute("aria-label"),
+    ).toBe(`${diccionario.vehiculos.acciones}: VEH-V2`);
+  });
+});
 
 describe("columna de convocatoria activa (seccion 4.1)", () => {
   it("muestra el nombre y el folio, no el identificador", async () => {

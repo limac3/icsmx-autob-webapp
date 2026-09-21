@@ -182,9 +182,7 @@
     "sinResultados": "No vehicle matches the search.",
     "catalogoVacio": "No vehicles registered yet.",
     "acciones": "Actions",
-    "fotografia": "Photo",
     "sinFotografia": "No photo",
-    "convocatoriaActiva": "Sale announcement",
     "sinConvocatoria": "Not in a sale",
     "creado": "Vehicle registered.",
     "actualizado": "Changes saved.",
@@ -201,6 +199,7 @@
     "confirmarRetiro": "Confirm removal",
     "identificadorAyuda": "Stored in uppercase and cannot be repeated.",
     "campos": {
+      "vehiculo": "Vehicle",
       "numeroEconomico": "Fleet number",
       "numeroDeSerie": "Serial number",
       "marca": "Make",

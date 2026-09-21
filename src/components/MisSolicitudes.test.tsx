@@ -1,5 +1,5 @@
 import { act } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { obtenerDiccionario } from "@/dictionaries";
 import { genericTests, getTestContext } from "@/utils/testHelpers";
 import MisSolicitudes, { type SolicitudEnLista } from "./MisSolicitudes";
@@ -68,6 +68,10 @@ const render = async (
   return context;
 };
 
+// Las tres formas de fila a la vez, incluida la que monta la cuenta regresiva:
+// es la que mas marcado tiene y la que conviene que axe recorra. Puede llevar
+// un temporizador vivo porque `genericTests` envuelve el recorrido de axe en
+// `act` (ver `testHelpers.tsx`).
 genericTests(context, MisSolicitudes, {
   solicitudes: [
     fila("L1", "REQUIERE_ATENCION", {
@@ -84,6 +88,18 @@ genericTests(context, MisSolicitudes, {
 });
 
 describe("MisSolicitudes", () => {
+  // La fila de una adjudicacion viva monta el `setInterval` de
+  // `CuentaRegresiva`. Con temporizadores falsos el tic no llega nunca por su
+  // cuenta, asi que nada actualiza estado fuera de `act`. Mismo patron que
+  // `CuentaRegresiva.test`.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("el vacio ofrece la accion que lo resuelve", async () => {
     const { container } = await render([]);
 

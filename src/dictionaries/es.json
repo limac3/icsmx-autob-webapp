@@ -182,9 +182,7 @@
     "sinResultados": "Ningún vehículo coincide con la búsqueda.",
     "catalogoVacio": "Todavía no hay vehículos registrados.",
     "acciones": "Acciones",
-    "fotografia": "Fotografía",
     "sinFotografia": "Sin fotografía",
-    "convocatoriaActiva": "Convocatoria",
     "sinConvocatoria": "Sin convocatoria",
     "creado": "Vehículo registrado.",
     "actualizado": "Cambios guardados.",
@@ -201,6 +199,7 @@
     "confirmarRetiro": "Confirmar retiro",
     "identificadorAyuda": "Se guarda en mayúsculas y no se puede repetir.",
     "campos": {
+      "vehiculo": "Vehículo",
       "numeroEconomico": "Número económico",
       "numeroDeSerie": "Número de serie",
       "marca": "Marca",

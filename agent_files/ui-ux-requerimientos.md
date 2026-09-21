@@ -303,8 +303,16 @@ Validacion de tipo y tamano en cliente **y** en servidor. La del cliente es cort
 
 ### 4.1 `/admin/vehiculos`
 
-Tabla en escritorio, tarjetas en movil. Columnas: fotografia, marca/version/modelo,
-kilometraje, `Badge` de estatus, convocatoria activa si la tiene.
+Tabla en escritorio, tarjetas en movil. Columnas: fotografia, **vehiculo**, kilometraje, `Badge`
+de estatus, convocatoria activa si la tiene.
+
+**La columna "Vehiculo" encabeza con el numero economico, y ese es el enlace.** Marca, version y
+modelo bajan a una linea de apoyo. La razon es la misma por la que 4.2 abre el formulario con los
+dos numeros: veinte NP300 2019 se ven identicas en una tabla y lo unico que distingue una fila de
+otra es el numero con el que la organizacion nombra ese activo. Un enlace tiene que ser el
+**indice**, no la descripcion — mismo reparto que el nombre y el folio en el catalogo de
+convocatorias. Por lo mismo, el `aria-label` del menu de acciones se identifica con el numero
+economico: con marca y version nombraria veinte filas distintas.
 
 Filtros por estatus y busqueda por marca o version. Acciones por fila en
 `eden-contextual-menu`.

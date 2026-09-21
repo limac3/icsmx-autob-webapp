@@ -137,7 +137,10 @@ const AccionesDeVehiculo = ({
           type="button"
           small
           aria-expanded={abierto}
-          aria-label={`${diccionario.vehiculos.acciones}: ${vehiculo.marca} ${vehiculo.version}`}
+          // El numero economico y no marca/version: con veinte vehiculos
+          // iguales, "Acciones: Nissan NP300" nombra veinte filas distintas y
+          // quien usa lector de pantalla no puede saber en cual esta.
+          aria-label={`${diccionario.vehiculos.acciones}: ${vehiculo.numeroEconomico}`}
           onClick={() => setAbierto((valor) => !valor)}
           onKeyDown={(evento) => {
             if (evento.key === "Escape") cerrar();
@@ -194,11 +197,11 @@ const TablaVehiculos = ({
         </ColGroup>
         <THead>
           <TR>
-            <TH scope="col">{etiquetas.fotografia}</TH>
-            <TH scope="col">{etiquetas.campos.marca}</TH>
+            <TH scope="col">{etiquetas.campos.fotografia}</TH>
+            <TH scope="col">{etiquetas.campos.vehiculo}</TH>
             <TH scope="col">{etiquetas.campos.kilometraje}</TH>
             <TH scope="col">{etiquetas.campos.estatus}</TH>
-            <TH scope="col">{etiquetas.convocatoriaActiva}</TH>
+            <TH scope="col">{etiquetas.campos.convocatoria}</TH>
             <TH scope="col">{etiquetas.acciones}</TH>
           </TR>
         </THead>
@@ -235,19 +238,26 @@ const TablaVehiculos = ({
                     />
                   )}
                 </TD>
-                {/* Marca, version y modelo en una sola columna, como pide la
-                    seccion 4.1: son el nombre del vehiculo, no tres datos. */}
+                {/* **El numero economico encabeza la celda y es el enlace**:
+                    es con lo que la organizacion nombra el vehiculo y lo unico
+                    que lo distingue de otro igual. Marca, version y modelo
+                    bajan a una linea de apoyo — veinte NP300 2019 se ven
+                    identicas, y el enlace tiene que ser el indice, no la
+                    descripcion. Mismo reparto que el nombre y el folio en el
+                    catalogo de convocatorias. */}
                 <TD>
                   {puedeEditar ? (
                     <Link
                       href={`/admin/vehiculos/${vehiculo.vehiculoId}/editar`}
                     >
-                      {`${vehiculo.marca} ${vehiculo.version}`}
+                      {vehiculo.numeroEconomico}
                     </Link>
                   ) : (
-                    `${vehiculo.marca} ${vehiculo.version}`
+                    vehiculo.numeroEconomico
                   )}
-                  <Text4 renderAs="p">{String(vehiculo.modelo)}</Text4>
+                  <Text4 renderAs="p">
+                    {`${vehiculo.marca} ${vehiculo.version} ${String(vehiculo.modelo)}`}
+                  </Text4>
                 </TD>
                 <TD>
                   {/* Agrupacion de miles segun el idioma; el numero crudo se lee
