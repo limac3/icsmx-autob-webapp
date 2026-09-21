@@ -5241,3 +5241,57 @@ Y la general: **antes de explicar por que un numero se ve raro, medirlo.** La ex
 —`withoutEnlargement`— estaba en un comentario del codigo, pero la tabla de arriba es lo que
 distingue "identicos" de "parecidos", y de esa distincion depende que sea correcto compartir el
 objeto. Una sonda de veinte lineas contra el pipeline real vale mas que releer el comentario.
+
+---
+
+## 91) El `aspect-ratio` de la rejilla no hacia nada: faltaba `height: auto`
+
+### Problema
+La rejilla de "Vehiculos disponibles" (`/convocatorias/[id]`) tenia que mostrar todas las
+fotografias con la misma forma, 4:3 recortado, para que las tarjetas se vieran iguales sin
+importar como venga el archivo original.
+
+### Sintoma
+Reportado por el operador sobre el entorno desplegado: **la fotografia de un vehiculo salia mucho
+mas alta que la de otro** en la misma rejilla. La hoja declaraba `aspect-ratio: 4 / 3` y
+`object-fit: cover`, y el CSS compilado —comprobado en `.next/static/chunks`— los traia intactos.
+
+### Causa raiz
+El `<img>` lleva los atributos `width` y `height` a proposito, para que el navegador reserve el
+hueco antes de descargar la imagen. Pero **el navegador los traduce a *presentational hints***:
+declaraciones de origen autor con la prioridad mas baja, no valores por omision que cualquier
+cosa pise.
+
+La hoja declaraba `width: 100%`, que pisa el primero. **Al segundo no lo pisaba nadie**, asi que
+`height` quedaba fijado a la altura de la variante mayor de *esa* fotografia. Con ancho y alto
+**los dos definidos**, `aspect-ratio` se ignora por especificacion — solo actua cuando una de las
+dos dimensiones es `auto`. Resultado: cada imagen con su altura natural. Una de 2048x1536 mide el
+doble que una de 1280x960, y como `withoutEnlargement` hace que la variante mayor sea
+`min(tope, original)`, dos vehiculos con originales distintos daban alturas distintas.
+
+`GaleriaVehiculo.css` **si** traia `height: auto` en la regla equivalente. La misma persona
+escribio las dos hojas en la misma etapa, asi que no fue un criterio distinto sino una omision —
+y nada la exigia.
+
+### Solucion aplicada
+`height: auto` en `.rejilla-lotes__foto`. Una linea.
+
+Mas `src/components/estilosDeImagen.test.ts`, que lee las hojas de los componentes y falla si una
+regla declara un `aspect-ratio` real sin resolver el alto por CSS. **Ninguna prueba de componente
+podia ver esto**: jsdom no calcula maquetacion, asi que `getComputedStyle` no resuelve
+`aspect-ratio` ni alturas. Leer el texto de la hoja es la unica comprobacion posible en proceso, y
+vale la pena porque falla en la compuerta en vez de semanas despues, sobre el entorno desplegado.
+
+El comentario de la hoja afirmaba lo contrario —"el `aspect-ratio` gana sobre el `width`/`height`
+del atributo, a proposito"—, asi que se reescribio: un comentario que asegura la conclusion
+equivocada es peor que no tenerlo, porque desanima a revisar justo lo que esta roto.
+
+### Regla para futuro
+**`width`/`height` en un `<img>` y `aspect-ratio` en la hoja no se llevan solos: hace falta
+`height: auto`.** La receta completa son cuatro declaraciones —`width`, `height: auto`,
+`aspect-ratio`, `object-fit`— y quitar cualquiera cambia el resultado en silencio.
+
+Y la general, que se repite en este documento: **un defecto que solo existe con maquetacion real
+no lo ve ninguna prueba en jsdom.** Cuando la comprobacion de pixeles no cabe, todavia suele caber
+una sobre la *declaracion* — mas debil, pero disponible en la compuerta. Ver tambien la seccion 87
+(`showModal`) y el punto `[OPERADOR]` de la Etapa 12 sobre axe en pantallas completas.

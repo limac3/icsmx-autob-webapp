@@ -12,9 +12,22 @@
   padding: var(--unity-spacing16, 1rem);
 }
 
-/* El `aspect-ratio` gana sobre el `width`/`height` del atributo, a proposito:
-   esos estan para que el navegador reserve el hueco antes de aplicar esta hoja,
-   y el recorte a 4:3 lo hace `cover` aqui — nunca el servidor, o el visor
+/* **`height: auto` no es decorativo: sin el, el `aspect-ratio` no hace nada.**
+   Los atributos `width`/`height` del `<img>` estan para que el navegador
+   reserve el hueco antes de aplicar esta hoja, pero el navegador los traduce a
+   *presentational hints* — declaraciones de origen autor con la prioridad mas
+   baja—. `width: 100%` pisa la primera; la segunda no la pisaba nadie, asi que
+   `height` quedaba fijado a la altura de la variante mayor de **esa**
+   fotografia. Con ancho y alto definidos, `aspect-ratio` se ignora por
+   especificacion, y cada tarjeta salia con la altura natural de su imagen: una
+   de 2048x1536 mide el doble que una de 1280x960.
+
+   Lo reporto el operador sobre el entorno desplegado. `GaleriaVehiculo.css` si
+   lo traia, lo que dice que fue una omision y no un criterio distinto. Ninguna
+   prueba de componente podia verlo —jsdom no calcula maquetacion—, asi que lo
+   cubre `estilosDeImagen.test.ts`, que lee esta hoja.
+
+   El recorte a 4:3 lo hace `cover` aqui — nunca el servidor, o el visor
    ampliado del detalle mostraria la fotografia mutilada.
 
    **El `sizes` del componente traduce esta maquetacion a viewport**, porque
@@ -25,6 +38,7 @@
    unico sintoma es que las imagenes pesan algo mas o se ven algo blandas. */
 .rejilla-lotes__foto {
   width: 100%;
+  height: auto;
   aspect-ratio: 4 / 3;
   object-fit: cover;
 }
