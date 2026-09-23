@@ -7,12 +7,6 @@
     "reintentar": "Reintentar",
     "volverAlInicio": "Ir al inicio"
   },
-  "estadoServicio": {
-    "titulo": "Estado del servicio",
-    "etiquetaEstado": "Estado",
-    "etiquetaVersion": "Versión",
-    "etiquetaHora": "Consultado"
-  },
   "sesion": {
     "titulo": "Mi sesión",
     "etiquetaNombre": "Nombre",
@@ -35,6 +29,114 @@
     "tesoreria": "Tesorería",
     "adjudicacion": "Adjudicación",
     "auditoria": "Auditoría"
+  },
+  "inicio": {
+    "bienvenida": "Aquí se publican las ventas de vehículos de flotilla y se lleva la fila de adjudicación, por orden de llegada y con registro de cada paso.",
+    "guiaTitulo": "Qué puedes hacer aquí",
+    "sinAccesosTitulo": "Sin accesos asignados",
+    "sinAccesosDescripcion": "Tu cuenta entró correctamente, pero todavía no tiene ningún permiso de esta aplicación. Solicítalo a quien administra los accesos de tu área.",
+    "sinSesionTitulo": "Venta de vehículos de flotilla",
+    "sinSesionDescripcion": "Inicia sesión para ver las convocatorias disponibles y lo que te toca hacer.",
+    "siguientePaso": {
+      "titulo": "Tu siguiente paso",
+      "plazoCorriendo": "Se te adjudicó",
+      "plazoVence": "Tienes hasta",
+      "plazoSinPrecisar": "Tienes adjudicaciones con el plazo corriendo. Revísalas para no perder ninguna.",
+      "irAPagar": "Subir el comprobante",
+      "verMisSolicitudes": "Ver mis solicitudes",
+      "ventaAbierta": "La venta está abierta:",
+      "ventaAbiertaLotes": "vehículos disponibles",
+      "variasVentasAbiertas": "convocatorias tienen la venta abierta ahora mismo.",
+      "irAlCatalogo": "Ir a convocatorias",
+      "proximaApertura": "La próxima venta abre el",
+      "errorTitulo": "No pudimos cargar tus pendientes",
+      "errorDescripcion": "Las instrucciones de abajo siguen disponibles. Vuelve a intentarlo en un momento."
+    },
+    "pendientes": {
+      "titulo": "Te espera",
+      "aprobacionesUna": "convocatoria espera tu dictamen",
+      "aprobaciones": "convocatorias esperan tu dictamen",
+      "tesoreriaUno": "pago espera verificación",
+      "tesoreria": "pagos esperan verificación",
+      "adjudicacion": "Hay convocatorias de adjudicación manual en curso. Revisa si algún lote espera tu decisión.",
+      "ver": "Ver"
+    },
+    "bloques": {
+      "comprar": {
+        "titulo": "Cómo formarte en la fila",
+        "pasos": [
+          "Abre Convocatorias y elige el vehículo que te interesa.",
+          "Cuando la venta abra, el botón de solicitar te da un turno. El turno lo asigna el servidor al recibir tu solicitud, no el reloj de tu dispositivo, y no se puede solicitar antes de la apertura.",
+          "El turno más bajo se adjudica el vehículo, salvo en las convocatorias que se adjudican a mano. Si quien va delante no paga a tiempo, el turno pasa al siguiente.",
+          "Una convocatoria puede limitar cuántos vehículos se adjudica una misma persona."
+        ],
+        "enlace": "Ver convocatorias"
+      },
+      "pagar": {
+        "titulo": "Cómo pagar lo que se te adjudicó",
+        "pasos": [
+          "El cobro no ocurre en esta aplicación: el pago se hace por el proceso que indique la convocatoria.",
+          "Con el comprobante en mano, súbelo desde Mis solicitudes antes de que venza el plazo.",
+          "Tesorería lo revisa y lo avala, o lo rechaza con un motivo. Si el plazo vence, el vehículo pasa al siguiente de la fila."
+        ],
+        "enlace": "Ver mis solicitudes"
+      },
+      "vehiculos": {
+        "titulo": "Cómo dar de alta un vehículo",
+        "pasos": [
+          "Captura los datos y sube las fotografías desde Vehículos.",
+          "Un vehículo disponible se puede editar o retirar; uno reservado o vendido, ya no.",
+          "Solo los vehículos disponibles se pueden incluir en una convocatoria."
+        ],
+        "enlace": "Ir a vehículos"
+      },
+      "publicar": {
+        "titulo": "Cómo publicar una convocatoria",
+        "pasos": [
+          "Crea la convocatoria en borrador e incluye los vehículos que saldrán a la venta.",
+          "Revisa las fechas: la publicación no puede ser posterior al inicio de la venta, y el fin va después del inicio.",
+          "Envíala a aprobación. Quien la dictamina no puede ser quien la creó.",
+          "Ya aprobada, publícala. Desde ese momento los participantes la ven, y la venta abre en la fecha de inicio."
+        ],
+        "enlace": "Administrar convocatorias"
+      },
+      "dictaminar": {
+        "titulo": "Cómo dictaminar una convocatoria",
+        "pasos": [
+          "En Aprobaciones están las que esperan decisión, la que lleva más tiempo esperando primero.",
+          "Abre el detalle para revisar los vehículos y las fechas antes de decidir.",
+          "No puedes aprobar una convocatoria que tú creaste. Rechazarla exige un motivo, y queda en la bitácora."
+        ],
+        "enlace": "Ir a aprobaciones"
+      },
+      "adjudicar": {
+        "titulo": "Cómo adjudicar a mano",
+        "pasos": [
+          "Solo llegan a esta bandeja las convocatorias marcadas como de adjudicación manual.",
+          "Abre el lote para ver la fila con la identidad de quienes se formaron y el turno de cada uno.",
+          "Al adjudicar, el motivo es obligatorio y queda registrado junto con tu decisión."
+        ],
+        "enlace": "Ir a adjudicación"
+      },
+      "verificarPagos": {
+        "titulo": "Cómo verificar un pago",
+        "pasos": [
+          "En Tesorería están las solicitudes con comprobante subido, la más antigua primero.",
+          "Descarga el comprobante y confróntalo con el cobro, que ocurre fuera de esta aplicación.",
+          "Avala el pago para cerrar la venta, o recházalo con un motivo: el vehículo vuelve a la fila."
+        ],
+        "enlace": "Ir a tesorería"
+      },
+      "auditar": {
+        "titulo": "Qué puedes auditar",
+        "pasos": [
+          "La bitácora registra cada cambio de estado con quién lo hizo y cuándo. No se puede modificar ni borrar.",
+          "Puedes reconstruir la fila histórica de un lote y ver quién ocupó cada turno.",
+          "La exportación entrega los eventos filtrados para revisarlos fuera de la aplicación."
+        ],
+        "enlace": "Ir a auditoría"
+      }
+    }
   },
   "desarrollo": {
     "titulo": "Identidad simulada",

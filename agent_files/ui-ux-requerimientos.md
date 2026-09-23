@@ -137,6 +137,94 @@ En movil la navegacion colapsa; el destino mas usado de cada rol queda accesible
 
 ---
 
+## 2.1 Pantalla de inicio — `/`
+
+Antes era el scaffold de la Etapa 1: un `H1` y el estado del servicio —`ok`, la version del
+paquete y un timestamp ISO—. Eso es salida de health check, ya expuesta en `/api/health`, y no le
+dice nada a nadie que entre a comprar. `EstadoServicio` se elimino con su `.css` y su prueba.
+
+Hoy la pantalla tiene **dos piezas con dependencias distintas, y por eso van separadas**: la guia
+depende solo de los permisos de la sesion, que ya estan en memoria; el panel de datos depende de
+cuatro lecturas. Si fueran una sola pieza, la pantalla entera esperaria a DynamoDB para explicarle
+a alguien como formarse en una fila, y desapareceria si esa lectura fallara. El panel va en su
+`<Suspense>`; la guia se dibuja de inmediato.
+
+`force-dynamic`: todo depende de la sesion y del reloj del servidor (regla 14).
+
+### Guia de instrucciones — `GuiaDeInicio`
+
+Un desplegable por bloque (`Drawer`/`Summary` de `eden-accordion`), **el primero abierto y el
+resto cerrados**: con todos abiertos la pantalla es un muro de texto, con todos cerrados nadie
+sabe que hay dentro. Cada bloque lleva tres o cuatro pasos en un `ol` —el orden es el contenido—
+y un boton a donde se hace lo que explica. Server Component: `Drawer` no compara hijos por
+identidad, a diferencia de `Table` (`desafios-implementacion.md` 23).
+
+**Panel, no ventana modal.** La alternativa evaluada era un `ToolModal` de bienvenida con "no
+volver a mostrar", y se descarto por dos razones de este producto: el participante tipico entra
+desde el telefono **en el instante exacto de la apertura de venta**, y un modal que hay que cerrar
+en ese momento compite con lo unico que vino a hacer; ademas el "no volver a mostrar" vive en
+`localStorage`, que se pierde entre dispositivos y en incognito, asi que reaparece a quien ya lo
+cerro.
+
+Que bloques se ven lo decide `src/lib/guiaDeInicio.ts`, con la misma mecanica que el menu —cada
+bloque declara una `Accion`, nunca una lista de permisos (regla 17)— pero **declarando la
+operacion que describe, no la puerta que abre**. Es D-40 del ADR y la diferencia importa: colgada
+de las acciones `ver-*` del menu, la guia le explicaria al auditor como publicar una convocatoria
+y como avalar un pago. Con la accion que decide, el auditor recibe un unico bloque.
+
+| Bloque | Accion que lo abre | Destino |
+| --- | --- | --- |
+| Como formarte en la fila | `solicitud:crear` | `/convocatorias` |
+| Como pagar lo que se te adjudico | `comprobante:subir` | `/mis-solicitudes` |
+| Como dar de alta un vehiculo | `vehiculo:crear` | `/admin/vehiculos` |
+| Como publicar una convocatoria | `convocatoria:publicar` | `/admin/convocatorias` |
+| Como dictaminar una convocatoria | `convocatoria:aprobar` | `/aprobaciones` |
+| Como adjudicar a mano | `adjudicacion:adjudicar` | `/adjudicacion` |
+| Como verificar un pago | `pago:avalar` | `/tesoreria/verificacion` |
+| Que puedes auditar | `auditoria:ver-bitacora` | `/auditoria` |
+
+La ultima es la unica con una accion `ver-*`, y no por descuido: auditar **es** mirar, no hay una
+operacion por debajo que describir.
+
+Los textos viven en `src/dictionaries/` bajo `inicio.bloques` (regla 11), y hay prueba de que el
+catalogo y los dos diccionarios no se separan en ninguna direccion: ni un bloque sin texto, ni un
+texto sin bloque.
+
+### Tu siguiente paso — `PanelDeInicio`
+
+**Una sola linea, no un tablero.** La prioridad la decide `calcularSiguientePaso` en el dominio,
+sin I/O:
+
+1. Un plazo de pago corriendo — con cuenta regresiva y enlace al lote. Es lo unico que se pierde
+   por no mirarlo, y mientras CES siga sin aprobar (R17) esta aplicacion es el unico canal que lo
+   avisa.
+2. Una venta abierta ahora — nombrada, con cuantos vehiculos trae. Con varias, se cuentan.
+3. La proxima apertura, con su fecha en hora de negocio.
+4. Nada: el bloque no se dibuja. Un recuadro que dice "no tienes pendientes" es ruido con marco.
+
+Con la lista de solicitudes **truncada** no se nombra cual vence antes (D-41): se avisa que hay
+plazos corriendo y se manda a `/mis-solicitudes`. La fecha llega formateada y los segundos
+resueltos desde el servidor; `CuentaRegresiva` solo decrementa (regla 9).
+
+Debajo, las bandejas con trabajo pendiente, y solo esas — una bandeja vacia no se menciona.
+Aprobaciones y tesoreria llevan cifra; adjudicacion se anuncia sin numero, por lo que cuesta
+contarla (D-42). Las lecturas cuelgan de la accion que decide, igual que la guia: al auditor no se
+le consulta ninguna bandeja.
+
+**Un fallo de lectura no se lo lleva todo.** El panel degrada a un aviso explicito y la guia se
+sigue dibujando, porque no depende de ninguna consulta. La regla 15 prohibe callar el fallo o
+rellenarlo con datos inventados, no conservar la parte de la pantalla que si funciona.
+
+### Estados sin permisos y sin sesion
+
+Una sesion valida **sin ningun permiso** ve un `Warn` con a quien pedir acceso: es un caso real y
+distinto de un EAS caido. Una visita **sin sesion** ve que es la aplicacion y el boton de entrar.
+`getSession()` no se envuelve en `catch` aqui: `null` es una visita anonima, pero una excepcion es
+EAS sin responder y tiene que llegar al boundary de error en vez de disfrazarse de visitante
+(regla 15). El encabezado si la atrapa, porque no decide nada con los permisos.
+
+---
+
 ## 3. Pantallas de participante
 
 ### 3.1 `/convocatorias` — Listado

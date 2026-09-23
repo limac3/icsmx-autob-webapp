@@ -1,0 +1,19 @@
+/* Pantalla de inicio. Solo layout; la apariencia la ponen los componentes de
+   Eden (regla 10). */
+
+.inicio {
+  display: grid;
+  gap: var(--unity-spacing24, 1.5rem);
+  justify-items: start;
+}
+
+.inicio__encabezado {
+  display: grid;
+  gap: var(--unity-spacing8, 0.5rem);
+}
+
+/* El parrafo de bienvenida es texto corrido: mas ancho que esto se lee mal en
+   escritorio, por muy disponible que este el espacio. */
+.inicio__encabezado p {
+  max-width: 68ch;
+}

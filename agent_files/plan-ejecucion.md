@@ -2633,6 +2633,60 @@ una URL**. El listado sabia cual era la principal y no podia mostrarla, asi que 
 
 ---
 
+## Etapa 19 — El home deja de ser un scaffold ✅
+
+**Objetivo:** que la pantalla de inicio diga que puede hacer aqui quien entra, y que le toca hacer
+ahora, en vez de mostrar la salida del health check.
+
+**Dependencias:** ninguna. Reusa el catalogo de permisos (Etapa 2), la navegacion por capacidad
+(Etapa 6), `listarConvocatoriasVisibles` (Etapa 7), `listarMisSolicitudes` (Etapa 18) y las
+bandejas de aprobador, adjudicador y tesoreria.
+
+**Origen:** pedido del operador el 2026-09-23 — "el home esta muy simple y no dice mucho; una
+ventana de instrucciones que cambie segun los permisos de cada usuario".
+
+> **Lo que hacia el home hasta hoy.** `H1` mas `EstadoServicio`: `ok`, la version del paquete y un
+> timestamp ISO. Es salida de health check, y ya esta en `/api/health`.
+
+### A — Guia de instrucciones por capacidad
+
+- [x] `src/lib/guiaDeInicio.ts` — catalogo de ocho bloques, cada uno con **la accion que
+      describe**, no la puerta que abre (D-40). Gemelo de `navegacion.ts`, sin listas de permisos.
+- [x] `src/components/GuiaDeInicio.tsx` — `Drawer`/`Summary` de `eden-accordion`, el primero
+      abierto, pasos en `ol`, boton al destino. Server Component.
+- [x] Textos en `src/dictionaries/` bajo `inicio.bloques`, es y en (regla 11).
+- [x] Panel y no modal, con la razon registrada en `ui-ux-requerimientos.md` 2.1.
+
+### B — Tu siguiente paso y las bandejas con trabajo
+
+- [x] `src/lib/domain/siguientePaso.ts` — la prioridad, pura y sin I/O. Trato honesto de la lista
+      truncada (D-41).
+- [x] `src/lib/inicio/resumenDeInicio.ts` — **sin patrones de acceso nuevos**: reusa las cuatro
+      lecturas existentes y condiciona cada una a la capacidad de quien decide. La bandeja del
+      adjudicador se anuncia sin cifra (D-42).
+- [x] `src/types/inicio.ts`, `src/components/PanelDeInicio.tsx` — el panel, con cuenta regresiva
+      y degradacion explicita ante un fallo de lectura.
+- [x] `src/app/page.tsx` — las dos piezas en `<Suspense>` separados, estados sin permisos y sin
+      sesion.
+
+### C — Lo que se quito
+
+- [x] `EstadoServicio.tsx`, su `.css`, su prueba y la seccion `estadoServicio` de los dos
+      diccionarios. Quedo sin un solo consumidor al salir del home; `obtenerEstadoAplicacion` sigue
+      donde debe, en `/api/health`.
+
+### Compuerta
+
+- [x] `npm run typecheck`, `npm run verify:rapido` (2787 pruebas) y `npm run build`, limpios.
+- [x] 56 pruebas nuevas: casos allow y deny por permiso en los dos catalogos, la prioridad del
+      siguiente paso incluida la frontera exacta de apertura, la gating de cada lectura, y axe
+      sobre los dos componentes.
+- [ ] **`[OPERADOR]`** Las tres vistas en el navegador, con el conmutador de identidad simulada:
+      participante con un plazo corriendo, auditor (debe ver **un solo** bloque) y una sesion sin
+      ningun permiso. Comprobar el desplegable en telefono, que es donde el acordeon se prueba.
+- [ ] **`[OPERADOR]`** Forzar el fallo de una lectura y confirmar que el aviso sale y la guia
+      sobrevive.
+
 ## Riesgos y mitigaciones
 
 Ordenados por severidad. La **senal de alerta temprana** es lo que hay que vigilar para

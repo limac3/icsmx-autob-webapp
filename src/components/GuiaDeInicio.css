@@ -1,0 +1,27 @@
+/* Guia de inicio. Solo layout; la apariencia la ponen los componentes de Eden
+   (regla 10). */
+
+.guia-inicio {
+  width: 100%;
+}
+
+/* Los pasos numerados. El sangrado por omision del navegador deja el numero
+   fuera del recuadro del desplegable en pantalla angosta, que es donde menos
+   espacio hay. */
+.guia-inicio__pasos {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.guia-inicio__pasos li {
+  /* Sin esto el texto del paso queda pegado al numero cuando envuelve. */
+  padding-left: 0.25rem;
+}
+
+/* El boton va separado del ultimo paso, no pegado a el: es una salida de la
+   explicacion, no un renglon mas de la lista. */
+.guia-inicio__accion {
+  margin-top: 1rem;
+}

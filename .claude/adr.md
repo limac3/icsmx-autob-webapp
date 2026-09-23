@@ -1195,6 +1195,54 @@ Descartado:
   `EQUIDAD_APERTURA`, `BARRIDO_LOCAL`): se omiten a proposito y por decisiones ya registradas.
 Anclas: `src/utils/backendUtilizable.ts::backendParaRegresion`.
 
+### D-40 — La guia del home cuelga de la accion que describe, no de la puerta que abre
+`src/lib/navegacion.ts` declara cada entrada del menu con una accion `ver-*`, y es correcto: un
+enlace es una puerta a una pantalla. La guia de inicio reusa la misma mecanica —un catalogo de
+bloques, `tieneCapacidad`, cero listas de permisos (regla 17)— pero declara **la operacion que el
+bloque explica**: `convocatoria:publicar`, `pago:avalar`, `vehiculo:crear`,
+`adjudicacion:adjudicar`.
+La diferencia la obliga `Autob_Auditar`, que concede capacidad sobre `vehiculo:ver-catalogo`,
+`convocatoria:ver-administracion`, `tesoreria:ver-bandeja` y `adjudicacion:ver-bandeja`: el auditor
+ve cuatro bandejas en lectura, y eso esta bien. Colgada de esas mismas acciones, la guia le
+explicaria como publicar una convocatoria y como avalar un pago —dos cosas que no puede hacer—,
+y al administrador de convocatorias le explicaria como dar de alta un vehiculo, que tampoco puede.
+Con la accion que decide, cada quien lee solo lo suyo y el auditor recibe un unico bloque.
+`tieneCapacidad` sirve igual para una accion con guarda porque solo mira permisos: no evalua el
+recurso y no cae en la regla 18. La pregunta es "¿esta persona publica convocatorias?", no
+"¿puede publicar **esta**?", que sigue decidiendola la pantalla con `puedeEjecutar` completo.
+El mismo criterio gobierna las lecturas de `resumenDeInicio`: al auditor no se le consulta ninguna
+bandeja, porque no tiene trabajo pendiente en ninguna.
+Descartado: **reusar el catalogo de navegacion tal cual**, que era lo barato y habria dado una guia
+a medio camino entre lo que cada quien ve y lo que cada quien hace.
+Anclas: `src/lib/guiaDeInicio.ts::bloquesVisibles`, `src/lib/inicio/resumenDeInicio.ts::resumenDeInicio`.
+
+### D-41 — Con la lista de solicitudes truncada, el home avisa del plazo pero no dice cual vence antes
+`listarMisSolicitudes` recorta a las 100 mas recientes (D-37) y marca `truncada`. El home elige
+entre esas el vencimiento mas proximo, asi que una solicitud mas vieja que quedo fuera pudo tener
+uno anterior: nombrar una seria una afirmacion que el dato no sostiene, y sobre un plazo eso cuesta
+un vehiculo. Con `truncada`, `calcularSiguientePaso` devuelve `PLAZO_CORRIENDO_SIN_PRECISAR`, sin
+fecha ni cuenta regresiva, y manda a `/mis-solicitudes`.
+Si la lista se trunco y **no** hay ningun plazo vivo entre las que llegaron, se sigue de largo.
+Tampoco se puede afirmar que no exista ninguno, pero para esconderse tendria que ser una
+adjudicacion anterior a las 100 mas recientes y seguir viva, y R-13 cuenta en horas: habria vencido
+mucho antes.
+Descartado: **paginar hasta agotar** para poder afirmarlo. Es gasto en el camino mas visitado de la
+aplicacion por un caso que exige mas de cien solicitudes propias; la pantalla que si las lista
+todas esta a un clic.
+Anclas: `src/lib/domain/siguientePaso.ts::calcularSiguientePaso`.
+
+### D-42 — La bandeja del adjudicador se anuncia en el home, no se cuenta
+Contar los lotes que esperan decision manual es recorrer cada convocatoria manual publicada, leer
+sus lotes y consultar el tamano de la fila de cada uno — lo que hace `/adjudicacion`, donde se paga
+porque esa es la pantalla. Pagarlo en el home lo cobraria en cada visita de quien adjudica, por un
+numero. El home usa una sola `Query` para saber si **existe** alguna convocatoria manual publicada
+y, si la hay, enlaza a la bandeja sin cifra.
+Descartado: **contar convocatorias manuales publicadas y llamarlas pendientes**. Es la consulta
+barata, pero miente: una convocatoria manual sin nadie formado no espera ninguna decision, asi que
+el home diria "2" con la bandeja vacia. Las otras dos bandejas —aprobaciones y tesoreria— si
+llevan cifra, porque ahi una `Query` devuelve exactamente el trabajo pendiente.
+Anclas: `src/lib/inicio/resumenDeInicio.ts::resumenDeInicio`.
+
 ### D-28 — Lo destructivo se confirma en un modal, y el retiro pierde su camino sin JavaScript
 Eliminar una fotografia y retirar un vehiculo del catalogo pasan por un modal de confirmacion:
 `DialogModal` para el borrado —solo hay que confirmar— y `ToolModal` para el retiro, que captura el

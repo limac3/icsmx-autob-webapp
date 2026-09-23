@@ -7,12 +7,6 @@
     "reintentar": "Try again",
     "volverAlInicio": "Go to home"
   },
-  "estadoServicio": {
-    "titulo": "Service status",
-    "etiquetaEstado": "Status",
-    "etiquetaVersion": "Version",
-    "etiquetaHora": "Checked"
-  },
   "sesion": {
     "titulo": "My session",
     "etiquetaNombre": "Name",
@@ -35,6 +29,114 @@
     "tesoreria": "Treasury",
     "adjudicacion": "Awarding",
     "auditoria": "Auditing"
+  },
+  "inicio": {
+    "bienvenida": "This is where fleet vehicle sales are published and the award queue is kept, in order of arrival and with every step on record.",
+    "guiaTitulo": "What you can do here",
+    "sinAccesosTitulo": "No access assigned",
+    "sinAccesosDescripcion": "You signed in successfully, but your account does not have any permission for this application yet. Request it from whoever manages access for your area.",
+    "sinSesionTitulo": "Fleet vehicle sales",
+    "sinSesionDescripcion": "Sign in to see the available sales and what you need to do.",
+    "siguientePaso": {
+      "titulo": "Your next step",
+      "plazoCorriendo": "You were awarded",
+      "plazoVence": "You have until",
+      "plazoSinPrecisar": "You have awards with the payment deadline running. Review them so you do not lose any.",
+      "irAPagar": "Upload the receipt",
+      "verMisSolicitudes": "View my requests",
+      "ventaAbierta": "The sale is open:",
+      "ventaAbiertaLotes": "vehicles available",
+      "variasVentasAbiertas": "sales are open right now.",
+      "irAlCatalogo": "Go to sales",
+      "proximaApertura": "The next sale opens on",
+      "errorTitulo": "We could not load your pending items",
+      "errorDescripcion": "The instructions below are still available. Please try again in a moment."
+    },
+    "pendientes": {
+      "titulo": "Waiting for you",
+      "aprobacionesUna": "sale is waiting for your decision",
+      "aprobaciones": "sales are waiting for your decision",
+      "tesoreriaUno": "payment is waiting for verification",
+      "tesoreria": "payments are waiting for verification",
+      "adjudicacion": "There are manually awarded sales in progress. Check whether any lot is waiting for your decision.",
+      "ver": "View"
+    },
+    "bloques": {
+      "comprar": {
+        "titulo": "How to join a queue",
+        "pasos": [
+          "Open Sales and pick the vehicle you are interested in.",
+          "When the sale opens, the request button gives you a queue number. The server assigns it when it receives your request, not your device clock, and you cannot request before the sale opens.",
+          "The lowest number wins the vehicle, except in sales that are awarded manually. If the person ahead of you does not pay in time, the award moves to the next one.",
+          "A sale may limit how many vehicles one person can be awarded."
+        ],
+        "enlace": "View sales"
+      },
+      "pagar": {
+        "titulo": "How to pay for what you were awarded",
+        "pasos": [
+          "Payment is not collected in this application: you pay through the process the sale specifies.",
+          "Once you have the receipt, upload it from My requests before the deadline passes.",
+          "Treasury reviews it and either approves it or rejects it with a reason. If the deadline passes, the vehicle moves to the next person in the queue."
+        ],
+        "enlace": "View my requests"
+      },
+      "vehiculos": {
+        "titulo": "How to register a vehicle",
+        "pasos": [
+          "Enter the details and upload the photographs from Vehicles.",
+          "An available vehicle can be edited or withdrawn; a reserved or sold one cannot.",
+          "Only available vehicles can be included in a sale."
+        ],
+        "enlace": "Go to vehicles"
+      },
+      "publicar": {
+        "titulo": "How to publish a sale",
+        "pasos": [
+          "Create the sale as a draft and include the vehicles that will go on sale.",
+          "Check the dates: publication cannot be later than the sale start, and the end comes after the start.",
+          "Send it for approval. Whoever decides on it cannot be the person who created it.",
+          "Once approved, publish it. From then on participants can see it, and the sale opens on the start date."
+        ],
+        "enlace": "Manage sales"
+      },
+      "dictaminar": {
+        "titulo": "How to decide on a sale",
+        "pasos": [
+          "Approvals holds the ones awaiting a decision, longest waiting first.",
+          "Open the detail to review the vehicles and the dates before deciding.",
+          "You cannot approve a sale you created yourself. Rejecting it requires a reason, and it goes on the audit log."
+        ],
+        "enlace": "Go to approvals"
+      },
+      "adjudicar": {
+        "titulo": "How to award manually",
+        "pasos": [
+          "Only sales marked as manually awarded reach this queue.",
+          "Open the lot to see the queue with the identity of everyone in it and each number.",
+          "When you award, a reason is required and is recorded alongside your decision."
+        ],
+        "enlace": "Go to awards"
+      },
+      "verificarPagos": {
+        "titulo": "How to verify a payment",
+        "pasos": [
+          "Treasury holds the requests with a receipt uploaded, oldest first.",
+          "Download the receipt and check it against the payment, which happens outside this application.",
+          "Approve the payment to close the sale, or reject it with a reason: the vehicle goes back to the queue."
+        ],
+        "enlace": "Go to treasury"
+      },
+      "auditar": {
+        "titulo": "What you can audit",
+        "pasos": [
+          "The audit log records every state change with who did it and when. It cannot be modified or deleted.",
+          "You can rebuild the historical queue of a lot and see who held each number.",
+          "The export delivers the filtered events so you can review them outside the application."
+        ],
+        "enlace": "Go to audit log"
+      }
+    }
   },
   "desarrollo": {
     "titulo": "Simulated identity",

@@ -1,0 +1,39 @@
+/* Panel de "tu siguiente paso" y bandejas con trabajo. Solo layout; la
+   apariencia la ponen los componentes de Eden (regla 10). */
+
+.panel-inicio {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+}
+
+.panel-inicio__accion {
+  margin-top: 0.75rem;
+}
+
+.panel-inicio__pendientes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+/* Mobile-first: el texto y su boton se apilan en pantalla angosta y comparten
+   renglon en cuanto hay ancho. Sin esto el boton empuja el texto a una franja
+   de dos palabras por linea en el telefono. */
+.panel-inicio__pendientes li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+@media (min-width: 480px) {
+  .panel-inicio__pendientes li {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+}
