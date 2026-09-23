@@ -288,6 +288,14 @@ Mezclados en un solo encabezado, la descripcion se traga las fechas.
 Rejilla de lotes: fotografia principal, marca/version/modelo, kilometraje, precio, `Badge` de
 estatus y `tamanoFila` (**"3 en fila"** — cantidad, jamas identidades).
 
+**Los lotes `RETIRADO` no se publican.** No salen en la rejilla, y su detalle (3.3) responde
+**404** igual que cualquier otro recurso no visible. Una convocatoria se puede ocultar,
+reactivar a borrador para corregirla y volver a publicar; el lote retirado en esa correccion ya
+devolvio su vehiculo al catalogo, asi que anunciarlo —aunque fuera en gris— ofreceria algo que
+no esta en venta, al precio al que se ofrecia. La decision se aplica en un solo sitio
+(`esLoteOfrecido`) para que la vista previa administrativa (4.6) siga ensenando exactamente lo
+que ve el participante.
+
 Una columna en movil, dos o tres en escritorio.
 
 ### 3.3 `/convocatorias/[id]/lotes/[loteId]` — Detalle del lote
@@ -699,10 +707,17 @@ identificador de vehiculo (`desafios-implementacion.md` 28).
 > `detalles: { vehiculo: "en_otra_convocatoria" }`. La pantalla lo traduce a "Ese vehiculo entro
 > en otra convocatoria activa. Actualiza la lista y elige otro."
 
-**Retiro de un lote:** boton por fila, con el motivo en un `DialogModal` —obligatorio, va a la
-bitacora—. El lote no desaparece: pasa a `RETIRADO` y se queda a la vista con su motivo, porque
-el auditor tiene que poder ver que ese vehiculo estuvo incluido y a que precio. Un lote con
-participantes formados no ofrece el boton y explica por que.
+**Retiro del lote:** boton por fila —**"Retirar lote"**—, con el motivo en un `DialogModal`
+—obligatorio, va a la bitacora—. Se llama por el lote y no por el vehiculo para separarlo de
+`vehiculo:retirar`, que saca el vehiculo del catalogo para siempre: **aqui el vehiculo se
+libera** y vuelve a `DISPONIBLE`, listo para otra convocatoria. El modal lo dice antes de
+confirmar, junto con la otra consecuencia que la pantalla no puede ensenar: el lote deja de
+publicarse.
+
+El lote no desaparece **de esta pantalla**: pasa a `RETIRADO` y se queda a la vista con su
+motivo, porque el auditor tiene que poder ver que ese vehiculo estuvo incluido y a que precio.
+De cara al participante si desaparece (3.2). Un lote con participantes formados no ofrece el
+boton y explica por que.
 
 **Enviar a aprobacion** pide confirmacion e indica que la convocatoria dejara de ser editable.
 

@@ -86,7 +86,7 @@ superconjunto pasa a ser una decision de configuracion de EAS.
 | `convocatoria:ver-administracion` | `Autob_Administrar_Convocatorias` o `Autob_Aprobar_Convocatorias` o `Autob_Auditar` | — |
 | `convocatoria:ver-aprobaciones` | `Autob_Aprobar_Convocatorias` | — |
 | `convocatoria:incluir-vehiculo` | `Autob_Administrar_Convocatorias` | Solo en `BORRADOR`; el vehiculo debe estar `DISPONIBLE` (R-10) |
-| `convocatoria:retirar-vehiculo` | `Autob_Administrar_Convocatorias` | Solo en `BORRADOR`; el lote sin solicitudes vivas |
+| `lote:retirar` | `Autob_Administrar_Convocatorias` | Solo en `BORRADOR`; el lote sin solicitudes vivas |
 | `convocatoria:enviar-a-aprobacion` | `Autob_Administrar_Convocatorias` | Desde `BORRADOR`; al menos un lote; fechas validas |
 | `convocatoria:aprobar` | `Autob_Aprobar_Convocatorias` | Desde `EN_APROBACION` y **`creadoPor !== participanteId`** (R-05) |
 | `convocatoria:rechazar` | `Autob_Aprobar_Convocatorias` | Desde `EN_APROBACION`; **motivo obligatorio**; misma guarda de auto-aprobacion |

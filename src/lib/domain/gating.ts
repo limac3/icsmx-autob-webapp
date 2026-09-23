@@ -23,6 +23,7 @@ import type {
   TipoConvocatoria,
 } from "@/types/convocatoria";
 import { TIPO_POR_PERMISO_DE_VENTA, type Permiso } from "@/types/identidad";
+import type { EstatusLote } from "@/types/lote";
 import {
   ventaAbierta,
   ventaFinalizada,
@@ -149,3 +150,24 @@ export const contextoDeConvocatoria = (
   ventaAbierta: ventaAbierta(convocatoria, ahora),
   ventaFinalizada: ventaFinalizada(convocatoria.finVenta, ahora),
 });
+
+/**
+ * ¿Forma parte este lote de lo que la convocatoria ofrece?
+ *
+ * **Un lote `RETIRADO` no se publica.** El retiro devuelve el vehiculo al
+ * catalogo —vuelve a `DISPONIBLE` y puede incluirse en otra convocatoria—, asi
+ * que publicarlo anunciaria como en venta algo que ya no lo esta, y con el
+ * precio al que se ofrecia. Ocurre cuando una convocatoria publicada se oculta,
+ * se reactiva a borrador para corregirla y se vuelve a publicar: el lote
+ * retirado en esa correccion no debe reaparecer.
+ *
+ * **No sustituye al servidor.** La condicion de `solicitarCompra` ya rechaza un
+ * lote retirado (`CONDICION_LOTE_ADMITE_FILA`); esto decide que se **muestra**,
+ * que es una pregunta distinta y se responde en la lectura.
+ *
+ * Vive aqui y no en cada pantalla porque son tres —la rejilla, el detalle
+ * publico y la vista previa administrativa— y la tercera existe justamente para
+ * ensenar lo mismo que la primera.
+ */
+export const esLoteOfrecido = (lote: { estatus: EstatusLote }): boolean =>
+  lote.estatus !== "RETIRADO";

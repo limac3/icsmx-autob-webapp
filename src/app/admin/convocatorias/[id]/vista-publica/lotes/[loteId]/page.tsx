@@ -7,6 +7,7 @@ import { getSession } from "@/lib/auth/session";
 import { loteParaVista } from "@/lib/convocatorias/loteParaVista";
 import { obtenerConvocatoria } from "@/lib/convocatorias/obtenerConvocatoria";
 import { desdeIso } from "@/lib/domain/fechas";
+import { esLoteOfrecido } from "@/lib/domain/gating";
 import { calcularEstadoDeVentaUi } from "@/lib/domain/ventanas";
 import { momentoDeVistaPrevia } from "@/lib/domain/vistaPrevia";
 import { obtenerIdiomaDePeticion } from "@/lib/idioma";
@@ -59,7 +60,10 @@ const VistaPublicaDeLote = async ({
 
   const convocatoria = lectura.data;
   const lote = convocatoria.lotes.find((l) => l.loteId === loteId);
-  if (!lote) notFound();
+  // Un lote retirado no se ofrece, asi que tampoco tiene URL viva: quien
+  // guardo el enlace antes de la correccion recibe el mismo 404 que si nunca
+  // hubiera existido, y no la ficha de un vehiculo que ya volvio al catalogo.
+  if (!lote || !esLoteOfrecido(lote)) notFound();
 
   const publicadaEn = desdeIso(convocatoria.publicadaEn);
   const inicioVenta = desdeIso(convocatoria.inicioVenta);

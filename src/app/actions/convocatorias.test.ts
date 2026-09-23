@@ -16,7 +16,7 @@ import { ocultarConvocatoria as ocultarServicio } from "@/lib/convocatorias/ocul
 import { publicarConvocatoria as publicarServicio } from "@/lib/convocatorias/publicarConvocatoria";
 import { reactivarConvocatoria as reactivarServicio } from "@/lib/convocatorias/reactivarConvocatoria";
 import { rechazarConvocatoria as rechazarServicio } from "@/lib/convocatorias/rechazarConvocatoria";
-import { retirarVehiculoDeConvocatoria as retirarServicio } from "@/lib/convocatorias/retirarVehiculoDeConvocatoria";
+import { retirarLote as retirarServicio } from "@/lib/convocatorias/retirarLote";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
 import type { ConvocatoriaConLotes } from "@/types/convocatoria";
 import type { Sesion } from "@/types/identidad";
@@ -42,8 +42,8 @@ vi.mock("@/lib/convocatorias/editarConvocatoria", () => ({
 vi.mock("@/lib/convocatorias/incluirVehiculo", () => ({
   incluirVehiculo: vi.fn(),
 }));
-vi.mock("@/lib/convocatorias/retirarVehiculoDeConvocatoria", () => ({
-  retirarVehiculoDeConvocatoria: vi.fn(),
+vi.mock("@/lib/convocatorias/retirarLote", () => ({
+  retirarLote: vi.fn(),
 }));
 vi.mock("@/lib/convocatorias/enviarAAprobacion", () => ({
   enviarAAprobacion: vi.fn(),
@@ -188,11 +188,11 @@ const INVOCAR = {
         precio: 180_000,
       }),
   },
-  retirarVehiculoDeConvocatoria: {
+  retirarLote: {
     permiso: "Autob_Administrar_Convocatorias",
     estatus: "BORRADOR" as const,
     llamar: () =>
-      acciones.retirarVehiculoDeConvocatoria({
+      acciones.retirarLote({
         convocatoriaId: "C1",
         loteId: "L1",
         motivo: "Se daño",
@@ -374,7 +374,7 @@ describe("contexto derivado de los lotes", () => {
       data: { ...convocatoria, lotes: [{ ...lote, contadorTurnos: 1 }] },
     });
 
-    const resultado = await acciones.retirarVehiculoDeConvocatoria({
+    const resultado = await acciones.retirarLote({
       convocatoriaId: "C1",
       loteId: "L1",
       motivo: "Se daño",

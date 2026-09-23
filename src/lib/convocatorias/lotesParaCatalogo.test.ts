@@ -89,6 +89,32 @@ describe("lotesParaCatalogo", () => {
     expect(resultado[0]?.precio).toBe(185_000);
   });
 
+  it("un lote retirado no se publica ni se lee su vehiculo", async () => {
+    // La convocatoria se oculto, se reactivo a borrador para corregirla y se
+    // volvio a publicar: el lote que se retiro en esa correccion no reaparece.
+    // Y no solo desaparece de la rejilla — no se pide su vehiculo ni su fila,
+    // que serian dos lecturas por algo que nadie va a ver.
+    leerVehiculo.mockResolvedValue(exito(galeria()));
+    leerTamano.mockResolvedValue(exito(0));
+    // Los mocks no se limpian entre pruebas en este archivo, y aqui se cuentan
+    // llamadas y no solo resultados.
+    leerVehiculo.mockClear();
+    leerTamano.mockClear();
+
+    const firmar = vi.fn((clave: string) => `https://cdn/${clave}`);
+    const resultado = await lotesParaCatalogo(
+      [
+        { ...lote, estatus: "RETIRADO" },
+        { ...lote, loteId: "L2" },
+      ],
+      { firmar },
+    );
+
+    expect(resultado.map((uno) => uno.loteId)).toEqual(["L2"]);
+    expect(leerVehiculo).toHaveBeenCalledTimes(1);
+    expect(leerTamano).toHaveBeenCalledTimes(1);
+  });
+
   it("un vehiculo sin principal designada no firma nada", async () => {
     leerVehiculo.mockResolvedValue(
       exito({ ...galeria(), fotografiaPrincipalId: undefined }),

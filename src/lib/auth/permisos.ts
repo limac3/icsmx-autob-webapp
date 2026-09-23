@@ -220,7 +220,11 @@ const CATALOGO_ACCIONES = {
       return permitir();
     },
   },
-  "convocatoria:retirar-vehiculo": {
+  // **`lote:retirar` y no `convocatoria:retirar-vehiculo`**: lo que se retira
+  // es el lote, y el vehiculo se libera de vuelta a `DISPONIBLE`. El nombre
+  // anterior lo confundia con `vehiculo:retirar`, que saca el vehiculo del
+  // catalogo para siempre — dos acciones opuestas con un nombre parecido.
+  "lote:retirar": {
     permisos: ["Autob_Administrar_Convocatorias"],
     guarda: (c) => {
       if (c.estatusConvocatoria !== "BORRADOR") return denegar("invalid_state");

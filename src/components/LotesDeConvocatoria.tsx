@@ -51,9 +51,14 @@ import "./LotesDeConvocatoria.css";
  * vehiculo y no en la ficha del vehiculo: el mismo coche puede reofertarse mas
  * adelante a otro precio sin arrastrar el anterior.
  *
- * **Retirar no borra**: el lote pasa a `RETIRADO` y se queda a la vista. Un lote
- * desaparecido dejaria al auditor sin rastro de que ese vehiculo llego a estar
- * incluido y a que precio.
+ * **Retirar el lote no es retirar el vehiculo.** El vehiculo se libera —vuelve
+ * a `DISPONIBLE` y puede incluirse en otra convocatoria—; `vehiculo:retirar`,
+ * en cambio, lo saca del catalogo para siempre. Aqui solo termina el lote.
+ *
+ * **Retirar no borra**: el lote pasa a `RETIRADO` y se queda a la vista **en
+ * esta pantalla**. Un lote desaparecido dejaria al auditor sin rastro de que ese
+ * vehiculo llego a estar incluido y a que precio. De cara al participante si
+ * desaparece: `esLoteOfrecido` lo saca de la rejilla publica y de su detalle.
  *
  * Componente cliente por dos motivos independientes: el dialogo del retiro
  * necesita estado, y `Table` compara la identidad de `ColGroup` y `THead` para
@@ -196,7 +201,7 @@ const LotesDeConvocatoria = ({
 
       {estadoRetiro.estado === "retirado" ? (
         <Success>
-          <Text2 renderAs="p">{etiquetas.retiradoDeConvocatoria}</Text2>
+          <Text2 renderAs="p">{etiquetas.loteRetirado}</Text2>
         </Success>
       ) : null}
 
@@ -277,7 +282,7 @@ const LotesDeConvocatoria = ({
                             setPorRetirar(lote);
                           }}
                         >
-                          {etiquetas.retirarDeConvocatoria}
+                          {etiquetas.retirarLote}
                         </Danger>
                       ) : (
                         <Text4 renderAs="p">{etiquetas.loteConFila}</Text4>
@@ -348,7 +353,7 @@ const LotesDeConvocatoria = ({
 
       <DialogModal
         open={abierto}
-        header={etiquetas.retirarDeConvocatoria}
+        header={etiquetas.retirarLote}
         onClose={() => {
           setPorRetirar(undefined);
         }}
@@ -366,6 +371,12 @@ const LotesDeConvocatoria = ({
 
           <Text2 renderAs="p">{porRetirar?.vehiculo ?? ""}</Text2>
 
+          {/* Que hace el retiro, donde se decide: son dos consecuencias que la
+              pantalla no puede ensenar —el vehiculo reaparece en otro listado y
+              el lote deja de publicarse— y quien captura el motivo es quien
+              tiene que saberlas antes de confirmar. */}
+          <Text4 renderAs="p">{etiquetas.retiroLoteAviso}</Text4>
+
           <FormField
             label={etiquetas.motivoRetiroLote}
             description={etiquetas.motivoRetiroLoteAyuda}
@@ -375,7 +386,7 @@ const LotesDeConvocatoria = ({
 
           <div className="lotes__acciones">
             <Danger type="submit" disabled={retirando}>
-              {etiquetas.retirarDeConvocatoria}
+              {etiquetas.retirarLote}
             </Danger>
             <Secondary
               type="button"

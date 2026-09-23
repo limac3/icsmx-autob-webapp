@@ -188,7 +188,7 @@ capturar se guardaria como cero kilometros, que es un dato falso y plausible.
 | `crearConvocatoria` | `DatosConvocatoria` | `{ convocatoriaId }` | `convocatoria:crear` | `validation_failed` | `CONVOCATORIA_CREADA` |
 | `editarConvocatoria` | `{ convocatoriaId, cambios }` | `{ convocatoriaId }` | `convocatoria:editar` | `validation_failed`, `invalid_state` | `CONVOCATORIA_EDITADA` |
 | `incluirVehiculo` | `{ convocatoriaId, vehiculoId, precio }` | `{ loteId }` | `convocatoria:incluir-vehiculo` | `validation_failed`, `invalid_state` | `VEHICULO_INCLUIDO` |
-| `retirarVehiculoDeConvocatoria` | `{ convocatoriaId, loteId, motivo }` | `{ loteId }` | `convocatoria:retirar-vehiculo` | `invalid_state` | `VEHICULO_RETIRADO_DE_CONVOCATORIA` |
+| `retirarLote` | `{ convocatoriaId, loteId, motivo }` | `{ loteId }` | `lote:retirar` | `invalid_state` | `VEHICULO_RETIRADO_DE_CONVOCATORIA` |
 | `enviarAAprobacion` | `{ convocatoriaId }` | `{ estatus }` | `convocatoria:enviar-a-aprobacion` | `invalid_state`, `validation_failed` | `CONVOCATORIA_ENVIADA_A_APROBACION` |
 | `aprobarConvocatoria` | `{ convocatoriaId }` | `{ estatus }` | `convocatoria:aprobar` | `invalid_state`, `forbidden` (auto-aprobacion) | `CONVOCATORIA_APROBADA` |
 | `rechazarConvocatoria` | `{ convocatoriaId, motivo }` | `{ estatus }` | `convocatoria:rechazar` | `invalid_state`, `validation_failed` | `CONVOCATORIA_RECHAZADA` |
@@ -236,7 +236,7 @@ blanca, mayusculas— y es **unico**: un repetido vuelve como `validation_failed
 | --- | --- |
 | `guardarConvocatoriaDesdeFormulario` | `crearConvocatoria` o `editarConvocatoria`, segun venga `convocatoriaId` |
 | `incluirVehiculoDesdeFormulario` | `incluirVehiculo` |
-| `retirarLoteDesdeFormulario` | `retirarVehiculoDeConvocatoria` |
+| `retirarLoteDesdeFormulario` | `retirarLote` |
 
 Mismo motivo que en vehiculos: los formularios funcionan sin JavaScript y la conversion de
 cadenas ocurre en un solo sitio. Dos conversiones cargan con una trampa concreta:
@@ -640,7 +640,7 @@ pago. Es una excepcion deliberada a R-12, acotada a `Autob_Operar_Tesoreria`.
 | --- | --- |
 | `publicarConvocatoria` | `convocatorias:visibles`, `convocatoria:<id>` |
 | `concluirConvocatoria` | `convocatorias:visibles`, `convocatoria:<id>` |
-| `incluirVehiculo`, `retirarVehiculoDeConvocatoria` | `convocatoria:<id>` |
+| `incluirVehiculo`, `retirarLote` | `convocatoria:<id>` |
 | `editarVehiculo`, fotografias | `vehiculo:<id>` |
 | `solicitarCompra`, `cancelarSolicitud`, `subirComprobante` | `lote:<loteId>` |
 | `avalarPago`, `rechazarPago` | `lote:<loteId>`, `convocatoria:<id>` |

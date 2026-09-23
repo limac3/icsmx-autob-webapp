@@ -98,7 +98,7 @@ const CATALOGO_ESPERADO: CasoAccion[] = [
     },
   },
   {
-    accion: "convocatoria:retirar-vehiculo",
+    accion: "lote:retirar",
     permisosQuePermiten: [ADMIN_CONV],
     contexto: {
       estatusConvocatoria: "BORRADOR",

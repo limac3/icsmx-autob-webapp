@@ -26,7 +26,7 @@ import { ocultarConvocatoria as ocultarServicio } from "@/lib/convocatorias/ocul
 import { publicarConvocatoria as publicarServicio } from "@/lib/convocatorias/publicarConvocatoria";
 import { reactivarConvocatoria as reactivarServicio } from "@/lib/convocatorias/reactivarConvocatoria";
 import { rechazarConvocatoria as rechazarServicio } from "@/lib/convocatorias/rechazarConvocatoria";
-import { retirarVehiculoDeConvocatoria as retirarVehiculoServicio } from "@/lib/convocatorias/retirarVehiculoDeConvocatoria";
+import { retirarLote as retirarLoteServicio } from "@/lib/convocatorias/retirarLote";
 import { desdeCampoLocal, desdeIso } from "@/lib/domain/fechas";
 import { fechasCoherentes, ventaFinalizada } from "@/lib/domain/ventanas";
 import { obtenerVehiculo } from "@/lib/vehiculos/obtenerVehiculo";
@@ -197,7 +197,7 @@ export const incluirVehiculo = async (entrada: {
   return resultado;
 };
 
-export const retirarVehiculoDeConvocatoria = async (entrada: {
+export const retirarLote = async (entrada: {
   convocatoriaId: string;
   loteId: string;
   motivo: string;
@@ -211,7 +211,7 @@ export const retirarVehiculoDeConvocatoria = async (entrada: {
   if (!lote) return fallo("not_found");
 
   const contexto = await conConvocatoria(
-    "convocatoria:retirar-vehiculo",
+    "lote:retirar",
     entrada.convocatoriaId,
     { loteSinSolicitudesVivas: lote.contadorTurnos === 0 },
   );
@@ -225,7 +225,7 @@ export const retirarVehiculoDeConvocatoria = async (entrada: {
   );
   if (!vehiculo.ok) return vehiculo;
 
-  const resultado = await retirarVehiculoServicio({
+  const resultado = await retirarLoteServicio({
     convocatoria: contexto.convocatoria,
     lote,
     vehiculo: vehiculo.data,
@@ -530,7 +530,7 @@ export const retirarLoteDesdeFormulario = async (
   _estadoPrevio: EstadoFormularioLote,
   formData: FormData,
 ): Promise<EstadoFormularioLote> => {
-  const resultado = await retirarVehiculoDeConvocatoria({
+  const resultado = await retirarLote({
     convocatoriaId: String(formData.get("convocatoriaId") ?? "").trim(),
     loteId: String(formData.get("loteId") ?? "").trim(),
     motivo: String(formData.get("motivo") ?? ""),

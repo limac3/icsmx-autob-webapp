@@ -126,7 +126,7 @@ describe("lo que se puede hacer depende del estatus", () => {
     await pintar({ editable: false });
 
     expect(botonesDeLaTabla()).not.toContain(
-      diccionario.convocatorias.retirarDeConvocatoria,
+      diccionario.convocatorias.retirarLote,
     );
     expect(context.container.querySelector("select")).toBeNull();
   });
@@ -135,7 +135,7 @@ describe("lo que se puede hacer depende del estatus", () => {
     await pintar({ lotes: [lote({ puedeRetirarse: false })] });
 
     expect(botonesDeLaTabla()).not.toContain(
-      diccionario.convocatorias.retirarDeConvocatoria,
+      diccionario.convocatorias.retirarLote,
     );
     expect(textos()).toContain(diccionario.convocatorias.loteConFila);
   });
@@ -205,8 +205,7 @@ describe("el dialogo de retiro", () => {
       ...context.container.querySelectorAll<HTMLButtonElement>("table button"),
     ].find(
       (uno) =>
-        uno.textContent?.trim() ===
-        diccionario.convocatorias.retirarDeConvocatoria,
+        uno.textContent?.trim() === diccionario.convocatorias.retirarLote,
     );
 
     await act(async () => {

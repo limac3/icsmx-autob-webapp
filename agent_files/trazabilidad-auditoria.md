@@ -139,6 +139,13 @@ borrado de S3 fallo.
 | `CONVOCATORIA_CONCLUIDA` | Con el resumen de vendidos, no vendidos y **comprometidos** |
 | `LOTE_CERRADO_TRAS_CONCLUSION` | Un lote que sobrevivio al cierre (R-18) y cuyo compromiso se cayo despues. Anclado al **lote**, firmado por `SISTEMA` |
 
+> **`VEHICULO_RETIRADO_DE_CONVOCATORIA` conserva su nombre aunque la accion se llame ahora
+> retiro del lote** (`lote:retirar`). El catalogo de eventos es append-only y las historias ya
+> escritas traen este tipo: renombrarlo obligaria a mantener los dos y el auditor veria dos
+> entradas distintas para el mismo hecho en el filtro de la bitacora. Lo que si cambio es su
+> etiqueta, que es lo que se lee: "Lote retirado de la convocatoria". Mismo criterio que
+> `SOLICITUD_CONGELADA`.
+
 > **La conclusion no escribe un evento por lote, y el cierre tardio si.** Ahi el resumen de
 > `CONVOCATORIA_CONCLUIDA` responde por todos los lotes a la vez y un evento por lote repetiria N
 > veces el mismo hecho. Aqui el cierre ocurre dias despues, lo dispara el barrido y no hay ningun

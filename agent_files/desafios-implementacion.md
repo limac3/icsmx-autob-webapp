@@ -4227,7 +4227,7 @@ Y nada lo recogia despues:
 - `CONCLUIDA` es terminal, asi que `concluirConvocatoria` no puede volver a correr.
 - La reconciliacion del barrido esta acotada a convocatorias `PUBLICADA`, "fuera de ahi el lote no
   admite fila" — cierto para la fila, falso para el vehiculo.
-- `convocatoria:retirar-vehiculo` exige `estatusConvocatoria === "BORRADOR"`.
+- `lote:retirar` exige `estatusConvocatoria === "BORRADOR"`.
 
 El vehiculo quedaba invendible e inofertable a la vez, en silencio y sin ningun camino de vuelta.
 

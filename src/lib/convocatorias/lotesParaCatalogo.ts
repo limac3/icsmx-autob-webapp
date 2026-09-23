@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { LoteEnCatalogo } from "@/components/RejillaDeLotes";
+import { esLoteOfrecido } from "@/lib/domain/gating";
 import { consultarTamanoFila } from "@/lib/fila/conteosDeFila";
 import { firmarFotografia } from "@/lib/media/cloudfrontSigner";
 import {
@@ -19,6 +20,11 @@ import { ANCHOS_DE_VARIANTE } from "@/types/vehiculo";
  * previa dejaria de ser una vista previa el dia que una de las dos cambie —y ese
  * dia nadie se entera, porque las dos siguen compilando.
  *
+ * **Los lotes retirados no salen** (`esLoteOfrecido`). Se filtran aqui, en el
+ * unico sitio por el que pasan las dos pantallas, y no en cada una: la vista
+ * previa dejaria de ensenar lo que el participante ve el dia que una de las dos
+ * se olvidara del filtro.
+ *
  * **Las URLs se firman aqui, en cada peticion** (regla 13): nunca se persisten
  * ni se generan dentro de un bloque `"use cache"`.
  *
@@ -33,7 +39,7 @@ export const lotesParaCatalogo = async (
   const firmar = deps.firmar ?? firmarFotografia;
 
   return Promise.all(
-    lotes.map(async (lote): Promise<LoteEnCatalogo> => {
+    lotes.filter(esLoteOfrecido).map(async (lote): Promise<LoteEnCatalogo> => {
       const [vehiculo, tamanoFila] = await Promise.all([
         obtenerVehiculo(lote.vehiculoId),
         consultarTamanoFila(lote.loteId),

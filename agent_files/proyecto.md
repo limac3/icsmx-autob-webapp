@@ -202,7 +202,15 @@ solo la ve si ademas `publicadaEn <= ahora`. Ver R-01.
 | `ADJUDICADO` | Vencer o rechazar pago | `EN_OFERTA` | Libera para el siguiente de la fila |
 | `ADJUDICADO` | Avalar pago | `VENDIDO` | — |
 | `EN_OFERTA` | Concluir convocatoria | `NO_VENDIDO` | — |
-| `EN_OFERTA` | Retirar | `RETIRADO` | Sin solicitudes vivas |
+| `EN_OFERTA` | Retirar el lote | `RETIRADO` | Convocatoria en `BORRADOR`; sin solicitudes vivas |
+
+> **Retirar el lote no retira el vehiculo.** Son dos acciones opuestas con nombres parecidos, y
+> se distinguen por el nombre a proposito: `vehiculo:retirar` saca el vehiculo del catalogo y es
+> terminal; `lote:retirar` **libera** el vehiculo —vuelve a `DISPONIBLE` y puede reofertarse
+> (R-11)— y lo que termina es el lote. Un lote `RETIRADO` **deja de publicarse**: no aparece en
+> la convocatoria ni tiene detalle, ni siquiera cuando la convocatoria se corrige y se vuelve a
+> publicar. Sigue visible en la pantalla de administracion, con su motivo, porque la bitacora
+> tiene que poder responder que ese vehiculo estuvo incluido y a que precio.
 
 > **`ADJUDICADO` no cierra la fila.** Un lote adjudicado sigue admitiendo solicitudes mientras la
 > venta este abierta: es lo que exige R-17 y de lo que dependen `miPosicion`, `tamanoFila` y la

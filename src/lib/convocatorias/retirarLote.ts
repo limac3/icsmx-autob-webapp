@@ -1,11 +1,18 @@
 import "server-only";
 
-// Retiro de un vehiculo de una convocatoria en borrador. Es el inverso de
+// Retiro **del lote** de una convocatoria en borrador. Es el inverso de
 // `incluirVehiculo`, con la misma exigencia de atomicidad.
+//
+// **No confundir con `vehiculo:retirar`**, que saca el vehiculo del catalogo y
+// es terminal. Aqui el vehiculo **se libera**: vuelve a `DISPONIBLE` y puede
+// incluirse en otra convocatoria. Lo que termina es el lote, no el vehiculo, y
+// por eso la accion se llama por el lote.
 //
 // **El lote no se borra: pasa a `RETIRADO`.** Borrarlo dejaria al auditor sin
 // rastro de que ese vehiculo llego a estar incluido y a que precio, que es
-// justo lo que la bitacora tiene que poder responder.
+// justo lo que la bitacora tiene que poder responder. Lo que si deja de hacer
+// es publicarse: `esLoteOfrecido` lo filtra de la rejilla y de su propio
+// detalle, para que una convocatoria corregida y republicada no lo muestre.
 
 import { clave, gsi2 } from "@/lib/data/claves";
 import { nombreDeTabla } from "@/lib/data/cliente";
@@ -19,7 +26,7 @@ import type { Lote } from "@/types/lote";
 import { exito, fallo, type Resultado } from "@/types/resultado";
 import type { Vehiculo } from "@/types/vehiculo";
 
-export type EntradaRetirarVehiculoDeConvocatoria = {
+export type EntradaRetirarLote = {
   convocatoria: Convocatoria;
   lote: Lote;
   vehiculo: Vehiculo;
@@ -27,8 +34,8 @@ export type EntradaRetirarVehiculoDeConvocatoria = {
   actor: ActorUsuario;
 };
 
-export const retirarVehiculoDeConvocatoria = async (
-  entrada: EntradaRetirarVehiculoDeConvocatoria,
+export const retirarLote = async (
+  entrada: EntradaRetirarLote,
   deps: DepsDeServicio = {},
 ): Promise<Resultado<{ loteId: string }>> => {
   const { cliente, ahora } = resolver(deps);

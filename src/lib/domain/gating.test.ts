@@ -4,8 +4,10 @@ import { puedeEjecutar } from "@/lib/auth/permisos";
 import { TIPOS_CONVOCATORIA } from "@/types/convocatoria";
 import { PERMISOS, type Permiso } from "@/types/identidad";
 import { desdeIso } from "./fechas";
+import { ESTATUS_LOTE } from "@/types/lote";
 import {
   contextoDeConvocatoria,
+  esLoteOfrecido,
   esVisible,
   evaluarVisibilidad,
   puedeSolicitarse,
@@ -283,5 +285,28 @@ describe("contextoDeConvocatoria — puente hacia puedeEjecutar", () => {
       },
     });
     expect(decision).toEqual({ permitido: false, razon: "invalid_state" });
+  });
+});
+
+describe("esLoteOfrecido", () => {
+  it("excluye RETIRADO y admite todo lo demas", () => {
+    // Recorre el ENUM entero en vez de listar los cuatro estatus a mano: el dia
+    // que la maquina de lotes gane uno nuevo, esta prueba obliga a decidir si se
+    // publica en lugar de dejar que se cuele por omision.
+    const ofrecidos = ESTATUS_LOTE.filter((estatus) =>
+      esLoteOfrecido({ estatus }),
+    );
+    expect(ofrecidos).toEqual(
+      ESTATUS_LOTE.filter((estatus) => estatus !== "RETIRADO"),
+    );
+  });
+
+  it("un lote vendido o no vendido si se publica", () => {
+    // La convocatoria concluida sigue mostrando que se ofrecio y como termino.
+    // Solo el retiro borra el lote de la oferta, porque solo el retiro devuelve
+    // el vehiculo al catalogo.
+    expect(esLoteOfrecido({ estatus: "VENDIDO" })).toBe(true);
+    expect(esLoteOfrecido({ estatus: "NO_VENDIDO" })).toBe(true);
+    expect(esLoteOfrecido({ estatus: "RETIRADO" })).toBe(false);
   });
 });
